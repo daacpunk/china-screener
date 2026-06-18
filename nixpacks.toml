@@ -1,0 +1,10 @@
+# Nixpacks build configuration for Railway.
+# Pin Python to 3.11 for reproducible builds (3.12 also works).
+[phases.setup]
+nixPkgs = ["python311", "gcc"]
+
+[phases.install]
+cmds = ["python -m pip install --upgrade pip", "pip install -r requirements.txt"]
+
+[start]
+cmd = "uvicorn app.main:app --host 0.0.0.0 --port $PORT"

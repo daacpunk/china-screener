@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}China Reversion/Fade Screener{% endblock %}</title>
+  <link rel="stylesheet" href="/static/styles.css">
+  <script src="https://unpkg.com/htmx.org@1.9.12" defer></script>
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <span class="logo">▣</span>
+      <div>
+        <div class="brand-title">China Reversion / Fade Screener</div>
+        <div class="brand-sub">FactSet-fed · indicators computed in-app · no market-data API calls</div>
+      </div>
+    </div>
+  </header>
+
+  <nav class="tabs" aria-label="Primary">
+    {% for t in tabs %}
+      <a href="{{ t.href }}" class="tab {% if t.id == active_tab %}active{% endif %}">
+        <span class="tab-num">{{ t.n }}</span>{{ t.label }}
+      </a>
+    {% endfor %}
+  </nav>
+
+  <main class="container">
+    {% block content %}{% endblock %}
+  </main>
+
+  <footer class="footer">
+    <details class="assumptions">
+      <summary>Methodology &amp; assumptions</summary>
+      <ul>
+        <li><b>z-score</b>: z = (r<sub>horizon</sub> − μ<sub>daily</sub>·h) / (σ<sub>daily</sub>·√h), trailing daily μ/σ over the vol window.</li>
+        <li><b>Horizons (non-overlapping)</b>: 1-week = last 5 td; 1-month-ex-week = day −21 to −5.</li>
+        <li><b>Reversion</b>: distance from 20d mean (P−SMA20)/SMA20; RSI(14); MACD(12,26,9).</li>
+        <li><b>Ranking</b>: by |composite z| in both tails (we do not rank toward the median).</li>
+        <li><b>Idiosyncratic vs sector</b>: peer-relative z = stock z − GICS sub-industry peer median z; |·| ≥ threshold ⇒ idiosyncratic.</li>
+        <li><b>Indicators computed in-app</b> from uploaded FactSet price/volume — no external market-data calls.</li>
+      </ul>
+    </details>
+    <div class="foot-note">Educational tool. Not investment advice.</div>
+  </footer>
+</body>
+</html>

@@ -1,0 +1,90 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>Universe Manager</h1>
+<p class="subtitle">Build the active screening universe: upload constituents, add manual tickers, apply a liquidity floor.</p>
+
+<div class="grid grid-3">
+  <div class="stat"><div class="v">{{ summary.total }}</div><div class="l">Total names</div></div>
+  <div class="stat"><div class="v">{{ summary.screenable }}</div><div class="l">Screenable (≥ floor)</div></div>
+  <div class="stat"><div class="v">{{ summary.below_floor }}</div><div class="l">Below floor</div></div>
+</div>
+
+<div class="grid grid-2" style="margin-top:16px">
+  <div class="card">
+    <h3>Upload constituents (CSV / XLSX)</h3>
+    <p class="help">Tolerant column mapping. Expected: Ticker, Name, Sector, Sub-Industry, Index Weight, optional 20D_ADV_USD.</p>
+    <form method="post" action="/universe/upload" enctype="multipart/form-data">
+      <input type="file" name="file" accept=".csv,.xlsx,.xls" required>
+      <label>Note (optional)</label><input type="text" name="note" placeholder="e.g. May rebalance">
+      <div class="spacer"></div>
+      <button class="btn" type="submit">Upload &amp; activate</button>
+    </form>
+  </div>
+
+  <div class="card">
+    <h3>Liquidity floor</h3>
+    <p class="help">Names below the 20-day ADV (USD) floor are dropped from the screen but kept in a separate view.</p>
+    <form method="post" action="/universe/floor" class="row">
+      <div><label>20D ADV floor (USD)</label><input type="number" name="adv_floor" value="{{ adv_floor|int }}" step="1000000"></div>
+      <button class="btn secondary" type="submit">Apply</button>
+    </form>
+    <hr>
+    <h3>Add manual tickers</h3>
+    <form method="post" action="/universe/manual">
+      <label>Tickers (comma or newline separated)</label>
+      <textarea name="tickers" placeholder="0700-HK, 9988-HK"></textarea>
+      <div class="row">
+        <div><label>Sector</label><input name="sector" placeholder="optional"></div>
+        <div><label>Sub-industry</label><input name="sub_industry" placeholder="optional"></div>
+      </div>
+      <div class="spacer"></div>
+      <button class="btn secondary" type="submit">Add (always included)</button>
+    </form>
+  </div>
+</div>
+
+<h2>Active screening universe</h2>
+{% if summary.sector_breakdown %}
+<div class="flex" style="margin-bottom:10px">
+  {% for s,c in summary.sector_breakdown.items() %}<span class="pill">{{ s }} · {{ c }}</span>{% endfor %}
+</div>
+{% endif %}
+{% if summary.rows %}
+<div class="table-wrap">
+<table>
+  <thead><tr><th>Ticker</th><th>Name</th><th>Sector</th><th>Sub-industry</th><th>Index wt</th><th>20D ADV USD</th></tr></thead>
+  <tbody>
+  {% for r in summary.rows %}
+    <tr><td class="mono">{{ r.ticker }}</td><td>{{ r.name }}</td><td>{{ r.sector }}</td>
+    <td>{{ r.sub_industry }}</td><td>{{ '%.2f'|format(r.index_weight) if r.index_weight is not none else '—' }}</td>
+    <td>{{ '{:,.0f}'.format(r.adv_usd_20d) if r.adv_usd_20d is not none else '—' }}</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+</div>
+{% else %}
+<div class="empty">No active universe yet. Upload a file above or load demo data in <a href="/settings">Settings</a>.</div>
+{% endif %}
+
+{% if summary.below_rows %}
+<h2>Below-floor / untradable (kept, never deleted)</h2>
+<div class="table-wrap"><table>
+  <thead><tr><th>Ticker</th><th>Name</th><th>Sector</th><th>20D ADV USD</th></tr></thead>
+  <tbody>{% for r in summary.below_rows %}<tr><td class="mono">{{ r.ticker }}</td><td>{{ r.name }}</td><td>{{ r.sector }}</td><td>{{ '{:,.0f}'.format(r.adv_usd_20d) if r.adv_usd_20d is not none else '—' }}</td></tr>{% endfor %}</tbody>
+</table></div>
+{% endif %}
+
+<h2>Version history</h2>
+<div class="table-wrap"><table>
+  <thead><tr><th>ID</th><th>File</th><th>Note</th><th>Created</th><th>Active</th><th></th></tr></thead>
+  <tbody>
+  {% for v in versions %}
+    <tr><td>{{ v.id }}</td><td>{{ v.filename }}</td><td>{{ v.note }}</td><td class="muted">{{ v.created_at }}</td>
+    <td>{% if v.is_active %}<span class="tag idio">active</span>{% endif %}</td>
+    <td>{% if not v.is_active %}<form method="post" action="/universe/activate"><input type="hidden" name="uid" value="{{ v.id }}"><button class="btn ghost" type="submit">Activate</button></form>{% endif %}</td></tr>
+  {% else %}
+    <tr><td colspan="6" class="muted">No versions yet.</td></tr>
+  {% endfor %}
+  </tbody>
+</table></div>
+{% endblock %}

@@ -1,0 +1,68 @@
+"""Tab 2 — FactSet Price-Series Formula Generator."""
+from __future__ import annotations
+
+import markdown as md
+from fastapi import APIRouter, Form, Request
+from fastapi.responses import HTMLResponse, Response
+
+from .. import formula_gen as fg
+from .. import settings_store as ss
+from .common import assemble_active_universe, base_ctx, templates
+
+router = APIRouter()
+
+
+def _active_dict():
+    d = ss.get_active_dictionary()
+    return d
+
+
+@router.get("/formula", response_class=HTMLResponse)
+def formula_page(request: Request):
+    d = _active_dict()
+    tickers = []
+    uni = assemble_active_universe()
+    if not uni.empty:
+        tickers = uni["ticker"].tolist()
+    metric_keys = list(d["data"].get("formulas", {}).keys()) if d else []
+    md_html = md.markdown(d["md_text"], extensions=["tables"]) if d and d.get("md_text") else ""
+    # sample preview
+    preview = None
+    if d and metric_keys and tickers:
+        preview = fg.generate_formula(tickers[0], metric_keys[0], d["data"],
+                                      start="-2Y", end="0D", freq="D")
+    ctx = base_ctx(request, "formula", active_dict=d, metric_keys=metric_keys,
+                   tickers=tickers, md_html=md_html, preview=preview)
+    return templates.TemplateResponse(request, "formula.html", ctx)
+
+
+@router.post("/formula/preview", response_class=HTMLResponse)
+def formula_preview(request: Request, ticker: str = Form(...), metric_key: str = Form(...),
+                    start: str = Form("-2Y"), end: str = Form("0D"), freq: str = Form("D")):
+    d = _active_dict()
+    if not d:
+        return HTMLResponse("<div class='note error'>No active dictionary. Upload one in Settings.</div>")
+    formula = fg.generate_formula(ticker, metric_key, d["data"], start=start, end=end, freq=freq)
+    a = fg.method_a_timeseries_formulas(ticker, d["data"], start=start, end=end, freq=freq)
+    b = fg.method_b_offset_grid(d["data"], lookback=5)
+    return templates.TemplateResponse(request, "partials/formula_preview.html",
+                                      {"formula": formula, "method_a": a, "method_b": b[:5]})
+
+
+@router.post("/formula/download")
+def formula_download(method: str = Form("A"), lookback: int = Form(250),
+                     start: str = Form("-2Y"), end: str = Form("0D"),
+                     freq: str = Form("D"), layout: str = Form("per_ticker")):
+    d = _active_dict()
+    if not d:
+        return Response("No active dictionary", status_code=400)
+    uni = assemble_active_universe()
+    tickers = uni["ticker"].tolist() if not uni.empty else ["BABA-CN"]
+    data = fg.build_formula_workbook(tickers, d["data"], method=method, lookback=lookback,
+                                     start=start, end=end, freq=freq, layout=layout)
+    fname = f"factset_formulas_method_{method}.xlsx"
+    return Response(
+        content=data,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f"attachment; filename={fname}"},
+    )

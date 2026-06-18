@@ -1,0 +1,13 @@
+<p class="help">Single formula:</p>
+<pre id="single-formula">{{ formula }}</pre>
+<button class="btn ghost" id="single-formula-copybtn" onclick="copyText('single-formula')">Copy</button>
+<script src="/static/app.js"></script>
+
+<p class="help" style="margin-top:14px">Method A — time-series block header formulas:</p>
+<pre>date:   {{ method_a.date }}
+close:  {{ method_a.close }}
+volume: {{ method_a.volume }}</pre>
+
+<p class="help">Method B — offset-grid sample (first 5 rows):</p>
+<pre>{% for r in method_b %}row {{ r.row }} (offset {{ r.offset }}): {{ r.relative_formula }}
+{% endfor %}</pre>

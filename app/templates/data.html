@@ -1,0 +1,65 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>Data Upload &amp; Indicator Engine</h1>
+<p class="subtitle">Upload completed FactSet price/volume data (tidy or offset grid). The app validates it, computes RSI/MACD, and runs the screen. Indicator backend: <span class="pill">{{ indicator_backend }}</span></p>
+
+<div class="grid grid-2">
+  <div class="card">
+    <h3>Upload price/volume data (CSV / XLSX)</h3>
+    <p class="help">Tolerant column map: accepts close / price / p_price / adj close for price. Tidy format: ticker, date, close, volume.</p>
+    <form method="post" action="/data/upload" enctype="multipart/form-data">
+      <input type="file" name="file" accept=".csv,.xlsx,.xls" required>
+      <label>Note (optional)</label><input type="text" name="note">
+      <div class="spacer"></div>
+      <button class="btn" type="submit">Upload &amp; set active snapshot</button>
+    </form>
+  </div>
+  <div class="card">
+    <h3>Run the screen</h3>
+    <p class="help">Runs Step 1 → Step 4 on the active snapshot &amp; universe.</p>
+    <button class="btn" hx-post="/data/run" hx-target="#run-out" hx-swap="innerHTML">▶ Run Screen</button>
+    <div id="run-out"></div>
+    {% if not snapshot %}<div class="note info" style="margin-top:12px">No active snapshot. Upload data or load demo data in <a href="/settings">Settings</a>.</div>{% endif %}
+  </div>
+</div>
+
+{% if quality %}
+<h2>Data-quality report</h2>
+<div class="grid grid-3">
+  <div class="stat"><div class="v">{{ quality.n_tickers }}</div><div class="l">Tickers</div></div>
+  <div class="stat"><div class="v">{{ quality.total_rows }}</div><div class="l">Rows</div></div>
+  <div class="stat"><div class="v">{{ quality.factset_error_cells }}</div><div class="l">FactSet error cells</div></div>
+</div>
+{% if quality.short_series %}<div class="note error">Short series (will be flagged/skipped): {{ quality.short_series|join(', ') }}</div>{% endif %}
+{% if quality.tickers_with_nans %}<div class="note info">Tickers with NaNs (gaps filled-forward where possible): {{ quality.tickers_with_nans|join(', ') }}</div>{% endif %}
+{% endif %}
+
+{% if previews %}
+<h2>Latest-bar indicator snapshot</h2>
+<div class="table-wrap"><table>
+  <thead><tr><th>Ticker</th><th>RSI(14)</th><th>RSI signal</th><th>MACD state</th><th>Combined</th><th>Bars</th></tr></thead>
+  <tbody>
+  {% for p in previews %}
+    <tr><td class="mono">{{ p.ticker }}</td>
+      <td>{{ '%.1f'|format(p.rsi) if p.rsi is not none else '—' }}</td>
+      <td><span class="tag {% if p.rsi_signal=='Oversold' %}os{% elif p.rsi_signal=='Overbought' %}ob{% else %}neutral{% endif %}">{{ p.rsi_signal }}</span></td>
+      <td>{{ p.macd_state }}</td>
+      <td>{{ p.combined_signal }}</td>
+      <td>{{ p.bars }}</td></tr>
+  {% endfor %}
+  </tbody>
+</table></div>
+{% endif %}
+
+<h2>Snapshot history</h2>
+<div class="table-wrap"><table>
+  <thead><tr><th>ID</th><th>File</th><th>Note</th><th>Created</th><th>Active</th><th></th></tr></thead>
+  <tbody>
+  {% for s in snapshots %}
+    <tr><td>{{ s.id }}</td><td>{{ s.filename }}</td><td>{{ s.note }}</td><td class="muted">{{ s.created_at }}</td>
+    <td>{% if s.is_active %}<span class="tag idio">active</span>{% endif %}</td>
+    <td>{% if not s.is_active %}<form method="post" action="/data/activate"><input type="hidden" name="sid" value="{{ s.id }}"><button class="btn ghost" type="submit">Activate</button></form>{% endif %}</td></tr>
+  {% else %}<tr><td colspan="6" class="muted">No snapshots yet.</td></tr>{% endfor %}
+  </tbody>
+</table></div>
+{% endblock %}

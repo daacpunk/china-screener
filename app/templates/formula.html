@@ -1,0 +1,64 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>FactSet Price-Series Formula Generator</h1>
+<p class="subtitle">Generate clean <span class="mono">=FDS(...)</span> formulas to pull daily price/volume time series.
+Indicators are <b>not</b> pulled here — they are computed in Tab 3.</p>
+
+{% if not active_dict %}
+<div class="note error">No active FactSet dictionary. Upload one in <a href="/settings">Settings</a> or load demo data.</div>
+{% else %}
+<div class="note info">Active dictionary: <b>{{ active_dict.filename }}</b> (v{{ active_dict.id }}) · {{ metric_keys|length }} metrics · {{ tickers|length }} universe tickers.</div>
+
+<div class="grid grid-2">
+  <div class="card">
+    <h3>Preview a single formula</h3>
+    <form hx-post="/formula/preview" hx-target="#preview-out" hx-swap="innerHTML">
+      <div class="row">
+        <div><label>Ticker</label>
+          <select name="ticker">{% for t in tickers %}<option>{{ t }}</option>{% endfor %}</select></div>
+        <div><label>Metric</label>
+          <select name="metric_key">{% for k in metric_keys %}<option value="{{ k }}">{{ k }}</option>{% endfor %}</select></div>
+      </div>
+      <div class="row">
+        <div><label>Start</label><input name="start" value="-2Y"></div>
+        <div><label>End</label><input name="end" value="0D"></div>
+        <div><label>Freq</label><input name="freq" value="D"></div>
+      </div>
+      <div class="spacer"></div>
+      <button class="btn" type="submit">Generate</button>
+    </form>
+    <div id="preview-out">
+      {% if preview %}<p class="help">Sample:</p><pre>{{ preview }}</pre>{% endif %}
+    </div>
+  </div>
+
+  <div class="card">
+    <h3>Bulk generate &amp; download .xlsx</h3>
+    <p class="help">Builds formulas for every ticker in the active universe.</p>
+    <form method="post" action="/formula/download">
+      <div class="row">
+        <div><label>Method</label>
+          <select name="method"><option value="A">A — time-series block (preferred)</option><option value="B">B — offset grid (fallback)</option></select></div>
+        <div><label>Layout (Method A)</label>
+          <select name="layout"><option value="per_ticker">Per-ticker sheets</option><option value="stacked">Stacked (one sheet)</option></select></div>
+      </div>
+      <div class="row">
+        <div><label>Lookback (Method B, td)</label><input type="number" name="lookback" value="250"></div>
+        <div><label>Start</label><input name="start" value="-2Y"></div>
+        <div><label>End</label><input name="end" value="0D"></div>
+        <div><label>Freq</label><input name="freq" value="D"></div>
+      </div>
+      <div class="spacer"></div>
+      <button class="btn" type="submit">Download .xlsx</button>
+    </form>
+    <p class="help" style="margin-top:12px"><b>Method A:</b> paste each sheet's row-2 formulas; FactSet spills the date+close+volume block down.
+    <b>Method B:</b> put ticker in A2; column C holds relative-offset price formulas, column D explicit-date formulas (dates in B).</p>
+  </div>
+</div>
+
+{% if md_html %}
+<h2>FQL dictionary wiki</h2>
+<div class="card md">{{ md_html|safe }}</div>
+{% endif %}
+{% endif %}
+{% endblock %}

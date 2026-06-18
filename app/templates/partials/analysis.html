@@ -1,0 +1,21 @@
+{% if not analysis.enabled %}
+<div class="note info">{{ analysis.error }}</div>
+{% else %}
+{% if analysis.error %}<div class="note error">Some calls failed: {{ analysis.error }}</div>{% endif %}
+<div class="note ok">Analysis by <b>{{ analysis.provider }}</b>. Qualitative synthesis only — signals were computed in-app.</div>
+
+{% if analysis.portfolio %}
+<h3>Portfolio synthesis</h3>
+<div class="card"><pre style="white-space:pre-wrap">{{ analysis.portfolio }}</pre></div>
+{% endif %}
+
+{% if analysis.per_name %}
+<h3>Per-name notes</h3>
+{% for n in analysis.per_name %}
+<div class="card" style="margin-bottom:10px">
+  <div class="flex"><b class="mono">{{ n.ticker }}</b><span class="pill">{{ n.playbook }}</span></div>
+  <div style="margin-top:8px;white-space:pre-wrap">{{ n.note }}</div>
+</div>
+{% endfor %}
+{% endif %}
+{% endif %}

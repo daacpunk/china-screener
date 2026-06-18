@@ -1,0 +1,42 @@
+{
+  "name": "FactSet FQL Price-Series Dictionary (sample)",
+  "version": "1.0.0",
+  "description": "Sample FQL formula dictionary for pulling clean daily price/volume time series and point-in-time reference data from FactSet via the FDS() Excel function. Indicators are NOT pulled here; they are computed in-app (Tab 3).",
+  "formulas": {
+    "price": {
+      "label": "Daily closing price",
+      "fql_template": "P_PRICE({start}:{end}:{freq})",
+      "notes": "Closing price time series. start/end accept relative (-2Y, 0D) or explicit dates; freq D=daily."
+    },
+    "volume": {
+      "label": "Daily volume",
+      "fql_template": "P_VOLUME({start}:{end}:{freq})",
+      "notes": "Daily share volume time series."
+    },
+    "adv_usd_20d": {
+      "label": "20-day average daily value traded (USD)",
+      "fql_template": "P_ADV_USD(20,{end})",
+      "notes": "20-day average daily traded value in USD as of {end}."
+    },
+    "sector": {
+      "label": "GICS sector (point-in-time)",
+      "fql_template": "FG_GICS_SECTOR({end})",
+      "notes": "Point-in-time GICS sector classification."
+    },
+    "sub_industry": {
+      "label": "GICS sub-industry (point-in-time)",
+      "fql_template": "FG_GICS_SUB({end})",
+      "notes": "Point-in-time GICS sub-industry classification."
+    },
+    "index_weight": {
+      "label": "Index weight in benchmark",
+      "fql_template": "FG_INDEX_WEIGHT(#MSCI_CHINA,{end})",
+      "notes": "Constituent weight in the specified benchmark index."
+    },
+    "next_earnings": {
+      "label": "Next earnings/event date",
+      "fql_template": "FE_EVENT_DATE(EARNINGS,NEXT)",
+      "notes": "Next scheduled earnings/event date for event-calendar flagging."
+    }
+  }
+}

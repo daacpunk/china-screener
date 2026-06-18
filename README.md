@@ -1,0 +1,146 @@
+# MSCI China Reversion / Fade Equity Screener
+
+A production-ready, Railway-deployable FastAPI web app that screens an equity
+universe (MSCI China + manual additions) for **statistically stretched** names
+and produces two ranked trade lists:
+
+- **Oversold → Reversion (longs)** — buy-the-dip candidates
+- **Overbought → Fade (shorts)** — sell-the-rip candidates
+
+The app **ingests user-uploaded FactSet price/volume data and makes NO
+market-data API calls.** It computes RSI, MACD, volatility-normalized z-scores,
+distance-from-20-day-mean, and peer-relative (idiosyncratic-vs-sector) metrics
+itself in Python.
+
+---
+
+## Quick start (local)
+
+```bash
+cd screener
+python -m venv .venv && source .venv/bin/activate     # optional
+pip install -r requirements.txt
+uvicorn app.main:app --reload --port 8000
+# open http://localhost:8000
+```
+
+On first run with an empty database the app **auto-seeds demo data** so you can
+click **Run Screen** immediately. You can also press **Load demo data** on the
+home page or in Settings.
+
+### Try the demo end-to-end (no FactSet, no API keys)
+1. Open the app → **Load demo data**.
+2. Go to **Data & Indicators** → **▶ Run Screen** (or just open **Results**).
+3. You'll see populated **Oversold-Reversion** and **Overbought-Fade** tables,
+   a master "most dislocated by |z|" view, and an idiosyncratic-vs-sector tag.
+
+### Run the tests
+```bash
+cd screener
+python -m pytest -q
+```
+
+---
+
+## The five tabs
+
+| # | Tab | What it does |
+|---|-----|--------------|
+| 1 | **Universe** | Upload constituents (CSV/XLSX, tolerant column mapping), version them, add manual tickers, apply a liquidity floor (default 20D ADV > $10m). Below-floor names are kept in a separate view, never deleted. |
+| 2 | **Formula Generator** | Generates FactSet `=FDS(...)` price-series formulas from the active FQL dictionary. Method A (time-series block) or Method B (offset grid). Bulk-download to `.xlsx`. Indicators are **not** pulled — they're computed in Tab 3. |
+| 3 | **Data & Indicators** | Upload completed FactSet price/volume data (tidy or wide). Data-quality report (missing tickers, NaNs, short series, FactSet error strings). Computes RSI/MACD per name. **Run Screen** button. |
+| 4 | **Results** | Two ranked tables + master view. Filters (sector, sub-industry, idiosyncratic-only, hide-event, RSI bounds, MACD state). Excel export. Optional, key-gated **AI analysis**. |
+| 5 | **Settings (Admin)** | Dictionary versioning + validation; encrypted API keys (masked, env-first); screen parameters with reset-to-default; load-demo-data. |
+
+---
+
+## Environment variables
+
+Copy `.env.example` → `.env` (all optional — the app runs in demo mode with none).
+
+| Var | Default | Purpose |
+|-----|---------|---------|
+| `DB_PATH` | `/data/app.db` | SQLite path. Falls back to `./app.db` if `/data` is not writable. |
+| `APP_SECRET` | (derived) | Master secret used to derive the Fernet key for API-key encryption. Set a strong random value in production. |
+| `PORT` | `8000` | Railway injects `$PORT` automatically. |
+| `PERPLEXITY_API_KEY` | — | Optional. Enables Perplexity Sonar analysis. Overrides stored key. |
+| `ANTHROPIC_API_KEY` | — | Optional. Enables Claude analysis. |
+| `DEEPSEEK_API_KEY` | — | Optional. Enables DeepSeek analysis. |
+
+Env vars always take precedence over the encrypted SQLite store.
+
+---
+
+## Deploying to Railway
+
+1. Push this repo to GitHub and create a Railway project from it.
+2. Railway detects **Nixpacks** (`nixpacks.toml`, `railway.json`). Build runs
+   `pip install -r requirements.txt`; start runs
+   `uvicorn app.main:app --host 0.0.0.0 --port $PORT`.
+3. **Add a Volume** mounted at **`/data`** so the SQLite DB (universes,
+   dictionaries, snapshots, settings, encrypted keys) survives restarts.
+   Keep `DB_PATH=/data/app.db` (the default).
+4. Set `APP_SECRET` to a strong random value (e.g.
+   `python -c "import secrets;print(secrets.token_urlsafe(48))"`).
+5. Optionally set provider API keys as service variables.
+
+`Procfile`, `railway.json`, and `nixpacks.toml` are all included and `$PORT`-aware.
+
+---
+
+## File schemas
+
+### Universe upload (Tab 1) — CSV/XLSX, tolerant headers
+Expected columns (case/spacing-insensitive; fuzzy-matched):
+`Ticker, Name, Sector, Sub-Industry, Index Weight, [20D_ADV_USD]`.
+
+### Price/volume upload (Tab 3)
+**Tidy (preferred):** `ticker, date, close, volume` (price aliases accepted:
+`close / price / p_price / adj close`). **Wide:** first column = dates, each
+remaining column = a ticker's close. FactSet error strings (`#N/A`, `@NA`,
+`#VALUE!`, …) are scrubbed and reported.
+
+### FactSet dictionary (Tab 5)
+JSON object with a `formulas` map; each entry must have an `fql_template`:
+```json
+{ "formulas": { "price": { "fql_template": "P_PRICE({start}:{end}:{freq})" } } }
+```
+An optional Markdown wiki renders as docs. Malformed uploads are rejected and
+the prior active version is preserved.
+
+---
+
+## Settings & key management
+- **Dictionary versions**: every upload is timestamped; activate any version;
+  Tabs 2–3 consume the active one. Upload shows an added/removed metric-key diff.
+- **API keys**: masked (last 4 chars), never logged, encrypted at rest with
+  Fernet derived from `APP_SECRET`. Env vars override the store. Per-provider
+  model, enable toggle, and a lightweight **Test connection** ping.
+- **Screen parameters**: z cutoff, RSI bounds, MACD params, lookbacks, vol
+  window, divergence threshold, event window, ADV floor — all editable with
+  reset-to-default.
+
+---
+
+## Worked example (demo data)
+The synthetic 250-day series is engineered so that, with default parameters:
+
+- **BABA-CN** and **BIDU-CN** show sharp recent drops (RSI ≈ 13–15, large
+  negative z) and are tagged **IDIOSYNCRATIC** vs their sub-industry peers.
+- **PDD-CN** and **CATL-CN** show sharp rallies (RSI ≈ 87–90, large positive z)
+  and surface in the overbought-fade list.
+- **NANO-CN** is below the liquidity floor and is excluded but retained.
+
+Run Screen returns ~5 oversold longs and ~2 overbought shorts, each ranked by
+`|z|`.
+
+---
+
+## Indicator backend
+The app prefers **`pandas_ta==0.4.71b0`** for RSI/MACD and transparently falls
+back to a **native NumPy/pandas Wilder/EMA implementation** with identical
+output column names (`rsi, macd, macd_signal, macd_hist`) if pandas_ta is
+unavailable. Both paths are unit-tested to agree to < 1e-6. The active backend
+is shown on the Data & Indicators tab. See `BUILD_NOTES.md` for the rationale.
+
+> **Disclaimer:** Educational tool. Not investment advice.

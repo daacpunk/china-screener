@@ -1,0 +1,99 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>Settings (Admin)</h1>
+<p class="subtitle">All values persist in SQLite and survive restarts. API keys are encrypted at rest (Fernet from APP_SECRET) and env vars take precedence.</p>
+
+{% if msg %}<div class="note ok">{{ msg }}</div>{% endif %}
+{% if err %}<div class="note error">{{ err }}</div>{% endif %}
+
+<div class="card" style="border-color:var(--accent)">
+  <h3>▶ Demo data</h3>
+  <p class="help">Seed a synthetic dictionary + universe + 250-day price series so Run Screen returns populated tables immediately. No FactSet or API keys needed.</p>
+  <form method="post" action="/settings/demo"><button class="btn" type="submit">Load demo data</button></form>
+</div>
+
+<h2>5a · FactSet dictionary management</h2>
+<div class="grid grid-2">
+  <div class="card">
+    <h3>Upload / replace dictionary</h3>
+    <p class="help">JSON must parse and contain a <span class="mono">formulas</span> map with <span class="mono">fql_template</span> entries. Malformed uploads are rejected and the prior active version is kept.</p>
+    <form method="post" action="/settings/dictionary" enctype="multipart/form-data">
+      <label>Dictionary JSON</label><input type="file" name="json_file" accept=".json" required>
+      <label>Wiki Markdown (optional)</label><input type="file" name="md_file" accept=".md,.markdown">
+      <label>Note</label><input type="text" name="note">
+      <div class="spacer"></div>
+      <button class="btn" type="submit">Upload &amp; activate</button>
+    </form>
+  </div>
+  <div class="card">
+    <h3>Versions</h3>
+    <div class="table-wrap"><table><thead><tr><th>ID</th><th>File</th><th>Created</th><th>Active</th><th></th></tr></thead>
+    <tbody>{% for d in dictionaries %}
+      <tr><td>{{ d.id }}</td><td>{{ d.filename }}</td><td class="muted">{{ d.created_at }}</td>
+      <td>{% if d.is_active %}<span class="tag idio">active</span>{% endif %}</td>
+      <td>{% if not d.is_active %}<form method="post" action="/settings/dictionary/activate"><input type="hidden" name="dict_id" value="{{ d.id }}"><button class="btn ghost">Activate</button></form>{% endif %}</td></tr>
+    {% else %}<tr><td colspan="5" class="muted">None yet.</td></tr>{% endfor %}</tbody></table></div>
+  </div>
+</div>
+{% if md_html %}<div class="card md" style="margin-top:14px"><h3>Active dictionary wiki</h3>{{ md_html|safe }}</div>{% endif %}
+
+<h2>5b · LLM providers &amp; API keys</h2>
+<p class="help">Keys are masked (last 4 chars). Never logged. Env vars override the encrypted store.</p>
+<div class="grid grid-3">
+{% for p in providers %}
+  <div class="card">
+    <h3>{{ p.provider|capitalize }}</h3>
+    <div class="flex"><span class="pill">key: {{ p.key_source }}</span>{% if p.masked %}<span class="mono">{{ p.masked }}</span>{% endif %}</div>
+    <form method="post" action="/settings/apikey">
+      <input type="hidden" name="provider" value="{{ p.provider }}">
+      <label>API key{% if p.key_source=='env' %} (set via env — store is fallback){% endif %}</label>
+      <input type="password" name="api_key" placeholder="leave blank to keep existing">
+      <label>Model</label><input name="model" value="{{ p.model }}">
+      <label class="flex" style="margin-top:8px"><input type="checkbox" name="enabled" {{ 'checked' if p.enabled }} style="width:auto"> Enabled</label>
+      <div class="spacer"></div>
+      <button class="btn secondary" type="submit">Save</button>
+      <button class="btn ghost" type="button" hx-post="/settings/test" hx-vals='{"provider":"{{ p.provider }}"}' hx-target="#test-{{ p.provider }}" hx-swap="innerHTML">Test connection</button>
+    </form>
+    <div id="test-{{ p.provider }}" style="margin-top:8px"></div>
+  </div>
+{% endfor %}
+</div>
+<form method="post" action="/settings/default_provider" class="row" style="margin-top:10px;max-width:420px">
+  <div><label>Default provider</label><select name="provider">{% for p in providers %}<option value="{{ p.provider }}" {{ 'selected' if default_provider==p.provider }}>{{ p.provider }}</option>{% endfor %}</select></div>
+  <button class="btn secondary" type="submit">Set default</button>
+</form>
+
+<h2>5c · Screen parameters</h2>
+<form method="post" action="/settings/params" class="card">
+  <div class="grid grid-3">
+    {% set fields = [
+      ('horizon_a_lookback','1-week lookback (td)'),
+      ('horizon_b_start','1-month window start (td)'),
+      ('horizon_b_end','1-month window end (td)'),
+      ('vol_window','Vol estimation window (td)'),
+      ('rsi_length','RSI length'),
+      ('rsi_oversold','RSI oversold'),
+      ('rsi_overbought','RSI overbought'),
+      ('macd_fast','MACD fast'),
+      ('macd_slow','MACD slow'),
+      ('macd_signal','MACD signal'),
+      ('sma_length','SMA distance length'),
+      ('z_cutoff','|z| cutoff (playbook)'),
+      ('divergence_threshold','Divergence threshold'),
+      ('event_window_days','Event window (days)'),
+      ('min_bars','Min bars (warm-up)'),
+      ('adv_floor','ADV floor (USD)'),
+      ('z_weight_a','Composite weight: 1w'),
+      ('z_weight_b','Composite weight: 1m')
+    ] %}
+    {% for key,label in fields %}
+      <div><label>{{ label }}</label><input name="{{ key }}" value="{{ params[key] }}" step="any"></div>
+    {% endfor %}
+  </div>
+  <div class="spacer"></div>
+  <div class="flex">
+    <button class="btn" type="submit">Save parameters</button>
+    <button class="btn ghost" formaction="/settings/params/reset" type="submit">Reset to defaults</button>
+  </div>
+</form>
+{% endblock %}

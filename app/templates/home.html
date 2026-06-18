@@ -1,0 +1,20 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>MSCI China Reversion / Fade Equity Screener</h1>
+<p class="subtitle">Surface statistically stretched names and build two ranked trade lists —
+<b>oversold-reversion longs</b> and <b>overbought-fade shorts</b>. The app ingests
+FactSet price/volume exports and computes RSI, MACD and z-scores itself — no market-data API calls.</p>
+
+<div class="grid grid-3">
+  <div class="card"><h3>1 · Universe</h3><p class="muted">Upload MSCI China constituents, add manual tickers, apply a liquidity floor.</p><a class="btn ghost" href="/universe">Open</a></div>
+  <div class="card"><h3>2 · Formula Generator</h3><p class="muted">Generate FactSet FDS price-series formulas (Method A time-series or Method B offset grid) and download an .xlsx.</p><a class="btn ghost" href="/formula">Open</a></div>
+  <div class="card"><h3>3 · Data &amp; Indicators</h3><p class="muted">Upload completed FactSet data, validate quality, compute RSI/MACD, run the screen.</p><a class="btn ghost" href="/data">Open</a></div>
+  <div class="card"><h3>4 · Results</h3><p class="muted">Two ranked tables + master dislocation view, filters, export, optional AI synthesis.</p><a class="btn ghost" href="/results">Open</a></div>
+  <div class="card"><h3>5 · Settings</h3><p class="muted">Dictionary versioning, encrypted API keys, screen parameters, demo data.</p><a class="btn ghost" href="/settings">Open</a></div>
+  <div class="card" style="border-color:var(--accent)"><h3>▶ Try the demo</h3><p class="muted">No FactSet or API keys needed. Seeds a synthetic universe + 250-day price series engineered with clear oversold &amp; overbought names.</p>
+    <form method="post" action="/settings/demo"><button class="btn" type="submit">Load demo data</button></form>
+  </div>
+</div>
+
+<div class="note info">New here? Click <b>Load demo data</b> above, then open <a href="/data">Data &amp; Indicators</a> and press <b>Run Screen</b>, or jump straight to <a href="/results">Results</a>.</div>
+{% endblock %}

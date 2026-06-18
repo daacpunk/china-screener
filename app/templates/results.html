@@ -1,0 +1,97 @@
+{% extends "base.html" %}
+{% macro ztd(v) %}{% if v is not none %}<span class="{{ 'pos' if v>=0 else 'neg' }}">{{ '%.2f'|format(v) }}</span>{% else %}—{% endif %}{% endmacro %}
+{% macro pct(v) %}{% if v is not none %}{{ '%.1f%%'|format(v*100) }}{% else %}—{% endif %}{% endmacro %}
+{% macro idiotag(t) %}{% if t=='IDIOSYNCRATIC' %}<span class="tag idio">idiosyncratic</span>{% else %}<span class="tag sector">sector/macro</span>{% endif %}{% endmacro %}
+
+{% macro render_table(rows, kind) %}
+<div class="table-wrap"><table>
+  <thead><tr>
+    <th>Ticker</th><th>Name</th><th>Sector</th><th>Sub-industry</th>
+    <th>1w z</th><th>1m-ex-wk z</th><th>|z|</th><th>Dist 20d</th><th>RSI</th><th>MACD</th>
+    <th>Peer-rel z</th><th>Type</th><th>Idx wt</th><th>Event</th>
+  </tr></thead>
+  <tbody>
+  {% for r in rows %}
+    <tr class="{{ 'event-row' if r.event_flag }}">
+      <td class="mono">{{ r.ticker }}</td><td>{{ r.name }}</td><td>{{ r.sector }}</td><td>{{ r.sub_industry }}</td>
+      <td>{{ ztd(r.z_1w) }}</td><td>{{ ztd(r.z_1m_ex_week) }}</td>
+      <td><b>{{ '%.2f'|format(r.abs_z) if r.abs_z is not none else '—' }}</b></td>
+      <td>{{ pct(r.dist_from_sma) }}</td>
+      <td>{{ '%.1f'|format(r.rsi) if r.rsi is not none else '—' }}</td>
+      <td>{{ r.macd_state }}</td>
+      <td>{{ ztd(r.peer_relative_z) }}</td>
+      <td>{{ idiotag(r.dislocation_type) }}</td>
+      <td>{{ '%.2f'|format(r.index_weight) if r.index_weight is not none else '—' }}</td>
+      <td>{% if r.event_flag %}<span class="tag event">⚠ event</span>{% else %}—{% endif %}</td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table></div>
+{% endmacro %}
+
+{% block content %}
+<h1>Results</h1>
+<p class="subtitle">Two ranked trade lists plus the master dislocation view. Ranked by |composite z|.</p>
+
+{% if empty %}
+<div class="empty">
+  <p>No active universe or price snapshot yet.</p>
+  <form method="post" action="/settings/demo"><button class="btn">Load demo data</button></form>
+  <p class="help">Then return here — Run Screen executes automatically on this page.</p>
+</div>
+{% else %}
+
+<form method="get" action="/results" class="card">
+  <div class="row">
+    <div><label>Sector</label><select name="sector"><option value="">All</option>{% for s in sectors %}<option value="{{ s }}" {{ 'selected' if filters.get('sector')==s }}>{{ s }}</option>{% endfor %}</select></div>
+    <div><label>Sub-industry</label><select name="sub_industry"><option value="">All</option>{% for s in subs %}<option value="{{ s }}" {{ 'selected' if filters.get('sub_industry')==s }}>{{ s }}</option>{% endfor %}</select></div>
+    <div><label>MACD state</label><select name="macd_state"><option value="">Any</option><option {{ 'selected' if filters.get('macd_state')=='Bullish' }}>Bullish</option><option {{ 'selected' if filters.get('macd_state')=='Bearish' }}>Bearish</option></select></div>
+    <div><label>RSI min</label><input type="number" name="rsi_min" value="{{ filters.get('rsi_min','') }}"></div>
+    <div><label>RSI max</label><input type="number" name="rsi_max" value="{{ filters.get('rsi_max','') }}"></div>
+  </div>
+  <div class="flex" style="margin-top:10px">
+    <label class="flex" style="margin:0"><input type="checkbox" name="idio_only" value="1" style="width:auto" {{ 'checked' if filters.get('idio_only') }}> Idiosyncratic only</label>
+    <label class="flex" style="margin:0"><input type="checkbox" name="hide_event" value="1" style="width:auto" {{ 'checked' if filters.get('hide_event') }}> Hide imminent-event names</label>
+    <button class="btn secondary" type="submit">Apply filters</button>
+    <a class="btn ghost" href="/results/export">Export Excel</a>
+  </div>
+</form>
+
+<h2>🟢 Oversold → Reversion (longs) <span class="muted">· {{ oversold|length }}</span></h2>
+{% if oversold %}
+{{ render_table(oversold, 'os') }}
+{% else %}<div class="empty">No oversold-reversion candidates under current filters/params.</div>{% endif %}
+
+<h2>🔴 Overbought → Fade (shorts) <span class="muted">· {{ overbought|length }}</span></h2>
+{% if overbought %}
+{{ render_table(overbought, 'ob') }}
+{% else %}<div class="empty">No overbought-fade candidates under current filters/params.</div>{% endif %}
+
+<h2>Master view — most dislocated by |z| <span class="muted">· {{ master|length }}</span></h2>
+{% if master %}{{ render_table(master, 'm') }}{% else %}<div class="empty">No names screened.</div>{% endif %}
+
+{% if skipped %}
+<h2>Skipped / below-floor</h2>
+<div class="table-wrap"><table><thead><tr><th>Ticker</th><th>Name</th><th>Reason</th></tr></thead>
+<tbody>{% for r in skipped %}<tr><td class="mono">{{ r.ticker }}</td><td>{{ r.name }}</td><td class="muted">{{ r.reason }}</td></tr>{% endfor %}</tbody></table></div>
+{% endif %}
+
+<h2>AI analysis <span class="muted">(optional, key-gated)</span></h2>
+<div class="card">
+  {% if any_key %}
+  <form hx-post="/results/analyze" hx-target="#analysis-out" hx-swap="innerHTML" hx-indicator="#ai-spin">
+    <div class="row">
+      <div><label>Provider</label><select name="provider">
+        {% for p in providers %}{% if p.enabled and p.has_key %}<option value="{{ p.provider }}">{{ p.provider }} ({{ p.model }})</option>{% endif %}{% endfor %}
+      </select></div>
+      <button class="btn" type="submit">Analyze / Synthesize</button>
+    </div>
+  </form>
+  <div id="ai-spin" class="htmx-indicator muted">Contacting provider…</div>
+  <div id="analysis-out"></div>
+  {% else %}
+  <div class="note info">AI analysis is disabled — no enabled provider with a key. Add one in <a href="/settings">Settings</a>. The screen works fully without it.</div>
+  {% endif %}
+</div>
+{% endif %}
+{% endblock %}
