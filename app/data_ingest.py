@@ -6,6 +6,7 @@ Supports tidy time-series export OR an offset-grid layout for prices.
 from __future__ import annotations
 
 import io
+import re as _re
 from typing import Any, Dict, List, Tuple
 
 import numpy as np
@@ -154,8 +155,87 @@ def parse_universe(content: bytes, filename: str = "",
     out = out[out["ticker"].notna() & (out["ticker"] != "") & (out["ticker"].str.lower() != "nan")]
     out["index_weight"] = pd.to_numeric(out["index_weight"], errors="coerce")
     out["adv_usd_20d"] = pd.to_numeric(out["adv_usd_20d"], errors="coerce")
+
+    # MSCI index-export enrichment: these files list GICS sector/sub-industry as
+    # interleaved GROUP ROWS (blank symbol, name prefixed with a GICS code:
+    # 2-digit = sector, 6/8-digit = sub-industry) followed by their constituents.
+    # Derive sector/sub-industry per name and drop the group/index summary rows.
+    msci = _enrich_msci_gics(df, mapping)
+    if msci is not None:
+        out = msci
+
     report = {"rows": int(len(out)), "mapping": mapping, "columns_seen": cols}
     return out.reset_index(drop=True), report
+
+
+_GICS_ROW = _re.compile(r"^\s*(\d{2})(?:(\d{2})(\d{2,4}))?\s+(.*\S)\s*$")
+# Identifiers that are index/aggregate rows, not tradable constituents.
+_NON_CONSTITUENT_TICKERS = {"cn-msx", "", "nan", "-"}
+
+
+def _enrich_msci_gics(df: pd.DataFrame, mapping: Dict[str, Any]):
+    """If df looks like an MSCI index export, return an enriched constituent
+    frame with sector/sub_industry derived from GICS group rows. Else None.
+
+    Detection: a 'name' and 'symbol/ticker' column exist, no explicit sector
+    column was mapped, and the name column contains GICS-coded group rows that
+    have a blank symbol.
+    """
+    name_col = mapping.get("name")
+    tkr_col = mapping.get("ticker")
+    if not name_col or not tkr_col or mapping.get("sector"):
+        return None
+    if name_col not in df.columns or tkr_col not in df.columns:
+        return None
+
+    names = df[name_col].astype(str)
+    syms = df[tkr_col].astype(str).str.strip()
+    wt_col = mapping.get("index_weight")
+    weights = df[wt_col] if wt_col and wt_col in df.columns else None
+
+    # Count GICS-coded group rows that have a blank/dash symbol.
+    group_like = 0
+    for nm, sy in zip(names, syms):
+        nm_s = str(nm).strip()
+        sy_s = str(sy).strip().lower()
+        if sy_s in _NON_CONSTITUENT_TICKERS and _GICS_ROW.match(nm_s):
+            group_like += 1
+    if group_like < 3:
+        return None  # not an MSCI-style hierarchical export
+
+    cur_sector = None
+    cur_sub = None
+    rows = []
+    for i in range(len(df)):
+        nm = str(names.iloc[i]).strip()
+        sy = str(syms.iloc[i]).strip()
+        sy_low = sy.lower()
+        m = _GICS_ROW.match(nm)
+        is_group = (sy_low in _NON_CONSTITUENT_TICKERS) and bool(m)
+        if is_group:
+            code2, code_mid, code_tail, label = m.group(1), m.group(2), m.group(3), m.group(4)
+            if code_mid is None:
+                # 2-digit -> GICS sector header; resets sub-industry
+                cur_sector = label.strip()
+                cur_sub = None
+            else:
+                # 6/8-digit -> sub-industry header under the current sector
+                cur_sub = label.strip()
+            continue
+        # Constituent row: must have a real symbol
+        if sy_low in _NON_CONSTITUENT_TICKERS:
+            continue
+        rows.append({
+            "ticker": sy,
+            "name": nm,
+            "sector": cur_sector,
+            "sub_industry": cur_sub,
+            "index_weight": pd.to_numeric(weights.iloc[i], errors="coerce") if weights is not None else np.nan,
+            "adv_usd_20d": np.nan,
+        })
+    if not rows:
+        return None
+    return pd.DataFrame(rows)
 
 
 def _scrub_factset(series: pd.Series) -> Tuple[pd.Series, int]:

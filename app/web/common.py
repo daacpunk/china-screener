@@ -56,7 +56,11 @@ def assemble_active_universe(db_path: Optional[str] = None) -> pd.DataFrame:
     df = pd.concat(frames, ignore_index=True)
     df.columns = [str(c).strip().lower() for c in df.columns]
     if "adv_usd_20d" in df.columns and "below_floor" not in df.columns:
-        df["below_floor"] = pd.to_numeric(df["adv_usd_20d"], errors="coerce").fillna(0) < floor
+        adv = pd.to_numeric(df["adv_usd_20d"], errors="coerce")
+        # Only drop names whose ADV is KNOWN and below the floor. Names with
+        # unknown ADV (e.g. index file without a liquidity column) stay
+        # screenable — liquidity can be filled later from the price/volume pull.
+        df["below_floor"] = adv.notna() & (adv < floor)
     if "below_floor" not in df.columns:
         df["below_floor"] = False
     # dedupe by ticker keeping first

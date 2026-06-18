@@ -87,7 +87,8 @@ async def universe_upload(
 
     params = ss.get_screen_params()
     floor = float(params.get("adv_floor", 10_000_000))
-    df["below_floor"] = pd.to_numeric(df.get("adv_usd_20d"), errors="coerce").fillna(0) < floor
+    _adv = pd.to_numeric(df.get("adv_usd_20d"), errors="coerce")
+    df["below_floor"] = _adv.notna() & (_adv < floor)  # unknown ADV stays screenable
     ss.add_universe(df.to_csv(index=False), filename=file.filename or "upload.csv",
                     note=note, make_active=True)
     mapped = ", ".join(f"{k}←{v}" for k, v in mapping.items() if v)
