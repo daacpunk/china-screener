@@ -1,4 +1,15 @@
 // Minimal client helpers. HTMX handles most interactivity.
+
+// Toggle the free-text custom-model input when "Other (custom)" is chosen.
+function toggleCustomModel(sel){
+  const form = sel.closest('form');
+  if(!form) return;
+  const custom = form.querySelector('.model-custom');
+  if(!custom) return;
+  if(sel.value === '__custom__'){ custom.style.display=''; custom.focus(); }
+  else { custom.style.display='none'; }
+}
+
 function copyText(id){
   const el = document.getElementById(id);
   if(!el) return;

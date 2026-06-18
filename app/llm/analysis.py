@@ -60,6 +60,67 @@ def build_portfolio_prompt(oversold: List[Dict], overbought: List[Dict]) -> str:
     )
 
 
+def build_sidebar_prompt(
+    oversold: List[Dict], overbought: List[Dict], master: Optional[List[Dict]] = None
+) -> str:
+    """Prompt for the Results right-sidebar synthesis. Built from the ACTUAL
+    screen rows (never fabricated values)."""
+    master = master or []
+    os_lines = "\n".join(_row_line(r) for r in oversold[:10]) or "(none)"
+    ob_lines = "\n".join(_row_line(r) for r in overbought[:10]) or "(none)"
+    n_idio = sum(1 for r in master if r.get("dislocation_type") == "IDIOSYNCRATIC")
+    n_sector = sum(1 for r in master if r.get("dislocation_type") and r.get("dislocation_type") != "IDIOSYNCRATIC")
+    n_event = sum(1 for r in master if r.get("event_flag"))
+    return (
+        f"{_METHODOLOGY}\n\n"
+        "You are an equity strategist writing a CONCISE right-sidebar briefing "
+        "(<= ~220 words) that explains what THIS screen result means. Use short "
+        "markdown sections with bold mini-headers. Cover, grounded ONLY in the rows below: "
+        "(1) the most dislocated names, (2) idiosyncratic vs sector/macro breakdown, "
+        "(3) key risks / event flags, (4) the top longs (oversold-reversion) and top "
+        "fades (overbought). Do not invent tickers, prices, or fundamentals.\n\n"
+        f"Screen summary: {len(master)} names screened; {n_idio} idiosyncratic, "
+        f"{n_sector} sector/macro; {n_event} with event flags; "
+        f"{len(oversold)} oversold-reversion longs; {len(overbought)} overbought fades.\n\n"
+        f"## Oversold-Reversion (longs)\n{os_lines}\n\n"
+        f"## Overbought-Fade (shorts)\n{ob_lines}\n"
+    )
+
+
+def synthesize_sidebar(
+    provider: Optional[LLMProvider],
+    oversold: List[Dict],
+    overbought: List[Dict],
+    master: Optional[List[Dict]] = None,
+    max_tokens: int = 600,
+) -> Dict[str, Any]:
+    """Run the sidebar synthesis. Key-gated and crash-proof.
+
+    Returns dict: {enabled, markdown, error, provider}. With provider=None (no
+    key/disabled) returns a clean disabled hint and never raises.
+    """
+    if provider is None or not getattr(provider, "available", False):
+        return {
+            "enabled": False,
+            "markdown": "",
+            "error": "Set an AI key in Settings to enable synthesis.",
+            "provider": None,
+        }
+    try:
+        text = provider.complete(
+            build_sidebar_prompt(oversold, overbought, master), max_tokens=max_tokens
+        )
+        return {"enabled": True, "markdown": text or "", "error": "",
+                "provider": getattr(provider, "name", "")}
+    except Exception as e:  # noqa: BLE001
+        return {
+            "enabled": True,
+            "markdown": "",
+            "error": f"Synthesis unavailable: {type(e).__name__}.",
+            "provider": getattr(provider, "name", ""),
+        }
+
+
 def analyze_rows(
     provider: Optional[LLMProvider],
     oversold: List[Dict],

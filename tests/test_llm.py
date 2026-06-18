@@ -72,3 +72,38 @@ def test_prompt_includes_methodology():
     p = la.build_per_name_prompt(ROWS_OS[0], "Oversold-Reversion long")
     assert "QUALITATIVE" in p and "do NOT recompute" in p
     assert "AAA" in p
+
+
+# ---- CHANGE 5: results sidebar synthesis ----
+def test_build_sidebar_prompt_uses_actual_rows():
+    p = la.build_sidebar_prompt(ROWS_OS, ROWS_OB, ROWS_OS + ROWS_OB)
+    assert "AAA" in p and "BBB" in p
+    assert "do NOT recompute" in p
+    # summary counts reflect actual rows
+    assert "2 names screened" in p
+
+
+def test_synthesize_sidebar_with_mock_provider():
+    prov = MockProvider(api_key="x", model="m")
+    out = la.synthesize_sidebar(prov, ROWS_OS, ROWS_OB, ROWS_OS + ROWS_OB)
+    assert out["enabled"] is True
+    assert "MOCK_RESPONSE" in out["markdown"]
+    assert out["error"] == ""
+    assert out["provider"] == "mock"
+
+
+def test_synthesize_sidebar_disabled_without_provider():
+    out = la.synthesize_sidebar(None, ROWS_OS, ROWS_OB, ROWS_OS + ROWS_OB)
+    assert out["enabled"] is False
+    assert out["markdown"] == ""
+    assert "Settings" in out["error"]  # "Set an AI key in Settings..."
+    assert out["provider"] is None
+
+
+def test_synthesize_sidebar_handles_errors_gracefully():
+    prov = FailingProvider(api_key="x", model="m")
+    out = la.synthesize_sidebar(prov, ROWS_OS, ROWS_OB)
+    # never raises; reports unavailable
+    assert out["enabled"] is True
+    assert out["markdown"] == ""
+    assert "unavailable" in out["error"].lower()

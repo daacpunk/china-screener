@@ -32,7 +32,7 @@ def load_demo_data(db_path: str | None = None) -> dict:
     json_text = p["dictionary_json"].read_text()
     md_text = p["dictionary_md"].read_text() if p["dictionary_md"].exists() else ""
     ss.add_dictionary(json_text, md_text, filename="dictionary.json",
-                      note="demo seed", make_active=True, db_path=db_path)
+                      note="demo seed", make_active=True, is_demo=True, db_path=db_path)
 
     # universe — parse and apply default liquidity floor
     uni_bytes = p["universe_csv"].read_bytes()

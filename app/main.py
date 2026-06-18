@@ -1,7 +1,8 @@
 """FastAPI application entrypoint.
 
 $PORT-aware via the Procfile/uvicorn command. Mounts static, templates, and the
-five tab routers. Initializes the SQLite schema and seeds demo data on first run.
+five tab routers. Initializes the SQLite schema. A fresh deploy starts EMPTY —
+there is no auto-seed; sample/demo data is an explicit opt-in via Settings.
 """
 from __future__ import annotations
 
@@ -12,7 +13,6 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
 from . import db as dbmod
-from . import demo as demo_mod
 from .web import common
 from .web.routes_data import router as data_router
 from .web.routes_formula import router as formula_router
@@ -29,8 +29,9 @@ app.mount("/static", StaticFiles(directory=str(BASE / "static")), name="static")
 
 @app.on_event("startup")
 def _startup():
+    # No auto-seed: a fresh deploy starts empty with clean empty states.
+    # Sample/demo data is loaded only via the explicit Settings button.
     dbmod.init_db()
-    demo_mod.maybe_seed_on_startup()
 
 
 @app.get("/", response_class=HTMLResponse)

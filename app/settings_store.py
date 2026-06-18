@@ -12,6 +12,7 @@ from typing import Any, Dict, List, Optional
 
 from . import crypto
 from .db import get_conn
+from .llm.models import DEFAULT_MODEL as _DEFAULT_MODEL
 from .screen_engine import DEFAULT_PARAMS
 
 _PROVIDERS = ["perplexity", "anthropic", "deepseek"]
@@ -20,13 +21,11 @@ _ENV_KEY = {
     "anthropic": "ANTHROPIC_API_KEY",
     "deepseek": "DEEPSEEK_API_KEY",
 }
-_DEFAULT_MODEL = {
-    "perplexity": "sonar",
-    "anthropic": "claude-3-5-sonnet-latest",
-    "deepseek": "deepseek-chat",
-}
 
 _PARAMS_KEY = "screen_params"
+
+# Per-section AI provider override keys (CHANGE 4).
+SECTIONS = ["per_name", "portfolio", "sidebar", "news"]
 
 
 def _now() -> str:
@@ -169,6 +168,72 @@ def set_default_provider(provider: str, db_path: Optional[str] = None) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Per-section AI provider (CHANGE 4)
+# ---------------------------------------------------------------------------
+def _section_key(section: str) -> str:
+    return f"section_provider:{section}"
+
+
+def get_section_provider(section: str, db_path: Optional[str] = None) -> str:
+    """Resolved provider for a section; falls back to the global default."""
+    if section not in SECTIONS:
+        raise ValueError(f"unknown section {section}")
+    conn = get_conn(db_path)
+    try:
+        row = conn.execute(
+            "SELECT value FROM settings WHERE key=?", (_section_key(section),)
+        ).fetchone()
+        if row and row["value"] in _PROVIDERS:
+            return row["value"]
+    finally:
+        conn.close()
+    return get_default_provider(db_path)
+
+
+def set_section_provider(section: str, provider: str, db_path: Optional[str] = None) -> None:
+    """Set a section provider. Pass '' or None to clear (use global default)."""
+    if section not in SECTIONS:
+        raise ValueError(f"unknown section {section}")
+    conn = get_conn(db_path)
+    try:
+        if not provider:
+            conn.execute("DELETE FROM settings WHERE key=?", (_section_key(section),))
+        else:
+            if provider not in _PROVIDERS:
+                raise ValueError(f"unknown provider {provider}")
+            conn.execute(
+                "INSERT INTO settings(key,value) VALUES(?,?) "
+                "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                (_section_key(section), provider),
+            )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def get_section_provider_raw(section: str, db_path: Optional[str] = None) -> Optional[str]:
+    """The stored override (or None if unset). Used by the UI to show the
+    '(use global default)' selection vs an explicit override."""
+    if section not in SECTIONS:
+        raise ValueError(f"unknown section {section}")
+    conn = get_conn(db_path)
+    try:
+        row = conn.execute(
+            "SELECT value FROM settings WHERE key=?", (_section_key(section),)
+        ).fetchone()
+        if row and row["value"] in _PROVIDERS:
+            return row["value"]
+        return None
+    finally:
+        conn.close()
+
+
+def get_all_section_providers(db_path: Optional[str] = None) -> Dict[str, str]:
+    """Resolved provider per section (with global fallback applied)."""
+    return {s: get_section_provider(s, db_path) for s in SECTIONS}
+
+
+# ---------------------------------------------------------------------------
 # Dictionary versioning
 # ---------------------------------------------------------------------------
 def validate_dictionary(json_text: str) -> Dict[str, Any]:
@@ -190,7 +255,7 @@ def validate_dictionary(json_text: str) -> Dict[str, Any]:
 
 def add_dictionary(
     json_text: str, md_text: str = "", filename: str = "", note: str = "",
-    make_active: bool = True, db_path: Optional[str] = None,
+    make_active: bool = True, is_demo: bool = False, db_path: Optional[str] = None,
 ) -> Dict[str, Any]:
     parsed = validate_dictionary(json_text)  # raises on bad
     prev = get_active_dictionary(db_path)
@@ -199,9 +264,9 @@ def add_dictionary(
         if make_active:
             conn.execute("UPDATE dictionaries SET is_active=0")
         cur = conn.execute(
-            "INSERT INTO dictionaries(filename,note,json_text,md_text,created_at,is_active) "
-            "VALUES(?,?,?,?,?,?)",
-            (filename, note, json_text, md_text, _now(), int(make_active)),
+            "INSERT INTO dictionaries(filename,note,json_text,md_text,created_at,is_active,is_demo) "
+            "VALUES(?,?,?,?,?,?,?)",
+            (filename, note, json_text, md_text, _now(), int(make_active), int(is_demo)),
         )
         conn.commit()
         new_id = cur.lastrowid
@@ -209,6 +274,23 @@ def add_dictionary(
         conn.close()
     diff = _dict_diff(prev["data"] if prev else None, parsed)
     return {"id": new_id, "diff": diff}
+
+
+def void_demo_dictionaries(db_path: Optional[str] = None) -> int:
+    """Delete all bundled sample/demo dictionary rows (is_demo=1).
+
+    Called when a user uploads their own dictionary so the demo dictionary is
+    no longer selectable/active and vanishes from the version list. Only ever
+    touches demo rows — user uploads (is_demo=0) are never removed.
+    Returns the number of demo rows removed.
+    """
+    conn = get_conn(db_path)
+    try:
+        cur = conn.execute("DELETE FROM dictionaries WHERE is_demo=1")
+        conn.commit()
+        return cur.rowcount
+    finally:
+        conn.close()
 
 
 def _dict_diff(old: Optional[dict], new: dict) -> Dict[str, List[str]]:

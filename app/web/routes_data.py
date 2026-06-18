@@ -79,9 +79,15 @@ def data_run(request: Request):
     if res.get("_empty"):
         return HTMLResponse(
             "<div class='note error'>No active universe or price snapshot. "
-            "Load demo data in Settings, or upload data above.</div>")
+            "Load sample/demo data in Settings, or upload data above.</div>")
+    # Invalidate the cached Results sidebar synthesis for this snapshot so it
+    # is regenerated on the next Results load (an explicit Run Screen).
+    from .routes_results import _SIDEBAR_CACHE
+    snap = ss.get_active_snapshot()
+    if snap:
+        _SIDEBAR_CACHE.pop(snap["id"], None)
     n_os = len(res["oversold"]); n_ob = len(res["overbought"])
     return HTMLResponse(
         f"<div class='note ok'>Screen complete: <b>{n_os}</b> oversold-reversion longs and "
         f"<b>{n_ob}</b> overbought-fade shorts. "
-        f"<a href='/results'>View Results &rarr;</a></div>")
+        f"<a href='/results?run=1'>View Results &rarr;</a></div>")

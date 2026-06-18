@@ -7,9 +7,9 @@
 {% if err %}<div class="note error">{{ err }}</div>{% endif %}
 
 <div class="card" style="border-color:var(--accent)">
-  <h3>▶ Demo data</h3>
-  <p class="help">Seed a synthetic dictionary + universe + 250-day price series so Run Screen returns populated tables immediately. No FactSet or API keys needed.</p>
-  <form method="post" action="/settings/demo"><button class="btn" type="submit">Load demo data</button></form>
+  <h3>▶ Load sample/demo data (synthetic)</h3>
+  <p class="help">Seeds a <b>synthetic test dataset</b> (dictionary + universe + 250-day price series) so Run Screen returns populated tables immediately. This is fabricated test data, <b>not market data</b> — for real screening, upload your own FactSet dictionary, universe, and price snapshot. A fresh deploy starts empty; nothing is auto-seeded.</p>
+  <form method="post" action="/settings/demo"><button class="btn" type="submit">Load sample/demo data (synthetic)</button></form>
 </div>
 
 <h2>5a · FactSet dictionary management</h2>
@@ -48,7 +48,15 @@
       <input type="hidden" name="provider" value="{{ p.provider }}">
       <label>API key{% if p.key_source=='env' %} (set via env — store is fallback){% endif %}</label>
       <input type="password" name="api_key" placeholder="leave blank to keep existing">
-      <label>Model</label><input name="model" value="{{ p.model }}">
+      {% set models = provider_models.get(p.provider, []) %}
+      {% set known_ids = models | map(attribute=0) | list %}
+      {% set is_known = p.model in known_ids %}
+      <label>Model</label>
+      <select name="model" class="model-select" data-provider="{{ p.provider }}" onchange="toggleCustomModel(this)">
+        {% for mid, label in models %}<option value="{{ mid }}" {{ 'selected' if p.model==mid }}>{{ label }}</option>{% endfor %}
+        <option value="__custom__" {{ 'selected' if not is_known }}>Other (custom)…</option>
+      </select>
+      <input type="text" name="model_custom" class="model-custom" placeholder="custom model id" value="{{ p.model if not is_known else '' }}" style="margin-top:6px;{{ '' if not is_known else 'display:none' }}">
       <label class="flex" style="margin-top:8px"><input type="checkbox" name="enabled" {{ 'checked' if p.enabled }} style="width:auto"> Enabled</label>
       <div class="spacer"></div>
       <button class="btn secondary" type="submit">Save</button>
@@ -62,6 +70,25 @@
   <div><label>Default provider</label><select name="provider">{% for p in providers %}<option value="{{ p.provider }}" {{ 'selected' if default_provider==p.provider }}>{{ p.provider }}</option>{% endfor %}</select></div>
   <button class="btn secondary" type="submit">Set default</button>
 </form>
+
+<div class="card" style="margin-top:14px">
+  <h3>Per-section AI</h3>
+  <p class="help">Choose which provider powers each AI surface. Each defaults to the global default provider unless overridden.</p>
+  <div class="grid grid-2">
+  {% for sid, slabel in section_labels %}
+    <form method="post" action="/settings/section_provider" class="row" style="align-items:flex-end">
+      <input type="hidden" name="section" value="{{ sid }}">
+      <div style="flex:1"><label>{{ slabel }}</label>
+        <select name="provider">
+          <option value="" {{ 'selected' if not section_providers.get(sid) }}>(use global default)</option>
+          {% for p in providers %}<option value="{{ p.provider }}" {{ 'selected' if section_providers.get(sid)==p.provider }}>{{ p.provider }}</option>{% endfor %}
+        </select>
+      </div>
+      <button class="btn ghost" type="submit">Save</button>
+    </form>
+  {% endfor %}
+  </div>
+</div>
 
 <h2>5c · Screen parameters</h2>
 <form method="post" action="/settings/params" class="card">

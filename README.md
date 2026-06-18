@@ -24,12 +24,13 @@ uvicorn app.main:app --reload --port 8000
 # open http://localhost:8000
 ```
 
-On first run with an empty database the app **auto-seeds demo data** so you can
-click **Run Screen** immediately. You can also press **Load demo data** on the
-home page or in Settings.
+A fresh database starts **empty** — there is no auto-seed. Every tab renders a
+clean empty state pointing you to upload real FactSet data. To explore the app
+without FactSet/API keys, press **Load sample/demo data (synthetic)** in
+Settings; this loads clearly-labelled *synthetic test data* (not market data).
 
-### Try the demo end-to-end (no FactSet, no API keys)
-1. Open the app → **Load demo data**.
+### Try the app end-to-end (no FactSet, no API keys)
+1. Open the app → **Settings** → **Load sample/demo data (synthetic)**.
 2. Go to **Data & Indicators** → **▶ Run Screen** (or just open **Results**).
 3. You'll see populated **Oversold-Reversion** and **Overbought-Fade** tables,
    a master "most dislocated by |z|" view, and an idiosyncratic-vs-sector tag.
@@ -49,14 +50,14 @@ python -m pytest -q
 | 1 | **Universe** | Upload constituents (CSV/XLSX, tolerant column mapping), version them, add manual tickers, apply a liquidity floor (default 20D ADV > $10m). Below-floor names are kept in a separate view, never deleted. |
 | 2 | **Formula Generator** | Generates FactSet `=FDS(...)` price-series formulas from the active FQL dictionary. Method A (time-series block) or Method B (offset grid). Bulk-download to `.xlsx`. Indicators are **not** pulled — they're computed in Tab 3. |
 | 3 | **Data & Indicators** | Upload completed FactSet price/volume data (tidy or wide). Data-quality report (missing tickers, NaNs, short series, FactSet error strings). Computes RSI/MACD per name. **Run Screen** button. |
-| 4 | **Results** | Two ranked tables + master view. Filters (sector, sub-industry, idiosyncratic-only, hide-event, RSI bounds, MACD state). Excel export. Optional, key-gated **AI analysis**. |
-| 5 | **Settings (Admin)** | Dictionary versioning + validation; encrypted API keys (masked, env-first); screen parameters with reset-to-default; load-demo-data. |
+| 4 | **Results** | Two ranked tables + master view. Filters (sector, sub-industry, idiosyncratic-only, hide-event, RSI bounds, MACD state). Excel export. Two-column layout with a sticky **AI synthesis sidebar** (auto-populated on Run Screen, key-gated, cached per snapshot, responsive). Optional inline AI analysis. |
+| 5 | **Settings (Admin)** | Dictionary versioning + validation (uploading your own dictionary **voids** the synthetic demo dictionary); encrypted API keys with a **per-provider model dropdown** (current June-2026 models + custom escape hatch); **per-section AI selector** (per-name / portfolio / sidebar / news, each falling back to the global default provider); screen parameters with reset-to-default; explicit synthetic sample-data loader. |
 
 ---
 
 ## Environment variables
 
-Copy `.env.example` → `.env` (all optional — the app runs in demo mode with none).
+Copy `.env.example` → `.env` (all optional — the app runs with none; AI features stay disabled until a key is set).
 
 | Var | Default | Purpose |
 |-----|---------|---------|

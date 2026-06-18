@@ -36,11 +36,13 @@
 {% if empty %}
 <div class="empty">
   <p>No active universe or price snapshot yet.</p>
-  <form method="post" action="/settings/demo"><button class="btn">Load demo data</button></form>
-  <p class="help">Then return here — Run Screen executes automatically on this page.</p>
+  <form method="post" action="/settings/demo"><button class="btn">Load sample/demo data (synthetic)</button></form>
+  <p class="help">Or upload your own FactSet universe + price snapshot. Then return here — Run Screen executes automatically on this page.</p>
 </div>
 {% else %}
 
+<div class="results-layout">
+<div class="results-main">
 <form method="get" action="/results" class="card">
   <div class="row">
     <div><label>Sector</label><select name="sector"><option value="">All</option>{% for s in sectors %}<option value="{{ s }}" {{ 'selected' if filters.get('sector')==s }}>{{ s }}</option>{% endfor %}</select></div>
@@ -93,5 +95,24 @@
   <div class="note info">AI analysis is disabled — no enabled provider with a key. Add one in <a href="/settings">Settings</a>. The screen works fully without it.</div>
   {% endif %}
 </div>
+</div>{# /results-main #}
+
+<aside class="results-sidebar">
+  <div class="sidebar-card">
+    <h3>AI synthesis</h3>
+    <p class="help">Auto-generated explanation of these results. Uses the <span class="mono">sidebar</span> section provider.</p>
+    {% if sidebar and sidebar.enabled and sidebar.html %}
+      <div class="sidebar-body md">{{ sidebar.html|safe }}</div>
+      {% if sidebar.provider %}<div class="muted" style="margin-top:8px;font-size:12px">via {{ sidebar.provider }} · qualitative only</div>{% endif %}
+    {% elif sidebar and sidebar.enabled and sidebar.error %}
+      <div class="note info">{{ sidebar.error }}</div>
+    {% elif sidebar and not sidebar.enabled %}
+      <div class="note info">{{ sidebar.error or 'Set an AI key in Settings to enable synthesis.' }} <a href="/settings">Settings →</a></div>
+    {% else %}
+      <div class="note info">Run a screen to populate this synthesis.</div>
+    {% endif %}
+  </div>
+</aside>
+</div>{# /results-layout #}
 {% endif %}
 {% endblock %}

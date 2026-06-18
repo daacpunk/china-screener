@@ -108,3 +108,25 @@ The optional AI layer performs **qualitative synthesis only** — it is explicit
 instructed that RSI/z were computed in-app and that its job is context (likely
 driver, reversion-vs-broken, idiosyncratic-vs-sector, risks/catalysts), not to
 recalculate signals. It is strictly key-gated and never affects the screen.
+
+- **Per-provider model picker.** Settings exposes a dropdown of the current
+  (June 2026) model IDs per provider, sourced from a single `app/llm/models.py`,
+  plus an "Other (custom)" escape hatch for arbitrary/forward-compat model IDs.
+- **Per-section AI.** Four AI surfaces — per-name notes, portfolio synthesis,
+  the results sidebar, and news/catalyst classification — each have an
+  independently configurable provider that falls back to the global default.
+- **Results sidebar.** The Results page renders a sticky right sidebar that
+  AI-synthesizes the *actual* screen rows (most-dislocated names, idiosyncratic
+  vs sector split, event/risk flags, top longs/fades). It is generated only on
+  an explicit Run Screen / first load after a run and cached per active snapshot
+  (not re-called on filter changes). With no key it shows a clean hint and never
+  crashes the page; all values come from the screen, never fabricated.
+
+## 9. No-demo-by-default & data provenance
+A fresh deployment starts **empty** (no auto-seed). All real data — universe,
+price/volume, and the FactSet dictionary — comes from user uploads; the app never
+fabricates tickers, prices, or fundamentals in normal operation. A synthetic
+sample dataset is available only via the explicit **Load sample/demo data
+(synthetic)** button and is clearly labelled as test data. Uploading your own
+FactSet dictionary **voids** (deletes) the bundled synthetic demo dictionary so
+it can no longer be active or selected.
