@@ -13,6 +13,7 @@ from typing import Any, Dict, List, Optional
 from . import crypto
 from .db import get_conn
 from .llm.models import DEFAULT_MODEL as _DEFAULT_MODEL
+from .llm.models import estimate_cost as _estimate_cost
 from .screen_engine import DEFAULT_PARAMS
 
 _PROVIDERS = ["perplexity", "anthropic", "deepseek"]
@@ -458,5 +459,113 @@ def set_active_snapshot(sid: int, db_path: Optional[str] = None) -> None:
         conn.execute("UPDATE snapshots SET is_active=0")
         conn.execute("UPDATE snapshots SET is_active=1 WHERE id=?", (sid,))
         conn.commit()
+    finally:
+        conn.close()
+
+
+# ---------------------------------------------------------------------------
+# LLM usage / cost audit ledger
+# ---------------------------------------------------------------------------
+USAGE_SECTIONS = ["per_name", "portfolio", "sidebar", "news", "ping", "manual"]
+
+
+def log_usage(
+    provider: str,
+    model: str,
+    section: str,
+    usage_dict: Optional[Dict[str, Any]],
+    ok: bool = True,
+    note: str = "",
+    db_path: Optional[str] = None,
+) -> None:
+    """Append one row to the llm_usage ledger. Computes est cost via pricing.
+
+    ``usage_dict`` is the provider's ``last_usage`` ({prompt_tokens,
+    completion_tokens}) or None. Tolerant of None / missing keys.
+    """
+    u = usage_dict or {}
+    try:
+        pt = int(u.get("prompt_tokens", 0) or 0)
+    except Exception:
+        pt = 0
+    try:
+        ct = int(u.get("completion_tokens", 0) or 0)
+    except Exception:
+        ct = 0
+    total = pt + ct
+    est = _estimate_cost(model or "", pt, ct)
+    conn = get_conn(db_path)
+    try:
+        conn.execute(
+            "INSERT INTO llm_usage(ts,provider,model,section,prompt_tokens,"
+            "completion_tokens,total_tokens,est_cost_usd,ok,note) "
+            "VALUES(?,?,?,?,?,?,?,?,?,?)",
+            (_now(), provider or "", model or "", section or "manual",
+             pt, ct, total, float(est), int(bool(ok)), (note or "")[:500]),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def get_usage_summary(db_path: Optional[str] = None) -> Dict[str, Any]:
+    """Return aggregates + per-provider/model/section breakdown."""
+    conn = get_conn(db_path)
+    try:
+        tot = conn.execute(
+            "SELECT COUNT(*) c, COALESCE(SUM(total_tokens),0) t, "
+            "COALESCE(SUM(est_cost_usd),0) cost, COALESCE(SUM(prompt_tokens),0) pt, "
+            "COALESCE(SUM(completion_tokens),0) ct FROM llm_usage"
+        ).fetchone()
+        breakdown = conn.execute(
+            "SELECT provider, model, section, COUNT(*) calls, "
+            "COALESCE(SUM(total_tokens),0) tokens, "
+            "COALESCE(SUM(est_cost_usd),0) cost, "
+            "SUM(CASE WHEN ok=0 THEN 1 ELSE 0 END) fails "
+            "FROM llm_usage GROUP BY provider, model, section "
+            "ORDER BY cost DESC, tokens DESC"
+        ).fetchall()
+    finally:
+        conn.close()
+    return {
+        "total_calls": int(tot["c"]),
+        "total_tokens": int(tot["t"]),
+        "total_prompt_tokens": int(tot["pt"]),
+        "total_completion_tokens": int(tot["ct"]),
+        "total_cost_usd": float(tot["cost"]),
+        "breakdown": [
+            {
+                "provider": r["provider"], "model": r["model"],
+                "section": r["section"], "calls": int(r["calls"]),
+                "tokens": int(r["tokens"]), "cost_usd": float(r["cost"]),
+                "fails": int(r["fails"] or 0),
+            }
+            for r in breakdown
+        ],
+    }
+
+
+def recent_usage(limit: int = 50, db_path: Optional[str] = None) -> List[Dict[str, Any]]:
+    """Most-recent ledger rows for a detail table."""
+    conn = get_conn(db_path)
+    try:
+        rows = conn.execute(
+            "SELECT ts,provider,model,section,prompt_tokens,completion_tokens,"
+            "total_tokens,est_cost_usd,ok,note FROM llm_usage "
+            "ORDER BY id DESC LIMIT ?",
+            (int(limit),),
+        ).fetchall()
+        return [dict(r) for r in rows]
+    finally:
+        conn.close()
+
+
+def clear_usage(db_path: Optional[str] = None) -> int:
+    """Delete all ledger rows. Returns number removed."""
+    conn = get_conn(db_path)
+    try:
+        cur = conn.execute("DELETE FROM llm_usage")
+        conn.commit()
+        return cur.rowcount
     finally:
         conn.close()

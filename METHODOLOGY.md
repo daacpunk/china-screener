@@ -130,3 +130,25 @@ sample dataset is available only via the explicit **Load sample/demo data
 (synthetic)** button and is clearly labelled as test data. Uploading your own
 FactSet dictionary **voids** (deletes) the bundled synthetic demo dictionary so
 it can no longer be active or selected.
+
+---
+
+## AI error surfacing, cost estimation & formula metric mapping
+
+- **Error transparency:** httpx providers surface HTTP >=400 bodies (status +
+  server message, ~300 chars) instead of discarding them via
+  `raise_for_status()`. API keys are `.strip()`-ed to defeat trailing-newline
+  auth/400 failures. `base.ping()` returns `{ok, detail, model}` and never
+  raises, using a small `max_tokens` (32) and a generous timeout (60s).
+- **Cost estimation:** `llm/models.py` holds a `PRICING` table (USD per 1M
+  tokens, June-2026 list rates) and `estimate_cost(model, prompt_tokens,
+  completion_tokens)`. Token usage is captured per call via
+  `provider.last_usage` (OpenAI-style `usage` for Perplexity/DeepSeek;
+  `usage.input_tokens/output_tokens` for Anthropic) and logged to `llm_usage`.
+  Estimates exclude per-request/search/citation fees; DeepSeek rates are
+  approximate/promotional.
+- **Configurable formula metrics:** `build_formula_workbook` /
+  `method_a_timeseries_formulas` / `method_b_offset_grid` accept
+  `price_metric` / `volume_metric` keys, defaulted via
+  `formula_gen.autodetect_metrics()` and overridable from the Formula tab so any
+  uploaded dictionary's templates are used (not generic P_PRICE/P_VOLUME).

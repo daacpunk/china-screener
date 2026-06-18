@@ -145,3 +145,42 @@ unavailable. Both paths are unit-tested to agree to < 1e-6. The active backend
 is shown on the Data & Indicators tab. See `BUILD_NOTES.md` for the rationale.
 
 > **Disclaimer:** Educational tool. Not investment advice.
+
+---
+
+## AI provider error surfacing, key caveats & cost audit
+
+**Improved "Test connection" errors.** The httpx providers (Perplexity,
+DeepSeek) no longer hide error bodies behind `raise_for_status()`. On any
+HTTP status >= 400 they now read the JSON/text response body and raise an
+`LLMError` that includes the status code AND the server's message (truncated
+to ~300 chars). A Perplexity 400/401 now surfaces as, for example:
+
+```
+Perplexity 401: {'error': {'message': 'Invalid API key provided. ...', 'type': 'invalid_api_key', 'code': 401}}
+Perplexity 400: {'error': {'type': 'invalid_model', 'message': '...'}}
+```
+
+**Common 400/401 causes:** a **trailing newline in a pasted API key** (now
+stripped automatically via `.strip()` in `LLMProvider.__init__`) and a **stale
+or mistyped model id**. The Settings → Test connection result shows the model
+tested plus the full surfaced error so the cause is visible.
+
+**Cost / usage audit.** Every AI call (sidebar synthesis, per-name notes,
+portfolio synthesis, news classification, and connection pings) is logged to a
+lightweight `llm_usage` ledger with token counts and an estimated USD cost.
+The **Settings → AI usage & cost audit** panel shows totals, a per
+provider/model/section breakdown, a recent-calls table, and a Reset button.
+Estimates are **token-based at list prices and EXCLUDE per-request/search fees**
+(notably Perplexity request fees and Sonar Deep Research citation/reasoning
+fees); DeepSeek rates are approximate/promotional. Actual billing may differ.
+
+## Formula Generator — configurable price/volume metric mapping
+
+The Formula tab shows the full list of metric keys in your active dictionary
+and lets you pick which key represents **price** and which represents **volume**
+via two dropdowns (auto-detected with smart defaults: a key containing
+price/close/px for price, volume/vol for volume). These selections thread
+through both the single-formula preview and the bulk `.xlsx` export, so a
+dictionary that names its series `px_last` / `vol` is honoured instead of
+falling back to the generic `P_PRICE` / `P_VOLUME` templates.

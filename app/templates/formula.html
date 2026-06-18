@@ -8,6 +8,7 @@ Indicators are <b>not</b> pulled here — they are computed in Tab 3.</p>
 <div class="note error">No active FactSet dictionary. Upload one in <a href="/settings">Settings</a> or load demo data.</div>
 {% else %}
 <div class="note info">Active dictionary: <b>{{ active_dict.filename }}</b> (v{{ active_dict.id }}) · {{ metric_keys|length }} metrics · {{ tickers|length }} universe tickers.</div>
+<div class="note">This generator reflects all {{ metric_keys|length }} metrics from your active dictionary: <span class="mono">{{ metric_keys|join(', ') }}</span>.</div>
 
 <div class="grid grid-2">
   <div class="card">
@@ -18,6 +19,12 @@ Indicators are <b>not</b> pulled here — they are computed in Tab 3.</p>
           <select name="ticker">{% for t in tickers %}<option>{{ t }}</option>{% endfor %}</select></div>
         <div><label>Metric</label>
           <select name="metric_key">{% for k in metric_keys %}<option value="{{ k }}">{{ k }}</option>{% endfor %}</select></div>
+      </div>
+      <div class="row">
+        <div><label>Price metric</label>
+          <select name="price_metric">{% for k in metric_keys %}<option value="{{ k }}" {{ 'selected' if k==default_price_metric }}>{{ k }}</option>{% endfor %}</select></div>
+        <div><label>Volume metric</label>
+          <select name="volume_metric">{% for k in metric_keys %}<option value="{{ k }}" {{ 'selected' if k==default_volume_metric }}>{{ k }}</option>{% endfor %}</select></div>
       </div>
       <div class="row">
         <div><label>Start</label><input name="start" value="-2Y"></div>
@@ -41,6 +48,12 @@ Indicators are <b>not</b> pulled here — they are computed in Tab 3.</p>
           <select name="method"><option value="A">A — time-series block (preferred)</option><option value="B">B — offset grid (fallback)</option></select></div>
         <div><label>Layout (Method A)</label>
           <select name="layout"><option value="per_ticker">Per-ticker sheets</option><option value="stacked">Stacked (one sheet)</option></select></div>
+      </div>
+      <div class="row">
+        <div><label>Price metric</label>
+          <select name="price_metric">{% for k in metric_keys %}<option value="{{ k }}" {{ 'selected' if k==default_price_metric }}>{{ k }}</option>{% endfor %}</select></div>
+        <div><label>Volume metric</label>
+          <select name="volume_metric">{% for k in metric_keys %}<option value="{{ k }}" {{ 'selected' if k==default_volume_metric }}>{{ k }}</option>{% endfor %}</select></div>
       </div>
       <div class="row">
         <div><label>Lookback (Method B, td)</label><input type="number" name="lookback" value="250"></div>

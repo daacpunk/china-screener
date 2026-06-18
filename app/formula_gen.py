@@ -22,6 +22,28 @@ from openpyxl.utils import get_column_letter
 # ---------------------------------------------------------------------------
 # Reference function — replicated EXACTLY (generalised via kwargs).
 # ---------------------------------------------------------------------------
+def autodetect_metrics(dictionary: dict) -> Dict[str, str]:
+    """Pick smart default price/volume metric keys from a dictionary.
+
+    Price: first key whose name (case-insensitive) contains price/close/px.
+    Volume: first key containing volume/vol. Falls back to the first key.
+    """
+    keys = list((dictionary or {}).get("formulas", {}).keys())
+    first = keys[0] if keys else ""
+
+    def _find(substrs: List[str]) -> str:
+        for k in keys:
+            kl = k.lower()
+            if any(s in kl for s in substrs):
+                return k
+        return first
+
+    return {
+        "price_metric": _find(["price", "close", "px"]),
+        "volume_metric": _find(["volume", "vol"]),
+    }
+
+
 def generate_formula(ticker: str, metric_key: str, dictionary: dict, **kwargs) -> str:
     formulas = dictionary["formulas"]
     if metric_key not in formulas:
@@ -131,6 +153,8 @@ def build_formula_workbook(
     end: str = "0D",
     freq: str = "D",
     layout: str = "per_ticker",  # 'per_ticker' or 'stacked'
+    price_metric: str = "price",
+    volume_metric: str = "volume",
 ) -> bytes:
     """Build the formula workbook as xlsx bytes.
 
@@ -178,7 +202,9 @@ def build_formula_workbook(
             ws.append(["ticker", "date_formula", "close_formula", "volume_formula"])
             _style_header(ws, 4)
             for t in tickers:
-                fs = method_a_timeseries_formulas(t, dictionary, start, end, freq)
+                fs = method_a_timeseries_formulas(t, dictionary, start, end, freq,
+                                                  price_metric=price_metric,
+                                                  volume_metric=volume_metric)
                 ws.append([t, fs["date"], fs["close"], fs["volume"]])
         else:
             for t in tickers:
@@ -186,7 +212,9 @@ def build_formula_workbook(
                 ws = wb.create_sheet(safe)
                 ws.append(["date", "close", "volume"])
                 _style_header(ws, 3)
-                fs = method_a_timeseries_formulas(t, dictionary, start, end, freq)
+                fs = method_a_timeseries_formulas(t, dictionary, start, end, freq,
+                                                  price_metric=price_metric,
+                                                  volume_metric=volume_metric)
                 ws.cell(row=2, column=1, value=fs["date"])
                 ws.cell(row=2, column=2, value=fs["close"])
                 ws.cell(row=2, column=3, value=fs["volume"])
@@ -199,7 +227,7 @@ def build_formula_workbook(
             ws.append(["ticker_cell", "date_col_B", "relative_price_C", "explicit_price_D"])
             _style_header(ws, 4)
             ws.cell(row=2, column=1, value=t)  # A2 = ticker
-            grid = method_b_offset_grid(dictionary, lookback=lookback, price_metric="price")
+            grid = method_b_offset_grid(dictionary, lookback=lookback, price_metric=price_metric)
             for g in grid:
                 r = g["row"]
                 ws.cell(row=r, column=3, value=g["relative_formula"])

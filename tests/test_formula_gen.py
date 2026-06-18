@@ -73,3 +73,41 @@ def test_build_workbook_method_b_opens():
     assert ws.cell(row=2, column=1).value == "BABA-CN"  # A2 = ticker
     # relative formula present in column C
     assert "ROW()" in str(ws.cell(row=4, column=3).value)
+
+
+# ---- ITEM 4: configurable price/volume metric keys ----
+DICT_CUSTOM = {
+    "formulas": {
+        "px_last": {"fql_template": "PX_LAST({start}:{end}:{freq})"},
+        "vol": {"fql_template": "VOL_TRADED({start}:{end}:{freq})"},
+    }
+}
+
+
+def test_autodetect_metrics_custom_keys():
+    auto = fg.autodetect_metrics(DICT_CUSTOM)
+    assert auto["price_metric"] == "px_last"  # contains 'px'
+    assert auto["volume_metric"] == "vol"     # contains 'vol'
+
+
+def test_workbook_honors_custom_metric_keys():
+    # Without configurable keys this fell back to generic P_PRICE/P_VOLUME.
+    data = fg.build_formula_workbook(
+        ["BABA-CN"], DICT_CUSTOM, method="A", layout="per_ticker",
+        price_metric="px_last", volume_metric="vol",
+    )
+    wb = openpyxl.load_workbook(io.BytesIO(data))
+    ws = wb["BABA-CN"]
+    close = str(ws.cell(row=2, column=2).value)
+    volume = str(ws.cell(row=2, column=3).value)
+    # The user's fql_template is used, NOT the generic fallback.
+    assert "PX_LAST(-2Y:0D:D)" in close
+    assert "P_PRICE" not in close
+    assert "VOL_TRADED(-2Y:0D:D)" in volume
+    assert "P_VOLUME" not in volume
+
+
+def test_method_b_honors_custom_price_metric():
+    grid = fg.method_b_offset_grid(DICT_CUSTOM, lookback=5, price_metric="px_last")
+    assert "PX_LAST" in grid[0]["relative_formula"]
+    assert "P_PRICE" not in grid[0]["relative_formula"]

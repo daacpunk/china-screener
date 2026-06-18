@@ -9,6 +9,22 @@ from typing import Any, Dict, List, Optional
 
 from .base import LLMProvider
 
+
+def _log_usage(provider: Optional[LLMProvider], section: str, ok: bool, note: str = "") -> None:
+    """Best-effort usage logging. NEVER raises / breaks the screen."""
+    try:
+        from .. import settings_store as ss
+        ss.log_usage(
+            getattr(provider, "name", ""),
+            getattr(provider, "model", "") or "",
+            section,
+            getattr(provider, "last_usage", None) if ok else None,
+            ok=ok,
+            note=note,
+        )
+    except Exception:
+        pass
+
 _METHODOLOGY = (
     "METHODOLOGY CONTEXT (do NOT recompute): The RSI(14), MACD, and "
     "volatility-normalized return z-scores were already computed in-app. "
@@ -110,9 +126,11 @@ def synthesize_sidebar(
         text = provider.complete(
             build_sidebar_prompt(oversold, overbought, master), max_tokens=max_tokens
         )
+        _log_usage(provider, "sidebar", ok=True)
         return {"enabled": True, "markdown": text or "", "error": "",
                 "provider": getattr(provider, "name", "")}
     except Exception as e:  # noqa: BLE001
+        _log_usage(provider, "sidebar", ok=False, note=str(e)[:200])
         return {
             "enabled": True,
             "markdown": "",
@@ -143,19 +161,25 @@ def analyze_rows(
             try:
                 notes.append({"ticker": r.get("ticker"), "playbook": "Oversold-Reversion (long)",
                               "note": provider.complete(build_per_name_prompt(r, "Oversold-Reversion long"), max_tokens=300)})
+                _log_usage(provider, "per_name", ok=True, note=str(r.get("ticker") or ""))
             except Exception as e:  # noqa: BLE001
                 errors.append(f"{r.get('ticker')}: {e}")
+                _log_usage(provider, "per_name", ok=False, note=str(e)[:200])
         for r in (overbought[:max_names]):
             try:
                 notes.append({"ticker": r.get("ticker"), "playbook": "Overbought-Fade (short)",
                               "note": provider.complete(build_per_name_prompt(r, "Overbought-Fade short"), max_tokens=300)})
+                _log_usage(provider, "per_name", ok=True, note=str(r.get("ticker") or ""))
             except Exception as e:  # noqa: BLE001
                 errors.append(f"{r.get('ticker')}: {e}")
+                _log_usage(provider, "per_name", ok=False, note=str(e)[:200])
     portfolio = ""
     try:
         portfolio = provider.complete(build_portfolio_prompt(oversold, overbought), max_tokens=900)
+        _log_usage(provider, "portfolio", ok=True)
     except Exception as e:  # noqa: BLE001
         errors.append(f"portfolio: {e}")
+        _log_usage(provider, "portfolio", ok=False, note=str(e)[:200])
     return {
         "enabled": True,
         "error": "; ".join(errors) if errors else "",

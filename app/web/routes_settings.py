@@ -35,6 +35,8 @@ def settings_page(request: Request):
         section_labels=section_labels,
         section_providers=section_providers,
         params=ss.get_screen_params(),
+        usage_summary=ss.get_usage_summary(),
+        recent_usage=ss.recent_usage(50),
         msg=request.query_params.get("msg", ""),
         err=request.query_params.get("err", ""),
     )
@@ -103,8 +105,20 @@ def settings_test(request: Request, provider: str = Form(...)):
     if prov is None:
         return HTMLResponse("<span class='note error'>No key configured.</span>")
     result = prov.ping()
+    # Log the ping (token usage when present); never let logging break the UI.
+    try:
+        ss.log_usage(provider, result.get("model") or cfg["model"], "ping",
+                     getattr(prov, "last_usage", None) if result["ok"] else None,
+                     ok=result["ok"], note=("" if result["ok"] else str(result.get("detail", ""))[:200]))
+    except Exception:
+        pass
     cls = "ok" if result["ok"] else "error"
-    return HTMLResponse(f"<span class='note {cls}'>{'OK' if result['ok'] else 'FAIL'}: {result['detail']}</span>")
+    status = "OK" if result["ok"] else "FAIL"
+    model = result.get("model") or cfg["model"]
+    detail = result["detail"]
+    return HTMLResponse(
+        f"<span class='note {cls}'>{status} ({model}): {detail}</span>"
+    )
 
 
 # ---- 5c screen params ----
@@ -137,3 +151,10 @@ def settings_params_reset():
 def settings_demo():
     summary = demo_mod.load_demo_data()
     return RedirectResponse(f"/settings?msg=Demo data loaded: {summary}", status_code=303)
+
+
+# ---- 5d AI usage & cost audit ----
+@router.post("/settings/usage/reset")
+def settings_usage_reset():
+    n = ss.clear_usage()
+    return RedirectResponse(f"/settings?msg=Usage log reset ({n} rows removed)", status_code=303)

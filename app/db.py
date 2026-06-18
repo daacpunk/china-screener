@@ -84,6 +84,20 @@ CREATE TABLE IF NOT EXISTS snapshots (
     created_at TEXT,
     is_active INTEGER DEFAULT 0
 );
+
+CREATE TABLE IF NOT EXISTS llm_usage (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    ts TEXT,
+    provider TEXT,
+    model TEXT,
+    section TEXT,                     -- per_name|portfolio|sidebar|news|ping|manual
+    prompt_tokens INTEGER DEFAULT 0,
+    completion_tokens INTEGER DEFAULT 0,
+    total_tokens INTEGER DEFAULT 0,
+    est_cost_usd REAL DEFAULT 0,
+    ok INTEGER DEFAULT 1,
+    note TEXT
+);
 """
 
 

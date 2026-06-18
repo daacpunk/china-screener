@@ -123,4 +123,39 @@
     <button class="btn ghost" formaction="/settings/params/reset" type="submit">Reset to defaults</button>
   </div>
 </form>
+
+<h2>5d · AI usage &amp; cost audit</h2>
+<p class="help">Estimates are token-based at list prices and EXCLUDE per-request/search fees (notably Perplexity request fees and Sonar Deep Research citation/reasoning fees). Actual billing may differ.</p>
+<div class="grid grid-3">
+  <div class="card"><h3>Total AI calls</h3><p style="font-size:1.8em;font-weight:700;margin:0">{{ usage_summary.total_calls }}</p></div>
+  <div class="card"><h3>Total tokens</h3><p style="font-size:1.8em;font-weight:700;margin:0">{{ '{:,}'.format(usage_summary.total_tokens) }}</p></div>
+  <div class="card"><h3>Total estimated cost</h3><p style="font-size:1.8em;font-weight:700;margin:0">${{ '%.4f'|format(usage_summary.total_cost_usd) }}</p></div>
+</div>
+
+<div class="card" style="margin-top:14px">
+  <h3>Breakdown by provider / model / section</h3>
+  <div class="table-wrap"><table>
+    <thead><tr><th>Provider</th><th>Model</th><th>Section</th><th>Calls</th><th>Fails</th><th>Tokens</th><th>Est cost (USD)</th></tr></thead>
+    <tbody>{% for b in usage_summary.breakdown %}
+      <tr><td>{{ b.provider }}</td><td class="mono">{{ b.model }}</td><td>{{ b.section }}</td>
+      <td>{{ b.calls }}</td><td>{{ b.fails }}</td><td>{{ '{:,}'.format(b.tokens) }}</td><td>${{ '%.4f'|format(b.cost_usd) }}</td></tr>
+    {% else %}<tr><td colspan="7" class="muted">No AI usage logged yet.</td></tr>{% endfor %}</tbody>
+  </table></div>
+</div>
+
+<details class="card" style="margin-top:14px">
+  <summary><b>Recent calls</b> (last {{ recent_usage|length }})</summary>
+  <div class="table-wrap" style="margin-top:10px"><table>
+    <thead><tr><th>Timestamp</th><th>Provider</th><th>Model</th><th>Section</th><th>Tokens</th><th>Est cost</th><th>OK</th></tr></thead>
+    <tbody>{% for r in recent_usage %}
+      <tr><td class="muted">{{ r.ts }}</td><td>{{ r.provider }}</td><td class="mono">{{ r.model }}</td><td>{{ r.section }}</td>
+      <td>{{ r.total_tokens }}</td><td>${{ '%.4f'|format(r.est_cost_usd) }}</td>
+      <td>{% if r.ok %}<span class="tag idio">ok</span>{% else %}<span class="note error" style="display:inline">fail</span>{% endif %}</td></tr>
+    {% else %}<tr><td colspan="7" class="muted">No AI usage logged yet.</td></tr>{% endfor %}</tbody>
+  </table></div>
+</details>
+
+<form method="post" action="/settings/usage/reset" style="margin-top:10px">
+  <button class="btn ghost" type="submit">Reset usage log</button>
+</form>
 {% endblock %}
