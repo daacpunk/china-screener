@@ -35,6 +35,31 @@ DEFAULT_MODEL = {p: m[0][0] for p, m in PROVIDER_MODELS.items()}
 
 
 # ---------------------------------------------------------------------------
+# Anthropic capability quirks (June 2026).
+#
+# Newer Anthropic models deprecated/rejected the `temperature` sampling
+# parameter and manual thinking budgets: sending `temperature` returns a
+# 400 invalid_request_error ("`temperature` is deprecated for this model.").
+# This applies to Opus 4.7+, Opus 4.8, and the Fable/Mythos 5 frontier tier.
+# Sonnet 4.6 and Haiku 4.5 still accept `temperature`.
+#
+# We omit `temperature` for these models up front, AND the client also
+# auto-retries without it if the API reports the param is unsupported, so the
+# app stays forward-compatible as more models drop the parameter.
+# ---------------------------------------------------------------------------
+ANTHROPIC_NO_TEMPERATURE = {
+    "claude-opus-4-8",
+    "claude-opus-4-7",
+    "claude-fable-5",
+    "claude-mythos-5",
+}
+
+
+def anthropic_supports_temperature(model: str) -> bool:
+    return (model or "").strip() not in ANTHROPIC_NO_TEMPERATURE
+
+
+# ---------------------------------------------------------------------------
 # Pricing (USD per 1,000,000 tokens) — current as of June 2026.
 #
 # IMPORTANT CAVEATS:
