@@ -8,7 +8,7 @@ python-multipart>=0.0.9
 # pandas_ta 0.4.71b0 requires numpy>=2.2.6 which in turn pulls pandas 3.x.
 # These three are mutually compatible and verified working together in CI/sandbox.
 pandas>=2.2,<3.1
-numpy>=2.0,<2.3
+numpy>=2.2.6,<2.3
 pandas_ta==0.4.71b0
 
 # File parsing / docs
