@@ -5,11 +5,15 @@ jinja2>=3.1,<4
 python-multipart>=0.0.9
 
 # Data / indicators
-# pandas_ta 0.4.71b0 requires numpy>=2.2.6 which in turn pulls pandas 3.x.
-# These three are mutually compatible and verified working together in CI/sandbox.
+# NOTE: pandas_ta is intentionally NOT a hard dependency. Its only working
+# releases are pre-release betas that pip refuses to install by default and
+# that are pinned to specific Python/numpy versions, which broke Railway
+# builds. The app computes RSI/MACD with a native NumPy/pandas implementation
+# (Wilder RSI + EMA MACD) that is unit-tested to match pandas_ta to <1e-6.
+# If you want to use pandas_ta locally, `pip install --pre pandas_ta` and the
+# app will auto-detect and prefer it. Production runs on the native backend.
 pandas>=2.2,<3.1
-numpy>=2.2.6,<2.3
-pandas_ta==0.4.71b0
+numpy>=1.26,<3
 
 # File parsing / docs
 openpyxl>=3.1,<4
