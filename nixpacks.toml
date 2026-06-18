@@ -1,10 +1,16 @@
 # Nixpacks build configuration for Railway.
 # Pin Python to 3.11 for reproducible builds (3.12 also works).
+# Use python311Full (not python311) because the minimal python311 Nix package
+# ships without pip, which breaks the install phase on Railway.
 [phases.setup]
-nixPkgs = ["python311", "gcc"]
+nixPkgs = ["python311Full", "gcc"]
 
 [phases.install]
-cmds = ["python -m pip install --upgrade pip", "pip install -r requirements.txt"]
+cmds = [
+  "python -m ensurepip --upgrade || true",
+  "python -m pip install --upgrade pip",
+  "pip install -r requirements.txt",
+]
 
 [start]
 cmd = "uvicorn app.main:app --host 0.0.0.0 --port $PORT"
