@@ -25,7 +25,11 @@ TABS = [
 
 
 def base_ctx(request, active: str, **extra) -> Dict[str, Any]:
-    ctx = {"request": request, "tabs": TABS, "active_tab": active}
+    qp = request.query_params
+    ctx = {
+        "request": request, "tabs": TABS, "active_tab": active,
+        "flash_msg": qp.get("msg"), "flash_err": qp.get("err"),
+    }
     ctx.update(extra)
     return ctx
 

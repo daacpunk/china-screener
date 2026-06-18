@@ -28,6 +28,8 @@
   </nav>
 
   <main class="container">
+    {% if flash_err %}<div class="note error flash">{{ flash_err }}</div>{% endif %}
+    {% if flash_msg %}<div class="note ok flash">{{ flash_msg }}</div>{% endif %}
     {% block content %}{% endblock %}
   </main>
 

@@ -1,6 +1,8 @@
 """Tab 1 — Universe Manager."""
 from __future__ import annotations
 
+from urllib.parse import quote
+
 from fastapi import APIRouter, Form, Request, UploadFile, File
 from fastapi.responses import HTMLResponse, RedirectResponse
 
@@ -44,15 +46,53 @@ def universe_page(request: Request):
 
 
 @router.post("/universe/upload")
-async def universe_upload(file: UploadFile = File(...), note: str = Form("")):
+async def universe_upload(
+    file: UploadFile = File(...), note: str = Form(""),
+    ticker_col: str = Form(""), name_col: str = Form(""),
+    sector_col: str = Form(""), sub_industry_col: str = Form(""),
+    index_weight_col: str = Form(""), adv_col: str = Form(""),
+):
     content = await file.read()
-    df, report = di.parse_universe(content, file.filename)
+    overrides = {k: v for k, v in {
+        "ticker": ticker_col, "name": name_col, "sector": sector_col,
+        "sub_industry": sub_industry_col, "index_weight": index_weight_col,
+        "adv_usd_20d": adv_col,
+    }.items() if v.strip()}
+    try:
+        df, report = di.parse_universe(content, file.filename, overrides=overrides or None)
+    except Exception as e:  # noqa: BLE001
+        msg = f"Could not read the file: {e}"
+        return RedirectResponse(f"/universe?err={quote(msg[:300])}", status_code=303)
+
+    cols_seen = ", ".join(str(c) for c in report.get("columns_seen", [])) or "(none)"
+    mapping = report.get("mapping", {})
+    n = int(report.get("rows", 0))
+
+    if n == 0:
+        # Do NOT activate an empty universe — tell the user exactly what went wrong.
+        tk = mapping.get("ticker")
+        if not tk:
+            msg = (
+                "No ticker column was recognized, so 0 names were imported. "
+                f"Columns found in your file: [{cols_seen}]. "
+                "Rename your identifier column to 'Ticker' (or Symbol), or use the "
+                "manual column mapping below."
+            )
+        else:
+            msg = (
+                f"0 names imported. A ticker column ('{tk}') was detected but every "
+                f"row was empty/blank. Columns found: [{cols_seen}]."
+            )
+        return RedirectResponse(f"/universe?err={quote(msg[:400])}", status_code=303)
+
     params = ss.get_screen_params()
     floor = float(params.get("adv_floor", 10_000_000))
     df["below_floor"] = pd.to_numeric(df.get("adv_usd_20d"), errors="coerce").fillna(0) < floor
     ss.add_universe(df.to_csv(index=False), filename=file.filename or "upload.csv",
                     note=note, make_active=True)
-    return RedirectResponse("/universe", status_code=303)
+    mapped = ", ".join(f"{k}←{v}" for k, v in mapping.items() if v)
+    msg = f"Imported {n} names from {file.filename}. Mapped columns: {mapped}."
+    return RedirectResponse(f"/universe?msg={quote(msg[:400])}", status_code=303)
 
 
 @router.post("/universe/activate")

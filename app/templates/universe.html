@@ -16,6 +16,16 @@
     <form method="post" action="/universe/upload" enctype="multipart/form-data">
       <input type="file" name="file" accept=".csv,.xlsx,.xls" required>
       <label>Note (optional)</label><input type="text" name="note" placeholder="e.g. May rebalance">
+      <details style="margin-top:10px">
+        <summary class="help" style="cursor:pointer">Manual column mapping (only if auto-detect fails)</summary>
+        <p class="help">Type the EXACT column header from your file for each field. Leave blank to auto-detect. The ticker column is the only required one.</p>
+        <div class="row"><div><label>Ticker column</label><input name="ticker_col" placeholder="e.g. Symbol"></div>
+          <div><label>Name column</label><input name="name_col" placeholder="optional"></div></div>
+        <div class="row"><div><label>Sector column</label><input name="sector_col" placeholder="optional"></div>
+          <div><label>Sub-industry column</label><input name="sub_industry_col" placeholder="optional"></div></div>
+        <div class="row"><div><label>Index weight column</label><input name="index_weight_col" placeholder="optional"></div>
+          <div><label>20D ADV USD column</label><input name="adv_col" placeholder="optional"></div></div>
+      </details>
       <div class="spacer"></div>
       <button class="btn" type="submit">Upload &amp; activate</button>
     </form>
@@ -55,8 +65,9 @@
   <thead><tr><th>Ticker</th><th>Name</th><th>Sector</th><th>Sub-industry</th><th>Index wt</th><th>20D ADV USD</th></tr></thead>
   <tbody>
   {% for r in summary.rows %}
-    <tr><td class="mono">{{ r.ticker }}</td><td>{{ r.name }}</td><td>{{ r.sector }}</td>
-    <td>{{ r.sub_industry }}</td><td>{{ '%.2f'|format(r.index_weight) if r.index_weight is not none else '—' }}</td>
+    <tr><td class="mono">{{ r.ticker }}</td><td>{{ r.name if r.name and r.name|string|lower != 'nan' else '—' }}</td>
+    <td>{{ r.sector if r.sector and r.sector|string|lower != 'nan' else '—' }}</td>
+    <td>{{ r.sub_industry if r.sub_industry and r.sub_industry|string|lower != 'nan' else '—' }}</td><td>{{ '%.2f'|format(r.index_weight) if r.index_weight is not none else '—' }}</td>
     <td>{{ '{:,.0f}'.format(r.adv_usd_20d) if r.adv_usd_20d is not none else '—' }}</td></tr>
   {% endfor %}
   </tbody>
