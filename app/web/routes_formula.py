@@ -31,7 +31,7 @@ def formula_page(request: Request):
     preview = None
     if d and metric_keys and tickers:
         preview = fg.generate_formula(tickers[0], metric_keys[0], d["data"],
-                                      start="0D", end="-250D", freq="D")
+                                      start="0D", end="-150D", freq="D")
     ctx = base_ctx(request, "formula", active_dict=d, metric_keys=metric_keys,
                    tickers=tickers, md_html=md_html, preview=preview,
                    default_price_metric=auto["price_metric"],
@@ -50,7 +50,7 @@ def _resolve_metrics(d: dict, price_metric: str, volume_metric: str) -> tuple[st
 
 @router.post("/formula/preview", response_class=HTMLResponse)
 def formula_preview(request: Request, ticker: str = Form(...), metric_key: str = Form(...),
-                    start: str = Form("0D"), end: str = Form("-250D"), freq: str = Form("D"),
+                    start: str = Form("0D"), end: str = Form("-150D"), freq: str = Form("D"),
                     price_metric: str = Form(""), volume_metric: str = Form("")):
     d = _active_dict()
     if not d:
@@ -65,8 +65,8 @@ def formula_preview(request: Request, ticker: str = Form(...), metric_key: str =
 
 
 @router.post("/formula/download")
-def formula_download(method: str = Form("A"), lookback: int = Form(250),
-                     start: str = Form("0D"), end: str = Form("-250D"),
+def formula_download(method: str = Form("A"), lookback: int = Form(150),
+                     start: str = Form("0D"), end: str = Form("-150D"),
                      freq: str = Form("D"), layout: str = Form("per_ticker"),
                      price_metric: str = Form(""), volume_metric: str = Form("")):
     d = _active_dict()

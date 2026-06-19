@@ -68,7 +68,7 @@ def method_a_timeseries_formulas(
     ticker: str,
     dictionary: dict,
     start: str = "0D",
-    end: str = "-250D",
+    end: str = "-150D",
     freq: str = "D",
     price_metric: str = "price",
     volume_metric: str = "volume",
@@ -100,6 +100,44 @@ def method_a_timeseries_formulas(
     return out
 
 
+def method_a_grid(
+    ticker: str,
+    dictionary: dict,
+    lookback: int = 150,
+    price_metric: str = "price",
+    volume_metric: str = "volume",
+    header_rows: int = 1,
+) -> List[Dict[str, Any]]:
+    """Explicit row-per-day grid for one ticker (no array-spill dependency).
+
+    Each trading day gets its own self-contained single-date FDS formula for
+    date, close and volume using the 0D-Nd offset (today minus N trading days):
+      row 1 (offset 0) = today (0D), row 2 = -1D, ... row N = -(N-1)D.
+    This ALWAYS returns a full time series regardless of the FactSet add-in's
+    dynamic-array support. Identifier is embedded directly in each formula so
+    each sheet is self-contained.
+
+    date  : =FDS("T","P_DATE(0D-N D)")        (best-effort; see note)
+    close : =FDS("T","P_PRICE(0D-N D)")
+    volume: =FDS("T","P_VOLUME_DAY(0D-N D)")
+    """
+    formulas = dictionary.get("formulas", {})
+    price_fql = _fql_root(formulas, price_metric, "P_PRICE")
+    vol_fql = _fql_root(formulas, volume_metric, "P_VOLUME_DAY")
+    date_fql = _fql_root(formulas, "date_point", "P_DATE")
+    rows: List[Dict[str, Any]] = []
+    for i in range(lookback):
+        off = f"0D-{i}D" if i else "0D"
+        rows.append({
+            "row": header_rows + 1 + i,
+            "offset": i,
+            "date_formula": f'=FDS("{ticker}","{date_fql}({off})")',
+            "close_formula": f'=FDS("{ticker}","{price_fql}({off})")',
+            "volume_formula": f'=FDS("{ticker}","{vol_fql}({off})")',
+        })
+    return rows
+
+
 # ---------------------------------------------------------------------------
 # Method B — offset grid fallback.
 # ---------------------------------------------------------------------------
@@ -113,7 +151,7 @@ def _fql_root(formulas: dict, metric: str, default: str) -> str:
 
 def method_b_offset_grid(
     dictionary: dict,
-    lookback: int = 250,
+    lookback: int = 150,
     price_metric: str = "price",
     volume_metric: str = "volume",
     ticker_cell: str = "$A$2",
@@ -170,9 +208,9 @@ def build_formula_workbook(
     tickers: List[str],
     dictionary: dict,
     method: str = "A",
-    lookback: int = 250,
+    lookback: int = 150,
     start: str = "0D",
-    end: str = "-250D",
+    end: str = "-150D",
     freq: str = "D",
     layout: str = "per_ticker",  # 'per_ticker' or 'stacked'
     price_metric: str = "price",
@@ -200,15 +238,22 @@ def build_formula_workbook(
     if method.upper() == "A":
         instr += [
             ["1. Open this workbook in Excel with the FactSet add-in installed."],
-            ["2. For each ticker sheet, the formulas in row 2 are time-series FDS calls"],
-            ["   using the corrected COMMA form, e.g. P_PRICE(0D,-250D,D) and"],
-            ["   P_VOLUME_DAY(0D,-250D,D). They spill DOWN automatically and FactSet"],
-            ["   provides the date column alongside the price spill."],
-            ["3. Rolling window: 0D = today / most-recent trading day, looking back"],
-            ["   N trading days. Re-pull anytime to refresh to the latest close."],
-            ["4. Volume uses P_VOLUME_DAY (NOT P_VOLUME). 20D ADV (USD) is NOT pulled"],
-            ["   here — it is computed in-app (Tab 3) from daily price * volume."],
-            ["5. After refresh, export the resulting tidy data and upload in Tab 3."],
+            [f"2. Each ticker sheet has an EXPLICIT row-per-day grid: {lookback} rows,"],
+            ["   one self-contained =FDS formula per trading day for date / close /"],
+            ["   volume. This does NOT rely on array-spill, so a full time series"],
+            ["   always returns (one value per row)."],
+            ["3. Row 1 (offset 0D) = today / most-recent trading day; each row below"],
+            ["   goes one trading day further back (0D-1D, 0D-2D, ...). Rolling: re-pull"],
+            ["   anytime to refresh to the latest close."],
+            ["4. Formulas: close = P_PRICE(0D-N D), volume = P_VOLUME_DAY(0D-N D),"],
+            ["   date = P_DATE(0D-N D). Volume uses P_VOLUME_DAY (NOT P_VOLUME)."],
+            ["5. 20D ADV (USD) is NOT pulled here — it is computed in-app (Tab 3) from"],
+            ["   daily price * volume."],
+            ["6. After refresh, export the resulting tidy data and upload in Tab 3."],
+            [""],
+            ["Note: if P_DATE returns blank in your entitlement, the close/volume"],
+            ["columns still work; dates can be reconstructed from the row offset (row 1"],
+            ["= latest trading day) or pull dates via Method B's explicit-date column."],
             [""],
             ["Troubleshooting (no data): use commas not colons inside the field;"],
             ["P_VOLUME_DAY not P_VOLUME; check identifier format (e.g. 9988-HK, BD5CMC);"],
@@ -251,13 +296,18 @@ def build_formula_workbook(
                 ws = wb.create_sheet(safe)
                 ws.append(["date", "close", "volume"])
                 _style_header(ws, 3)
-                fs = method_a_timeseries_formulas(t, dictionary, start, end, freq,
-                                                  price_metric=price_metric,
-                                                  volume_metric=volume_metric)
-                ws.cell(row=2, column=1, value=fs["date"])
-                ws.cell(row=2, column=2, value=fs["close"])
-                ws.cell(row=2, column=3, value=fs["volume"])
-                for col, w in ((1, 16), (2, 28), (3, 28)):
+                # Explicit row-per-day grid: one self-contained FDS formula per
+                # trading day for date/close/volume. No reliance on array-spill,
+                # so a full ~N-day time series always returns.
+                grid = method_a_grid(t, dictionary, lookback=lookback,
+                                     price_metric=price_metric,
+                                     volume_metric=volume_metric)
+                for g in grid:
+                    r = g["row"]
+                    ws.cell(row=r, column=1, value=g["date_formula"])
+                    ws.cell(row=r, column=2, value=g["close_formula"])
+                    ws.cell(row=r, column=3, value=g["volume_formula"])
+                for col, w in ((1, 22), (2, 30), (3, 32)):
                     ws.column_dimensions[get_column_letter(col)].width = w
     else:
         for t in tickers:

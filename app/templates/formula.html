@@ -5,10 +5,11 @@
 Indicators are <b>not</b> pulled here — they are computed in Tab 3.</p>
 
 <div class="note info">
-  <b>Corrected FQL &amp; rolling window.</b> Date args are <b>comma-separated inside the field's parentheses</b>,
-  most-recent-first, e.g. <span class="mono">=FDS("9988-HK","P_PRICE(0D,-250D,D)")</span>.
+  <b>Explicit row-per-day grid &amp; rolling window.</b> Method A writes one self-contained <span class="mono">=FDS</span> formula
+  <b>per trading day</b> (date / close / volume) — a full time series with no reliance on Excel array-spill, e.g.
+  <span class="mono">=FDS("9988-HK","P_PRICE(0D)")</span>, <span class="mono">…(0D-1D)</span>, <span class="mono">…(0D-2D)</span> down the sheet.
   Volume uses <span class="mono">P_VOLUME_DAY</span>. <b>Rolling window:</b> <span class="mono">0D</span> = today / most-recent trading day,
-  looking back N trading days (<span class="mono">-250D</span> by default). Re-pull anytime to refresh to the latest close.
+  looking back N trading days (<b>150</b> by default ≈ 7 months). Re-pull anytime to refresh to the latest close.
   20-day ADV (USD) is <b>computed in-app</b> (Tab 3) from daily price × volume, not pulled.
 </div>
 <p class="help">If FactSet returns no data, check: (a) commas not colons inside the field, (b) <span class="mono">P_VOLUME_DAY</span> not <span class="mono">P_VOLUME</span>,
@@ -39,7 +40,7 @@ The generator uses the universe's Symbol <b>as-is</b> — FactSet resolves SEDOL
       </div>
       <div class="row">
         <div><label>Start <span class="help">(0D = today)</span></label><input name="start" value="0D"></div>
-        <div><label>End <span class="help">(lookback)</span></label><input name="end" value="-250D"></div>
+        <div><label>End <span class="help">(lookback)</span></label><input name="end" value="-150D"></div>
         <div><label>Freq</label><input name="freq" value="D"></div>
       </div>
       <p class="help">Rolling window: <span class="mono">0D</span> = today, looking back N trading days. Re-pull anytime to refresh to the latest close.</p>
@@ -68,16 +69,17 @@ The generator uses the universe's Symbol <b>as-is</b> — FactSet resolves SEDOL
           <select name="volume_metric">{% for k in metric_keys %}<option value="{{ k }}" {{ 'selected' if k==default_volume_metric }}>{{ k }}</option>{% endfor %}</select></div>
       </div>
       <div class="row">
-        <div><label>Lookback (Method B, td)</label><input type="number" name="lookback" value="250"></div>
+        <div><label>Lookback (Method B, td)</label><input type="number" name="lookback" value="150"></div>
         <div><label>Start <span class="help">(0D = today)</span></label><input name="start" value="0D"></div>
-        <div><label>End <span class="help">(lookback)</span></label><input name="end" value="-250D"></div>
+        <div><label>End <span class="help">(lookback)</span></label><input name="end" value="-150D"></div>
         <div><label>Freq</label><input name="freq" value="D"></div>
       </div>
       <div class="spacer"></div>
       <button class="btn" type="submit">Download .xlsx</button>
     </form>
-    <p class="help" style="margin-top:12px"><b>Method A:</b> paste each sheet's row-2 formulas, e.g. <span class="mono">=FDS("9988-HK","P_PRICE(0D,-250D,D)")</span>
-    and <span class="mono">P_VOLUME_DAY(0D,-250D,D)</span>; FactSet spills the date+close+volume block down.
+    <p class="help" style="margin-top:12px"><b>Method A (recommended):</b> each ticker sheet has an explicit row-per-day grid — one
+    <span class="mono">=FDS</span> formula per trading day for date / close / volume (e.g. <span class="mono">=FDS("9988-HK","P_PRICE(0D)")</span>,
+    <span class="mono">…(0D-1D)</span>, …). A full series always returns — no array-spill needed.
     <b>Method B:</b> put ticker in A2; column C holds rolling <span class="mono">0D-Nd</span> price formulas, column D <span class="mono">P_VOLUME_DAY</span> volume formulas, column E explicit-date formulas (dates in B).</p>
   </div>
 </div>

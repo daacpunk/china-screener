@@ -188,18 +188,24 @@ falling back to the generic `P_PRICE` / `P_VOLUME_DAY` templates.
 
 ## FactSet pull — corrected FQL & rolling-from-today window
 
-The generated `=FDS(...)` formulas use the **correct Excel add-in syntax**: date
-arguments are **comma-separated inside the field's parentheses**, most-recent-first
-(**not** a colon `start:end:freq` string). The default pull is a **rolling window
-anchored at today**: `start = 0D` (today / most-recent trading day),
-`end = -250D` (≈ 250 trading days ≈ ~1Y), `freq = D`. Re-pull anytime to refresh
-to the latest close.
+The generated `=FDS(...)` formulas use the **correct Excel add-in syntax** and a
+**rolling window anchored at today**: `0D` = today / most-recent trading day,
+looking back N trading days. **Default lookback = 150 trading days (≈ 7 months)** —
+enough warm-up for RSI(14), MACD(12,26,9) and the 60-day vol window. Re-pull
+anytime to refresh to the latest close.
 
-- Price: `=FDS("9988-HK","P_PRICE(0D,-250D,D)")`
-- Volume: `=FDS("9988-HK","P_VOLUME_DAY(0D,-250D,D)")` (use **`P_VOLUME_DAY`**, not `P_VOLUME`)
-- Method B (offset grid, bullet-proof): `=FDS($A$2,"P_PRICE(0D-"&(ROW()-3)&"D)")`
-  and `=FDS($A$2,"P_VOLUME_DAY(0D-"&(ROW()-3)&"D)")` — one self-contained
-  single-date formula per row, row 1 = today.
+**Method A (recommended) writes an explicit row-per-day grid** — one
+self-contained `=FDS` formula PER trading day for date / close / volume. This does
+**not** rely on Excel dynamic-array spill, so a full time series always returns
+(one value per row) on any FactSet add-in version:
+
+- Row 2 (today): `=FDS("9988-HK","P_PRICE(0D)")`, `=FDS("9988-HK","P_VOLUME_DAY(0D)")`
+- Row 3: `=FDS("9988-HK","P_PRICE(0D-1D)")` … down to `0D-149D`
+- Date column: `=FDS("9988-HK","P_DATE(0D-N D)")` (best-effort; if `P_DATE` is not
+  in your entitlement, dates follow from the row offset — row 2 = latest day)
+- Use **`P_VOLUME_DAY`**, not `P_VOLUME`.
+- Method B (offset grid, also explicit): `=FDS($A$2,"P_PRICE(0D-"&(ROW()-3)&"D)")`
+  and `=FDS($A$2,"P_VOLUME_DAY(0D-"&(ROW()-3)&"D)")`, plus an explicit-date column.
 - **20-day ADV (USD) is computed in-app** (Tab 3) from daily price × volume —
   there is no `P_ADV_USD` field.
 - Identifiers (e.g. `9988-HK`, `2883-HK`, `BD5CMC`, `BP3R5S`) are used **as-is**;

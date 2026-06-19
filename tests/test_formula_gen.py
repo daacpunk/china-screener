@@ -54,8 +54,8 @@ def test_method_a_timeseries():
 def test_method_a_defaults_rolling_from_today():
     # Defaults should be the rolling-from-today window.
     a = fg.method_a_timeseries_formulas("9988-HK", DICT)
-    assert a["close"] == '=FDS("9988-HK", "P_PRICE(0D,-250D,D)")'
-    assert a["volume"] == '=FDS("9988-HK", "P_VOLUME_DAY(0D,-250D,D)")'
+    assert a["close"] == '=FDS("9988-HK", "P_PRICE(0D,-150D,D)")'
+    assert a["volume"] == '=FDS("9988-HK", "P_VOLUME_DAY(0D,-150D,D)")'
 
 
 def test_method_b_offset_grid():
@@ -73,16 +73,36 @@ def test_method_b_offset_grid():
 
 
 def test_build_workbook_method_a_opens():
-    data = fg.build_formula_workbook(["9988-HK", "PDD-CN"], DICT, method="A", layout="per_ticker")
+    # Method A per-ticker now writes an EXPLICIT row-per-day grid (no array spill).
+    data = fg.build_formula_workbook(["9988-HK", "PDD-CN"], DICT, method="A",
+                                     layout="per_ticker", lookback=150)
     wb = openpyxl.load_workbook(io.BytesIO(data))
     assert "Instructions" in wb.sheetnames
     assert "9988-HK" in wb.sheetnames
     ws = wb["9988-HK"]
     assert ws.cell(row=1, column=1).value == "date"
-    close = str(ws.cell(row=2, column=2).value)
-    volume = str(ws.cell(row=2, column=3).value)
-    assert "P_PRICE(0D,-250D,D)" in close
-    assert "P_VOLUME_DAY" in volume
+    # Row 2 = today (0D); row 3 = 0D-1D; full grid = 150 data rows.
+    close2 = str(ws.cell(row=2, column=2).value)
+    close3 = str(ws.cell(row=3, column=2).value)
+    volume2 = str(ws.cell(row=2, column=3).value)
+    assert 'P_PRICE(0D)' in close2
+    assert 'P_PRICE(0D-1D)' in close3
+    assert "P_VOLUME_DAY" in volume2
+    assert ws.max_row == 1 + 150  # header + 150 daily rows
+    # No colon form anywhere
+    assert ":" not in close2 and ":" not in close3
+
+
+def test_method_a_grid_row_per_day():
+    grid = fg.method_a_grid("9988-HK", DICT, lookback=5)
+    assert len(grid) == 5
+    # row 1 = today (0D), row 2 = 0D-1D, ...
+    assert grid[0]["close_formula"] == '=FDS("9988-HK","P_PRICE(0D)")'
+    assert grid[1]["close_formula"] == '=FDS("9988-HK","P_PRICE(0D-1D)")'
+    assert grid[0]["volume_formula"] == '=FDS("9988-HK","P_VOLUME_DAY(0D)")'
+    assert grid[4]["close_formula"] == '=FDS("9988-HK","P_PRICE(0D-4D)")'
+    # no colon range form anywhere
+    assert all(":" not in g["close_formula"] for g in grid)
 
 
 def test_build_workbook_method_a_stacked():
@@ -160,10 +180,10 @@ def test_workbook_honors_custom_metric_keys():
     ws = wb["9988-HK"]
     close = str(ws.cell(row=2, column=2).value)
     volume = str(ws.cell(row=2, column=3).value)
-    # The user's fql_template is used, NOT the generic fallback.
-    assert "PX_LAST(0D,-250D,D)" in close
+    # The user's fql_template root is used, NOT the generic fallback (grid form).
+    assert "PX_LAST(0D)" in close
     assert "P_PRICE" not in close
-    assert "VOL_TRADED(0D,-250D,D)" in volume
+    assert "VOL_TRADED(0D)" in volume
     assert "P_VOLUME" not in volume
 
 
