@@ -8,6 +8,6 @@
 close:  {{ method_a.close }}
 volume: {{ method_a.volume }}</pre>
 
-<p class="help">Method B — offset-grid sample (first 5 rows):</p>
-<pre>{% for r in method_b %}row {{ r.row }} (offset {{ r.offset }}): {{ r.relative_formula }}
+<p class="help">Method B — offset-grid sample (first 5 rows, 0D-Nd rolling):</p>
+<pre>{% for r in method_b %}row {{ r.row }} (offset {{ r.offset }}): price {{ r.relative_formula }}  |  volume {{ r.relative_volume_formula }}
 {% endfor %}</pre>

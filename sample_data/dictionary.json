@@ -1,42 +1,57 @@
 {
   "name": "FactSet FQL Price-Series Dictionary (sample)",
-  "version": "1.0.0",
-  "description": "Sample FQL formula dictionary for pulling clean daily price/volume time series and point-in-time reference data from FactSet via the FDS() Excel function. Indicators are NOT pulled here; they are computed in-app (Tab 3).",
+  "version": "2.0.0",
+  "description": "Corrected FQL formula dictionary for pulling clean daily price/volume time series and point-in-time reference data from FactSet via the FDS() Excel function. Uses rolling-from-today daily series (date args COMMA-separated inside the field parentheses, most-recent-first: P_PRICE(0D,-250D,D)), volume via P_VOLUME_DAY, and ADV computed in-app (Tab 3). Indicators are NOT pulled here; they are computed in-app (Tab 3).",
   "formulas": {
     "price": {
       "label": "Daily closing price",
-      "fql_template": "P_PRICE({start}:{end}:{freq})",
-      "notes": "Closing price time series. start/end accept relative (-2Y, 0D) or explicit dates; freq D=daily."
+      "fql_template": "P_PRICE({start},{end},{freq})",
+      "notes": "Closing price time series. Date args are COMMA-separated INSIDE the field parentheses, most-recent-first: start=0D (today/most-recent trading day), end=-250D (lookback), freq D=daily. Example: P_PRICE(0D,-250D,D)."
     },
     "volume": {
       "label": "Daily volume",
-      "fql_template": "P_VOLUME({start}:{end}:{freq})",
-      "notes": "Daily share volume time series."
+      "fql_template": "P_VOLUME_DAY({start},{end},{freq})",
+      "notes": "Daily share volume time series via P_VOLUME_DAY (NOT P_VOLUME). Comma-separated, most-recent-first. Example: P_VOLUME_DAY(0D,-250D,D)."
+    },
+    "price_point": {
+      "label": "Closing price (single date / spot)",
+      "fql_template": "P_PRICE({asof})",
+      "notes": "Single point-in-time close, e.g. P_PRICE(0D) = latest close. Used by the Method B offset grid (one self-contained single-date formula per row)."
+    },
+    "volume_point": {
+      "label": "Volume (single date / spot)",
+      "fql_template": "P_VOLUME_DAY({asof})",
+      "notes": "Single point-in-time daily volume, e.g. P_VOLUME_DAY(0D). Used by the Method B offset grid."
+    },
+    "date_point": {
+      "label": "Trading date (single date / best-effort)",
+      "fql_template": "P_DATE({asof})",
+      "notes": "Best-effort per-row trading date. Some FactSet setups lack a standalone P_DATE field; in the time-series spill FactSet provides the date column automatically next to the price spill."
     },
     "adv_usd_20d": {
-      "label": "20-day average daily value traded (USD)",
-      "fql_template": "P_ADV_USD(20,{end})",
-      "notes": "20-day average daily traded value in USD as of {end}."
+      "label": "20-day average daily value traded (USD) — OPTIONAL, computed in-app",
+      "fql_template": "AVG(P_PRICE(0D,-19D,D)*P_VOLUME_DAY(0D,-19D,D))",
+      "notes": "OPTIONAL. There is no P_ADV_USD field. This valid FQL expression is the trailing 20-obs average of traded value (price*volume). The app computes 20D ADV (USD) itself in-app (Tab 3), so pulling this is optional."
     },
     "sector": {
       "label": "GICS sector (point-in-time)",
-      "fql_template": "FG_GICS_SECTOR({end})",
-      "notes": "Point-in-time GICS sector classification."
+      "fql_template": "FG_GICS_SECTOR",
+      "notes": "Point-in-time GICS sector classification. No date arg required; can also accept (0D)."
     },
     "sub_industry": {
       "label": "GICS sub-industry (point-in-time)",
-      "fql_template": "FG_GICS_SUB({end})",
-      "notes": "Point-in-time GICS sub-industry classification."
+      "fql_template": "FG_GICS_SUB_IND",
+      "notes": "Point-in-time GICS sub-industry classification. Correct field name is FG_GICS_SUB_IND (FG_GICS_SUB was wrong)."
     },
     "index_weight": {
-      "label": "Index weight in benchmark",
-      "fql_template": "FG_INDEX_WEIGHT(#MSCI_CHINA,{end})",
-      "notes": "Constituent weight in the specified benchmark index."
+      "label": "Index weight in benchmark (OPTIONAL)",
+      "fql_template": "FG_INDEX_WEIGHT(\"MSCI CHINA\",0D)",
+      "notes": "OPTIONAL. Constituent weight in the specified benchmark; requires a benchmark argument and the right entitlement. The universe upload already carries index weight, so this is optional."
     },
     "next_earnings": {
-      "label": "Next earnings/event date",
-      "fql_template": "FE_EVENT_DATE(EARNINGS,NEXT)",
-      "notes": "Next scheduled earnings/event date for event-calendar flagging."
+      "label": "Next earnings/report date (OPTIONAL event field)",
+      "fql_template": "FE_REP_DT_NEXT(0D)",
+      "notes": "OPTIONAL. Next scheduled earnings/report date for event-calendar flagging; may vary by entitlement. Event flagging also works from a user-supplied column."
     }
   }
 }

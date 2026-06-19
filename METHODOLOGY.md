@@ -151,4 +151,16 @@ it can no longer be active or selected.
   `method_a_timeseries_formulas` / `method_b_offset_grid` accept
   `price_metric` / `volume_metric` keys, defaulted via
   `formula_gen.autodetect_metrics()` and overridable from the Formula tab so any
-  uploaded dictionary's templates are used (not generic P_PRICE/P_VOLUME).
+  uploaded dictionary's templates are used (not generic P_PRICE/P_VOLUME_DAY).
+- **Corrected FQL & rolling window:** generated `=FDS(...)` formulas use
+  comma-separated date args **inside** the field parentheses, most-recent-first
+  (e.g. `P_PRICE(0D,-250D,D)`), **not** a colon `start:end:freq` string. The
+  default pull is a rolling window anchored at today: `start=0D`, `end=-250D`,
+  `freq=D` (re-pull anytime to refresh to the latest close). Volume uses
+  `P_VOLUME_DAY` (not `P_VOLUME`). Method B emits a bullet-proof per-row
+  single-date offset `P_PRICE(0D-N D)` / `P_VOLUME_DAY(0D-N D)`. 20-day ADV
+  (USD) is computed in-app (Tab 3) from daily price × volume — there is no
+  `P_ADV_USD` field. Universe Symbols are used as-is; FactSet resolves
+  SEDOL/exchange-ticker identifiers (e.g. `9988-HK`, `BD5CMC`) natively.
+  *Troubleshooting no-data:* commas not colons; `P_VOLUME_DAY` not `P_VOLUME`;
+  identifier format; `0D`-first order.

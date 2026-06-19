@@ -4,6 +4,17 @@
 <p class="subtitle">Generate clean <span class="mono">=FDS(...)</span> formulas to pull daily price/volume time series.
 Indicators are <b>not</b> pulled here — they are computed in Tab 3.</p>
 
+<div class="note info">
+  <b>Corrected FQL &amp; rolling window.</b> Date args are <b>comma-separated inside the field's parentheses</b>,
+  most-recent-first, e.g. <span class="mono">=FDS("9988-HK","P_PRICE(0D,-250D,D)")</span>.
+  Volume uses <span class="mono">P_VOLUME_DAY</span>. <b>Rolling window:</b> <span class="mono">0D</span> = today / most-recent trading day,
+  looking back N trading days (<span class="mono">-250D</span> by default). Re-pull anytime to refresh to the latest close.
+  20-day ADV (USD) is <b>computed in-app</b> (Tab 3) from daily price × volume, not pulled.
+</div>
+<p class="help">If FactSet returns no data, check: (a) commas not colons inside the field, (b) <span class="mono">P_VOLUME_DAY</span> not <span class="mono">P_VOLUME</span>,
+(c) identifier format (e.g. <span class="mono">9988-HK</span>, <span class="mono">BD5CMC</span>), (d) <span class="mono">0D</span>-first order.
+The generator uses the universe's Symbol <b>as-is</b> — FactSet resolves SEDOL / exchange-ticker identifiers natively, so A-share identifiers like <span class="mono">BD5CMC</span> are not mangled.</p>
+
 {% if not active_dict %}
 <div class="note error">No active FactSet dictionary. Upload one in <a href="/settings">Settings</a> or load demo data.</div>
 {% else %}
@@ -27,10 +38,11 @@ Indicators are <b>not</b> pulled here — they are computed in Tab 3.</p>
           <select name="volume_metric">{% for k in metric_keys %}<option value="{{ k }}" {{ 'selected' if k==default_volume_metric }}>{{ k }}</option>{% endfor %}</select></div>
       </div>
       <div class="row">
-        <div><label>Start</label><input name="start" value="-2Y"></div>
-        <div><label>End</label><input name="end" value="0D"></div>
+        <div><label>Start <span class="help">(0D = today)</span></label><input name="start" value="0D"></div>
+        <div><label>End <span class="help">(lookback)</span></label><input name="end" value="-250D"></div>
         <div><label>Freq</label><input name="freq" value="D"></div>
       </div>
+      <p class="help">Rolling window: <span class="mono">0D</span> = today, looking back N trading days. Re-pull anytime to refresh to the latest close.</p>
       <div class="spacer"></div>
       <button class="btn" type="submit">Generate</button>
     </form>
@@ -57,15 +69,16 @@ Indicators are <b>not</b> pulled here — they are computed in Tab 3.</p>
       </div>
       <div class="row">
         <div><label>Lookback (Method B, td)</label><input type="number" name="lookback" value="250"></div>
-        <div><label>Start</label><input name="start" value="-2Y"></div>
-        <div><label>End</label><input name="end" value="0D"></div>
+        <div><label>Start <span class="help">(0D = today)</span></label><input name="start" value="0D"></div>
+        <div><label>End <span class="help">(lookback)</span></label><input name="end" value="-250D"></div>
         <div><label>Freq</label><input name="freq" value="D"></div>
       </div>
       <div class="spacer"></div>
       <button class="btn" type="submit">Download .xlsx</button>
     </form>
-    <p class="help" style="margin-top:12px"><b>Method A:</b> paste each sheet's row-2 formulas; FactSet spills the date+close+volume block down.
-    <b>Method B:</b> put ticker in A2; column C holds relative-offset price formulas, column D explicit-date formulas (dates in B).</p>
+    <p class="help" style="margin-top:12px"><b>Method A:</b> paste each sheet's row-2 formulas, e.g. <span class="mono">=FDS("9988-HK","P_PRICE(0D,-250D,D)")</span>
+    and <span class="mono">P_VOLUME_DAY(0D,-250D,D)</span>; FactSet spills the date+close+volume block down.
+    <b>Method B:</b> put ticker in A2; column C holds rolling <span class="mono">0D-Nd</span> price formulas, column D <span class="mono">P_VOLUME_DAY</span> volume formulas, column E explicit-date formulas (dates in B).</p>
   </div>
 </div>
 

@@ -1,5 +1,12 @@
-"""generate_formula + BOTH formula-layout generators + xlsx builder."""
+"""generate_formula + BOTH formula-layout generators + xlsx builder.
+
+Corrected FQL: comma-separated date args INSIDE the field parentheses,
+most-recent-first (0D,-250D,D); volume via P_VOLUME_DAY; Method B uses the
+bullet-proof 0D-Nd single-date offset.
+"""
 import io
+import json
+from pathlib import Path
 
 import openpyxl
 
@@ -7,15 +14,17 @@ from app import formula_gen as fg
 
 DICT = {
     "formulas": {
-        "price": {"fql_template": "P_PRICE({start}:{end}:{freq})"},
-        "volume": {"fql_template": "P_VOLUME({start}:{end}:{freq})"},
+        "price": {"fql_template": "P_PRICE({start},{end},{freq})"},
+        "volume": {"fql_template": "P_VOLUME_DAY({start},{end},{freq})"},
     }
 }
 
 
 def test_generate_formula_basic():
-    out = fg.generate_formula("BABA-CN", "price", DICT, start="-2Y", end="0D", freq="D")
-    assert out == '=FDS("BABA-CN", "P_PRICE(-2Y:0D:D)")'
+    out = fg.generate_formula("9988-HK", "price", DICT, start="0D", end="-250D", freq="D")
+    assert out == '=FDS("9988-HK", "P_PRICE(0D,-250D,D)")'
+    # commas, not colons
+    assert ":" not in out
 
 
 def test_generate_formula_unknown_metric():
@@ -25,15 +34,28 @@ def test_generate_formula_unknown_metric():
 
 def test_generate_formula_partial_placeholders():
     # only some placeholders provided -> others left intact
-    out = fg.generate_formula("X", "price", DICT, start="-1Y")
-    assert "-1Y" in out and "{end}" in out
+    out = fg.generate_formula("X", "price", DICT, start="0D")
+    assert "0D" in out and "{end}" in out
 
 
 def test_method_a_timeseries():
-    a = fg.method_a_timeseries_formulas("BABA-CN", DICT, start="-2Y", end="0D", freq="D")
-    assert a["close"] == '=FDS("BABA-CN", "P_PRICE(-2Y:0D:D)")'
-    assert a["volume"] == '=FDS("BABA-CN", "P_VOLUME(-2Y:0D:D)")'
+    a = fg.method_a_timeseries_formulas("9988-HK", DICT, start="0D", end="-250D", freq="D")
+    assert a["close"] == '=FDS("9988-HK", "P_PRICE(0D,-250D,D)")'
+    assert a["volume"] == '=FDS("9988-HK", "P_VOLUME_DAY(0D,-250D,D)")'
+    # comma form, NO colon
+    assert "0D,-250D,D" in a["close"]
+    assert "0D:-250D:D" not in a["close"]
+    assert ":" not in a["close"] and ":" not in a["volume"]
+    # volume uses P_VOLUME_DAY
+    assert "P_VOLUME_DAY" in a["volume"]
     assert "P_DATE" in a["date"]
+
+
+def test_method_a_defaults_rolling_from_today():
+    # Defaults should be the rolling-from-today window.
+    a = fg.method_a_timeseries_formulas("9988-HK", DICT)
+    assert a["close"] == '=FDS("9988-HK", "P_PRICE(0D,-250D,D)")'
+    assert a["volume"] == '=FDS("9988-HK", "P_VOLUME_DAY(0D,-250D,D)")'
 
 
 def test_method_b_offset_grid():
@@ -41,20 +63,26 @@ def test_method_b_offset_grid():
     assert len(grid) == 10
     first = grid[0]
     assert first["row"] == 4 and first["offset"] == 0
-    # relative pattern matches the reference
-    assert first["relative_formula"] == '=FDS($A$2,"P_PRICE(-"&(ROW()-3)&"D)")'
+    # 0D-Nd offset form for price and volume
+    assert first["relative_formula"] == '=FDS($A$2,"P_PRICE(0D-"&(ROW()-3)&"D)")'
+    assert first["relative_volume_formula"] == '=FDS($A$2,"P_VOLUME_DAY(0D-"&(ROW()-3)&"D)")'
+    assert "0D-" in first["relative_formula"]
+    assert "P_VOLUME_DAY" in first["relative_volume_formula"]
     # explicit pattern references column B for the row
     assert first["explicit_date_formula"] == '=FDS($A$2,"P_PRICE("&B4&")")'
 
 
 def test_build_workbook_method_a_opens():
-    data = fg.build_formula_workbook(["BABA-CN", "PDD-CN"], DICT, method="A", layout="per_ticker")
+    data = fg.build_formula_workbook(["9988-HK", "PDD-CN"], DICT, method="A", layout="per_ticker")
     wb = openpyxl.load_workbook(io.BytesIO(data))
     assert "Instructions" in wb.sheetnames
-    assert "BABA-CN" in wb.sheetnames
-    ws = wb["BABA-CN"]
+    assert "9988-HK" in wb.sheetnames
+    ws = wb["9988-HK"]
     assert ws.cell(row=1, column=1).value == "date"
-    assert ws.cell(row=2, column=2).value.startswith('=FDS("BABA-CN"')
+    close = str(ws.cell(row=2, column=2).value)
+    volume = str(ws.cell(row=2, column=3).value)
+    assert "P_PRICE(0D,-250D,D)" in close
+    assert "P_VOLUME_DAY" in volume
 
 
 def test_build_workbook_method_a_stacked():
@@ -67,19 +95,51 @@ def test_build_workbook_method_a_stacked():
 
 
 def test_build_workbook_method_b_opens():
-    data = fg.build_formula_workbook(["BABA-CN"], DICT, method="B", lookback=20)
+    data = fg.build_formula_workbook(["9988-HK"], DICT, method="B", lookback=20)
     wb = openpyxl.load_workbook(io.BytesIO(data))
-    ws = wb["BABA-CN"]
-    assert ws.cell(row=2, column=1).value == "BABA-CN"  # A2 = ticker
-    # relative formula present in column C
-    assert "ROW()" in str(ws.cell(row=4, column=3).value)
+    ws = wb["9988-HK"]
+    assert ws.cell(row=2, column=1).value == "9988-HK"  # A2 = ticker
+    price = str(ws.cell(row=4, column=3).value)
+    volume = str(ws.cell(row=4, column=4).value)
+    # 0D-Nd offset form, P_VOLUME_DAY for volume
+    assert "ROW()" in price and "0D-" in price
+    assert "P_VOLUME_DAY" in volume and "0D-" in volume
+
+
+# ---- bundled sample dictionary: corrected templates ----
+def test_sample_dictionary_corrected_templates():
+    p = Path(__file__).resolve().parent.parent / "sample_data" / "dictionary.json"
+    data = json.loads(p.read_text())
+    formulas = data["formulas"]
+    assert data["version"] == "2.0.0"
+    # price template: commas not colons
+    price_tmpl = formulas["price"]["fql_template"]
+    assert price_tmpl == "P_PRICE({start},{end},{freq})"
+    assert ":" not in price_tmpl
+    # volume uses P_VOLUME_DAY
+    vol_tmpl = formulas["volume"]["fql_template"]
+    assert "P_VOLUME_DAY" in vol_tmpl
+    assert ":" not in vol_tmpl
+    # no fake P_ADV_USD field in any fql_template (notes may mention it)
+    all_templates = " ".join(v["fql_template"] for v in formulas.values())
+    assert "P_ADV_USD" not in all_templates
+    # corrected GICS field names
+    assert formulas["sector"]["fql_template"].startswith("FG_GICS_SECTOR")
+    assert "FG_GICS_SUB_IND" in formulas["sub_industry"]["fql_template"]
+
+
+def test_sample_dictionary_generates_corrected_price():
+    p = Path(__file__).resolve().parent.parent / "sample_data" / "dictionary.json"
+    data = json.loads(p.read_text())
+    out = fg.generate_formula("9988-HK", "price", data, start="0D", end="-250D", freq="D")
+    assert out == '=FDS("9988-HK", "P_PRICE(0D,-250D,D)")'
 
 
 # ---- ITEM 4: configurable price/volume metric keys ----
 DICT_CUSTOM = {
     "formulas": {
-        "px_last": {"fql_template": "PX_LAST({start}:{end}:{freq})"},
-        "vol": {"fql_template": "VOL_TRADED({start}:{end}:{freq})"},
+        "px_last": {"fql_template": "PX_LAST({start},{end},{freq})"},
+        "vol": {"fql_template": "VOL_TRADED({start},{end},{freq})"},
     }
 }
 
@@ -91,23 +151,24 @@ def test_autodetect_metrics_custom_keys():
 
 
 def test_workbook_honors_custom_metric_keys():
-    # Without configurable keys this fell back to generic P_PRICE/P_VOLUME.
+    # Without configurable keys this fell back to generic P_PRICE/P_VOLUME_DAY.
     data = fg.build_formula_workbook(
-        ["BABA-CN"], DICT_CUSTOM, method="A", layout="per_ticker",
+        ["9988-HK"], DICT_CUSTOM, method="A", layout="per_ticker",
         price_metric="px_last", volume_metric="vol",
     )
     wb = openpyxl.load_workbook(io.BytesIO(data))
-    ws = wb["BABA-CN"]
+    ws = wb["9988-HK"]
     close = str(ws.cell(row=2, column=2).value)
     volume = str(ws.cell(row=2, column=3).value)
     # The user's fql_template is used, NOT the generic fallback.
-    assert "PX_LAST(-2Y:0D:D)" in close
+    assert "PX_LAST(0D,-250D,D)" in close
     assert "P_PRICE" not in close
-    assert "VOL_TRADED(-2Y:0D:D)" in volume
+    assert "VOL_TRADED(0D,-250D,D)" in volume
     assert "P_VOLUME" not in volume
 
 
 def test_method_b_honors_custom_price_metric():
-    grid = fg.method_b_offset_grid(DICT_CUSTOM, lookback=5, price_metric="px_last")
+    grid = fg.method_b_offset_grid(DICT_CUSTOM, lookback=5, price_metric="px_last", volume_metric="vol")
     assert "PX_LAST" in grid[0]["relative_formula"]
     assert "P_PRICE" not in grid[0]["relative_formula"]
+    assert "VOL_TRADED" in grid[0]["relative_volume_formula"]

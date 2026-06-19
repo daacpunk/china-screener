@@ -104,10 +104,11 @@ remaining column = a ticker's close. FactSet error strings (`#N/A`, `@NA`,
 ### FactSet dictionary (Tab 5)
 JSON object with a `formulas` map; each entry must have an `fql_template`:
 ```json
-{ "formulas": { "price": { "fql_template": "P_PRICE({start}:{end}:{freq})" } } }
+{ "formulas": { "price": { "fql_template": "P_PRICE({start},{end},{freq})" } } }
 ```
-An optional Markdown wiki renders as docs. Malformed uploads are rejected and
-the prior active version is preserved.
+Date args are **comma-separated inside the field's parentheses**, most-recent-first
+(e.g. `P_PRICE(0D,-250D,D)`). An optional Markdown wiki renders as docs. Malformed
+uploads are rejected and the prior active version is preserved.
 
 ---
 
@@ -183,4 +184,27 @@ via two dropdowns (auto-detected with smart defaults: a key containing
 price/close/px for price, volume/vol for volume). These selections thread
 through both the single-formula preview and the bulk `.xlsx` export, so a
 dictionary that names its series `px_last` / `vol` is honoured instead of
-falling back to the generic `P_PRICE` / `P_VOLUME` templates.
+falling back to the generic `P_PRICE` / `P_VOLUME_DAY` templates.
+
+## FactSet pull — corrected FQL & rolling-from-today window
+
+The generated `=FDS(...)` formulas use the **correct Excel add-in syntax**: date
+arguments are **comma-separated inside the field's parentheses**, most-recent-first
+(**not** a colon `start:end:freq` string). The default pull is a **rolling window
+anchored at today**: `start = 0D` (today / most-recent trading day),
+`end = -250D` (≈ 250 trading days ≈ ~1Y), `freq = D`. Re-pull anytime to refresh
+to the latest close.
+
+- Price: `=FDS("9988-HK","P_PRICE(0D,-250D,D)")`
+- Volume: `=FDS("9988-HK","P_VOLUME_DAY(0D,-250D,D)")` (use **`P_VOLUME_DAY`**, not `P_VOLUME`)
+- Method B (offset grid, bullet-proof): `=FDS($A$2,"P_PRICE(0D-"&(ROW()-3)&"D)")`
+  and `=FDS($A$2,"P_VOLUME_DAY(0D-"&(ROW()-3)&"D)")` — one self-contained
+  single-date formula per row, row 1 = today.
+- **20-day ADV (USD) is computed in-app** (Tab 3) from daily price × volume —
+  there is no `P_ADV_USD` field.
+- Identifiers (e.g. `9988-HK`, `2883-HK`, `BD5CMC`, `BP3R5S`) are used **as-is**;
+  FactSet resolves SEDOL / exchange-ticker identifiers natively — do not mangle them.
+
+**Troubleshooting (no data):** (a) commas not colons inside the field,
+(b) `P_VOLUME_DAY` not `P_VOLUME`, (c) identifier format (e.g. `9988-HK`, `BD5CMC`),
+(d) `0D`-first (most-recent-first) order.
