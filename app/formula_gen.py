@@ -179,12 +179,30 @@ def method_a_grid(
 # ---------------------------------------------------------------------------
 # Spilling per-ticker layout — the fast default for Method A.
 # ---------------------------------------------------------------------------
+def _event_fql(formulas: dict) -> str:
+    """FQL root for the next-event date metric (FE_REP_DT_NEXT).
+
+    Prefers a dictionary entry named like next_earnings / event / report; else
+    falls back to FE_REP_DT_NEXT (FactSet estimated next report date).
+    """
+    for key in ("next_earnings", "event_date", "next_event", "earnings_date", "report_date"):
+        if key in formulas:
+            return _fql_root(formulas, key, "FE_REP_DT_NEXT")
+    # name-pattern scan
+    for k in formulas:
+        kl = k.lower()
+        if any(s in kl for s in ("earn", "event", "report", "rep_dt")):
+            return _fql_root(formulas, k, "FE_REP_DT_NEXT")
+    return "FE_REP_DT_NEXT"
+
+
 def method_a_spill_formulas(
     dictionary: dict,
     lookback: int = 109,
     price_metric: str = "price",
     volume_metric: str = "volume",
     ticker_cell: str = "A2",
+    include_event: bool = False,
 ) -> Dict[str, str]:
     """Return ONE spilling range FDS formula per series, referencing a ticker CELL.
 
@@ -214,11 +232,16 @@ def method_a_spill_formulas(
     vol_fql = _fql_root(formulas, volume_metric, "P_VOLUME_DAY")
     rng = f"0,-{lookback}D,D"
     price_expr = f"{price_fql}({rng})"
-    return {
+    out = {
         "date": f'=FDS({ticker_cell},"JULIAN({price_expr}.dates)")',
         "close": f'=FDS({ticker_cell},"{price_expr}")',
         "volume": f'=FDS({ticker_cell},"{vol_fql}({rng})")',
     }
+    if include_event:
+        ev_fql = _event_fql(formulas)
+        # Single-value next-event date (NOT a spill).
+        out["event"] = f'=FDS({ticker_cell},"{ev_fql}(0)")'
+    return out
 
 
 # ---------------------------------------------------------------------------
@@ -299,6 +322,7 @@ def build_formula_workbook(
     price_metric: str = "price",
     volume_metric: str = "volume",
     include_date: bool = False,
+    include_event: bool = False,
     batch_note: str = "",
 ) -> bytes:
     """Build the formula workbook as xlsx bytes.
@@ -439,18 +463,28 @@ def build_formula_workbook(
             for t in tickers:
                 safe = _safe_sheet_name(t)
                 ws = wb.create_sheet(safe)
-                ws.append(["ticker", "date", "close", "volume"])
-                _style_header(ws, 4)
+                header = ["ticker", "date", "close", "volume"]
+                if include_event:
+                    header.append("next_event")
+                ws.append(header)
+                _style_header(ws, len(header))
                 spill = method_a_spill_formulas(
                     dictionary, lookback=lookback,
                     price_metric=price_metric, volume_metric=volume_metric,
-                    ticker_cell="A2")
+                    ticker_cell="A2", include_event=include_event)
                 ws.cell(row=2, column=1, value=t)  # A2 = ticker literal
                 # Force TEXT storage so '=' is inert until the macro activates it.
-                for col, key in ((2, "date"), (3, "close"), (4, "volume")):
+                cells = [(2, "date"), (3, "close"), (4, "volume")]
+                if include_event:
+                    # E2 = single next-event date value (not a spill).
+                    cells.append((5, "event"))
+                for col, key in cells:
                     c = ws.cell(row=2, column=col, value=spill[key])
                     c.data_type = "s"  # string, not formula
-                for col, w in ((1, 14), (2, 16), (3, 30), (4, 32)):
+                widths = [(1, 14), (2, 16), (3, 30), (4, 32)]
+                if include_event:
+                    widths.append((5, 30))
+                for col, w in widths:
                     ws.column_dimensions[get_column_letter(col)].width = w
         elif layout == "stacked":
             # Tidy LONG format: one row per (ticker, trading day) with explicit
@@ -541,6 +575,7 @@ def build_formula_workbooks_batched(
     price_metric: str = "price",
     volume_metric: str = "volume",
     include_date: bool = False,
+    include_event: bool = False,
     batch_size: int = 75,
 ) -> List[tuple]:
     """Split ``tickers`` into chunks of ``batch_size`` and build one workbook per
@@ -562,7 +597,7 @@ def build_formula_workbooks_batched(
             chunk, dictionary, method=method, lookback=lookback,
             start=start, end=end, freq=freq, layout=layout,
             price_metric=price_metric, volume_metric=volume_metric,
-            include_date=include_date, batch_note=note,
+            include_date=include_date, include_event=include_event, batch_note=note,
         )
         fname = (f"factset_formulas_method_{method}_batch_"
                  f"{idx:0{width}d}_of_{total:0{width}d}.xlsx")

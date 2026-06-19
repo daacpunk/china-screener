@@ -30,18 +30,33 @@ Two horizons are measured so they do **not** overlap:
 The two return *intervals* share only the single anchor point at day −5, so the
 1-week move is measured independently of the prior 3-week move.
 
-### Volatility-normalized z-score
+### Volatility-normalized z-score (RAW by default in v2)
 Daily-return mean `μ` and volatility `σ` are estimated over a trailing window
 (default **60** trading days, configurable 20–60). The horizon return is
-standardized and scaled to the horizon length `h` by `√h`:
+standardized and scaled to the horizon length `h` by `√h`. As of **v2 the
+default is RAW** (no drift subtraction), so a genuinely trending name is not
+pulled toward zero by its own positive/negative drift:
 
 ```
-z = (r_horizon − μ_daily · h) / (σ_daily · √h)
+z = r_horizon / (σ_daily · √h)               # RAW (default, demean = False)
+z = (r_horizon − μ_daily · h) / (σ_daily · √h)  # demeaned (legacy, demean = True)
 ```
 
-A **composite z** blends Horizon A and B (default weights 0.5 / 0.5) and is the
-ranking key. We rank by **|z| in both tails** — the goal is to surface the
-extremes, not to rank toward the median.
+The `demean` toggle (default **OFF**) restores the legacy drift-subtracted form.
+
+**Ranking z (`rank_z`).** Instead of a fixed 50/50 composite, v2 derives a
+signed `rank_z` per the `rank_mode` parameter:
+- **`max_abs`** (default): the horizon (1-week `z_a` or 1-month-ex-week `z_b`)
+  with the larger magnitude, **sign preserved**. If one horizon is missing, the
+  other is used; if both are missing, `rank_z` is NaN. This stops a violent
+  1-week move from being halved by a quiet prior month.
+- **`weighted`**: a weighted blend of `z_a`/`z_b` (renormalizing when one is
+  NaN); `composite_z` is reported.
+- **`horizon_a`**: `z_a` only (`z_b` is a confirmation column).
+
+Both `z_1w` and `z_1m_ex_week` columns stay visible in every mode. The master
+and both playbooks rank by **`|rank_z|`** descending — the goal is to surface
+the extremes in both tails, not to rank toward the median.
 
 ### Reversion metrics
 - **Distance from 20-day mean**: `(P − SMA20) / SMA20`, also expressed in σ
@@ -50,31 +65,62 @@ extremes, not to rank toward the median.
 - **MACD(12, 26, 9)** — state is *Bullish* if MACD line > signal line, else
   *Bearish*.
 
-## 3. Idiosyncratic vs sector (Step 3)
-For each name we compare its composite z to the **median composite z of its GICS
-sub-industry peers**:
+## 3. Idiosyncratic vs sector (Step 3) — leave-one-out + roll-up + solo
+For each name we compare its `rank_z` to a **leave-one-out** peer median that
+**excludes the name itself** (so a name can't anchor its own peer group). The
+group is chosen by availability, controlled by `min_peers` (default 3):
+
+1. **Sub-industry**: if the GICS sub-industry has ≥ `min_peers` OTHER names, use
+   their median `rank_z` (`peer_group_used = "sub_industry"`).
+2. **Sector roll-up**: else if the GICS sector has ≥ `min_peers` OTHER names, use
+   their median (`peer_group_used = "sector"`).
+3. **Solo**: else there is no group to net against; the name is tagged
+   **IDIOSYNCRATIC** outright (`peer_group_used = "solo"`, `peer_count = 0`).
 
 ```
-peer_relative_z = stock_z − peer_group_median_z
-|peer_relative_z| ≥ divergence_threshold (default 1.0)  ⇒  IDIOSYNCRATIC
-otherwise                                                ⇒  SECTOR / MACRO / POLICY
+peer_relative_z = rank_z − leave_one_out_peer_median_rank_z   (when a group is used)
+IDIOSYNCRATIC  if  |peer_relative_z| ≥ divergence_threshold (default 1.0)  OR  solo
+otherwise      ⇒  SECTOR / MACRO / POLICY
 ```
 
-This separates single-name dislocations from sector- or macro-wide moves.
+Output columns include `peer_relative_z`, `peer_group_used`, and `peer_count`.
+This separates single-name dislocations from sector- or macro-wide moves and is
+robust to thin or singleton sub-industries.
 
-## 4. Playbooks (Step 4)
-Two ranked lists, each sorted by `|z|` descending:
+## 4. Playbooks (Step 4) — scored by default, strict-AND opt-in
+Two ranked lists. **RSI bands default to 35 / 65** (was 30 / 70). The
+`playbook_mode` parameter selects the membership rule:
 
-- **Oversold → Reversion (long)**: composite z ≤ −(z cutoff, default 1.0)
-  **and** price below the 20-day mean **and** RSI < oversold (default 30).
-- **Overbought → Fade (short)**: composite z ≥ +(z cutoff) **and** price above
-  the 20-day mean **and** RSI > overbought (default 70).
+**Scored mode (default).** Each name gets a normalized 0..1-ish score built from
+normalized magnitudes, documented and configurable via weights:
+
+```
+reversion_score = w_z·|rank_z|down + w_dist·|dist_sigma|down + w_rsi·(RSI below oversold) + MACD-bearish bonus
+fade_score      = w_z·|rank_z|up   + w_dist·|dist_sigma|up   + w_rsi·(RSI above overbought) + MACD-bullish bonus
+```
+
+(default weights `w_z = 0.5`, `w_dist = 0.3`, `w_rsi = 0.2`, `macd_bonus = 0.1`;
+only the downside/upside magnitude contributes to each). A name enters:
+- **Oversold → Reversion (long)**: `rank_z < 0` **and** `reversion_score ≥
+  score_threshold` (default 0.5) — ranked by `reversion_score` desc.
+- **Overbought → Fade (short)**: `rank_z > 0` **and** `fade_score ≥
+  score_threshold` — ranked by `fade_score` desc.
+
+**Strict mode (opt-in).** The legacy hard AND, ranked by `|rank_z|` desc:
+- Oversold: `rank_z ≤ −(z cutoff, default 1.0)` **and** price below the 20-day
+  mean **and** RSI < oversold.
+- Overbought: symmetric.
+
+**Both horizons required.** A name is only eligible for either playbook when
+both `z_a` and `z_b` are present (`partial_history == False`) — a 5-day-only z
+can't sneak into a playbook unflagged (see §6).
 
 Each row reports: ticker, name, sector, sub-industry, 1-week z, 1-month-ex-week
-z, distance-from-20d-mean, RSI, MACD state, peer-relative z, idiosyncratic tag,
-index weight, 20D ADV, and an **event-calendar flag** (warns if a scheduled
-earnings/event falls within N days, default 7). Event-flagged rows are
-highlighted.
+z, `rank_z`, the kind-appropriate score, distance-from-20d-mean, RSI, MACD
+state, peer-relative z, `peer_group_used`/`peer_count`, idiosyncratic tag,
+`partial_history` / `adv_unknown` flags, index weight, 20D ADV, and an
+**event-calendar flag** (warns if a scheduled earnings/event falls within N
+days, default 7). Event-flagged rows are highlighted.
 
 ## 5. RSI / MACD definitions
 - **RSI(14)** uses **Wilder's smoothing** (recursive moving average, equivalent
@@ -91,6 +137,26 @@ identical semantics; both are unit-tested to agree to < 1e-6 (see
 ## 6. Data hygiene & robustness
 - **Min bars** (default 60): names with too few bars for indicator warm-up are
   skipped/flagged rather than producing garbage values.
+- **Partial history** (v2): a name missing either horizon z (`z_a` or `z_b`
+  NaN) is tagged `partial_history = True`. It **stays in the master** (nothing
+  is hidden) but is **excluded from the playbooks** so an incomplete signal
+  can't rank high unflagged. Surfaced as a small badge.
+- **Unknown-ADV policy** (v2, `unknown_adv_policy`): names whose 20D ADV is
+  blank/NaN get `adv_unknown = True`. `"flag"` (default) keeps them screenable
+  with a badge; `"exclude"` moves them to the skipped list; `"include"` keeps
+  them silently (the flag is still set for transparency). This is separate from
+  the hard liquidity floor (`below_floor = adv.notna() & adv < floor`).
+- **As-of stamp & staleness** (v2): the result carries `asof` (max price date).
+  The Results and Data tabs show "Data as of {asof} ({n} business days ago)" and
+  raise a warning banner when older than `staleness_days` (default 3) —
+  "re-pull FactSet before trading."
+- **Event overlay** (v2): an optional `event_date` column (tolerant aliases:
+  `event_date`, `next_earnings`, `earnings_date`, `next_event`, `fe_rep_dt_next`,
+  `report_date`) feeds the catalyst flag. If no name has a usable event date,
+  `event_data_loaded` is False, the Results note says the calendar isn't loaded,
+  and the hide-imminent-event toggle is disabled. The formula generator can emit
+  an optional `=FDS(A2,"FE_REP_DT_NEXT(0)")` next-event column (toggle, default
+  off).
 - FactSet error strings (`#N/A`, `@NA`, `#VALUE!`, …) are scrubbed to NaN and
   counted in the data-quality report.
 - Missing data, NaNs, ticker mismatches, and short/stale series never crash the
@@ -100,7 +166,13 @@ identical semantics; both are unit-tested to agree to < 1e-6 (see
 - **Vol window** shorter (20d) → more reactive z; longer (60d) → smoother.
 - **z cutoff** higher → fewer, more extreme candidates.
 - **Divergence threshold** higher → stricter idiosyncratic classification.
-- **RSI bounds** can be widened (e.g. 35/65) to surface more names.
+- **RSI bounds** default to 35/65 in v2; tighten to 30/70 for a more selective
+  list.
+- **rank_mode** picks how the two horizons combine (`max_abs` default).
+- **playbook_mode** switches scored (default) vs strict hard-AND membership;
+  **score_threshold** tunes how selective the scored lists are.
+- **min_peers** controls when peer classification rolls sub-industry up to sector
+  or falls back to solo/idiosyncratic.
 - **Event window** controls how aggressively imminent-catalyst names are flagged.
 
 ## 8. LLM analysis (optional)

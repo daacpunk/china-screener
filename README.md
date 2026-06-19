@@ -12,6 +12,19 @@ market-data API calls.** It computes RSI, MACD, volatility-normalized z-scores,
 distance-from-20-day-mean, and peer-relative (idiosyncratic-vs-sector) metrics
 itself in Python.
 
+**Screen engine v2** changes the defaults: a signed **`rank_z`** (default
+`max_abs` — the larger-magnitude horizon, sign preserved) replaces the fixed
+50/50 composite for ranking; z-scores are **RAW** by default (no drift
+subtraction, `demean` toggle off); peer classification uses a **leave-one-out**
+sub-industry median that **rolls up to sector** (or tags **solo/idiosyncratic**)
+via `min_peers` (default 3); playbooks are **scored** by default (RSI bands
+**35/65**, `score_threshold` 0.5) with a strict hard-AND opt-in; names missing a
+horizon are flagged `partial_history` and kept in the master but excluded from
+playbooks; unknown-ADV names follow `unknown_adv_policy` (flag / exclude /
+include); results carry an **as-of stamp + staleness** warning
+(`staleness_days`, default 3); and an optional **event_date** column enables
+catalyst flags.
+
 ---
 
 ## Quick start (local)
@@ -118,9 +131,12 @@ uploads are rejected and the prior active version is preserved.
 - **API keys**: masked (last 4 chars), never logged, encrypted at rest with
   Fernet derived from `APP_SECRET`. Env vars override the store. Per-provider
   model, enable toggle, and a lightweight **Test connection** ping.
-- **Screen parameters**: z cutoff, RSI bounds, MACD params, lookbacks, vol
-  window, divergence threshold, event window, ADV floor — all editable with
-  reset-to-default.
+- **Screen parameters**: z cutoff, RSI bounds (default 35/65), MACD params,
+  lookbacks, vol window, divergence threshold, event window, ADV floor, plus the
+  **v2 controls** — `rank_mode` (max_abs / weighted / horizon_a), `demean`
+  toggle, `min_peers`, `playbook_mode` (scored / strict) with score weights and
+  `score_threshold`, `unknown_adv_policy` (flag / exclude / include), and
+  `staleness_days` — all editable with reset-to-default.
 
 ---
 

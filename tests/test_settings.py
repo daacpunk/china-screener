@@ -57,7 +57,8 @@ def test_screen_params_persist_and_reset(temp_db):
     ss.set_screen_params(p, temp_db)
     assert ss.get_screen_params(temp_db)["rsi_oversold"] == 25.0
     ss.reset_screen_params(temp_db)
-    assert ss.get_screen_params(temp_db)["rsi_oversold"] == 30.0
+    # v2 default RSI oversold band is 35 (was 30)
+    assert ss.get_screen_params(temp_db)["rsi_oversold"] == 35.0
 
 
 def test_api_key_encryption_and_masking(temp_db):

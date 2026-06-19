@@ -141,6 +141,10 @@ def parse_universe(content: bytes, filename: str = "",
         "sub_industry": _find_col(cols, ["sub_industry", "sub-industry", "subindustry", "gics_sub_industry", "sub industry"]),
         "index_weight": _find_col(cols, ["index_weight", "index weight", "weight", "wt"]),
         "adv_usd_20d": _find_col(cols, ["20d_adv_usd", "adv_usd", "adv", "20d adv usd", "adv_usd_20d"]),
+        "event_date": _find_col(cols, ["event_date", "event date", "next_earnings",
+                                       "next earnings", "earnings_date", "earnings date",
+                                       "next_event", "next event", "fe_rep_dt_next",
+                                       "report_date", "report date"]),
     }
     # Apply manual overrides (UI column mapping) — normalized to lowercase.
     if overrides:
@@ -155,6 +159,7 @@ def parse_universe(content: bytes, filename: str = "",
     out = out[out["ticker"].notna() & (out["ticker"] != "") & (out["ticker"].str.lower() != "nan")]
     out["index_weight"] = pd.to_numeric(out["index_weight"], errors="coerce")
     out["adv_usd_20d"] = pd.to_numeric(out["adv_usd_20d"], errors="coerce")
+    # event_date stays as-is (parsed/validated downstream); blank if absent.
 
     # MSCI index-export enrichment: these files list GICS sector/sub-industry as
     # interleaved GROUP ROWS (blank symbol, name prefixed with a GICS code:

@@ -228,3 +228,33 @@ def test_parse_prices_multisheet_spill_workbook():
     assert str(g["date"].max().date()) == "2026-06-18"  # JULIAN decoded
     assert float(g.iloc[-1]["close"]) == 80.0           # latest date = latest close
     assert "Instructions" not in set(tidy["ticker"])     # Instructions skipped
+
+
+def test_parse_universe_maps_event_date_column():
+    csv = (
+        "Ticker,Name,Sector,Next Earnings\n"
+        "0700-HK,Tencent,Comm,2026-07-15\n"
+        "9988-HK,Alibaba,Cons,2026-08-01\n"
+    )
+    df, rep = di.parse_universe(_csv_bytes(csv), "u.csv")
+    # the "Next Earnings" column maps to event_date
+    assert rep["mapping"]["event_date"] == "next earnings"
+    assert "event_date" in df.columns
+    assert df.set_index("ticker").loc["0700-HK", "event_date"] == "2026-07-15"
+
+
+def test_parse_universe_event_date_absent_is_blank():
+    csv = "Ticker,Name,Sector\n0700-HK,Tencent,Comm\n"
+    df, rep = di.parse_universe(_csv_bytes(csv), "u.csv")
+    assert rep["mapping"]["event_date"] is None
+    # column still present, NaN-filled
+    assert "event_date" in df.columns
+    assert df["event_date"].isna().all()
+
+
+def test_parse_universe_event_date_override():
+    csv = "Ticker,Name,Catalyst\n0700-HK,Tencent,2026-09-09\n"
+    df, rep = di.parse_universe(_csv_bytes(csv), "u.csv",
+                                overrides={"event_date": "Catalyst"})
+    assert rep["mapping"]["event_date"] == "catalyst"
+    assert df.set_index("ticker").loc["0700-HK", "event_date"] == "2026-09-09"

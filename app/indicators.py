@@ -132,7 +132,7 @@ def sma(close: pd.Series, length: int = SMA_DISTANCE_LENGTH) -> pd.Series:
 # ---------------------------------------------------------------------------
 # Signal tagging
 # ---------------------------------------------------------------------------
-def rsi_signal(value: float, oversold: float = 30.0, overbought: float = 70.0) -> str:
+def rsi_signal(value: float, oversold: float = 35.0, overbought: float = 65.0) -> str:
     if value is None or (isinstance(value, float) and np.isnan(value)):
         return "Unknown"
     if value < oversold:
@@ -152,8 +152,8 @@ def combined_signal(
     rsi_val: float,
     macd_val: float,
     signal_val: float,
-    oversold: float = 30.0,
-    overbought: float = 70.0,
+    oversold: float = 35.0,
+    overbought: float = 65.0,
 ) -> str:
     r = rsi_signal(rsi_val, oversold, overbought)
     m = macd_state(macd_val, signal_val)

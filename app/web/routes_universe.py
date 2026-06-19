@@ -51,12 +51,13 @@ async def universe_upload(
     ticker_col: str = Form(""), name_col: str = Form(""),
     sector_col: str = Form(""), sub_industry_col: str = Form(""),
     index_weight_col: str = Form(""), adv_col: str = Form(""),
+    event_col: str = Form(""),
 ):
     content = await file.read()
     overrides = {k: v for k, v in {
         "ticker": ticker_col, "name": name_col, "sector": sector_col,
         "sub_industry": sub_industry_col, "index_weight": index_weight_col,
-        "adv_usd_20d": adv_col,
+        "adv_usd_20d": adv_col, "event_date": event_col,
     }.items() if v.strip()}
     try:
         df, report = di.parse_universe(content, file.filename, overrides=overrides or None)

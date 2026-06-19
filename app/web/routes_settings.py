@@ -129,13 +129,30 @@ async def settings_params(request: Request):
     numeric = ["horizon_a_lookback", "horizon_b_start", "horizon_b_end", "vol_window",
                "rsi_length", "rsi_oversold", "rsi_overbought", "macd_fast", "macd_slow",
                "macd_signal", "sma_length", "z_cutoff", "divergence_threshold",
-               "event_window_days", "min_bars", "adv_floor", "z_weight_a", "z_weight_b"]
+               "event_window_days", "min_bars", "adv_floor", "z_weight_a", "z_weight_b",
+               # v2 numeric params
+               "min_peers", "score_threshold", "score_w_z", "score_w_dist",
+               "score_w_rsi", "score_macd_bonus", "staleness_days"]
+    float_keys = ("z_cutoff", "divergence_threshold", "rsi_oversold", "rsi_overbought",
+                  "z_weight_a", "z_weight_b", "adv_floor", "score_threshold",
+                  "score_w_z", "score_w_dist", "score_w_rsi", "score_macd_bonus")
     for k in numeric:
         if k in form and str(form[k]).strip() != "":
             try:
-                params[k] = float(form[k]) if ("." in str(form[k]) or k in ("z_cutoff","divergence_threshold","rsi_oversold","rsi_overbought","z_weight_a","z_weight_b","adv_floor")) else int(float(form[k]))
+                params[k] = float(form[k]) if ("." in str(form[k]) or k in float_keys) else int(float(form[k]))
             except Exception:
                 pass
+    # v2 string-valued params (validated against allowed sets)
+    str_choices = {
+        "rank_mode": {"max_abs", "weighted", "horizon_a"},
+        "playbook_mode": {"scored", "strict"},
+        "unknown_adv_policy": {"flag", "exclude", "include"},
+    }
+    for k, allowed in str_choices.items():
+        if k in form and str(form[k]).strip() in allowed:
+            params[k] = str(form[k]).strip()
+    # v2 bool param (checkbox: present == on)
+    params["demean"] = ("demean" in form and str(form["demean"]).strip().lower() in ("on", "true", "1"))
     ss.set_screen_params(params)
     return RedirectResponse("/settings?msg=Parameters saved", status_code=303)
 

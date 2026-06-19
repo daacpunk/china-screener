@@ -9,6 +9,7 @@ from fastapi.responses import HTMLResponse, Response
 
 import markdown as md
 
+from .. import screen_engine as se
 from .. import settings_store as ss
 from ..llm import analysis as la
 from ..llm.registry import build_provider
@@ -77,7 +78,7 @@ def _apply_filters(df: pd.DataFrame, q) -> pd.DataFrame:
         out = out[out["sub_industry"] == sub]
     if idio:
         out = out[out["dislocation_type"] == "IDIOSYNCRATIC"]
-    if hide_event:
+    if hide_event and "event_flag" in out.columns:
         out = out[~out["event_flag"].astype(bool)]
     if rsi_min not in (None, ""):
         out = out[out["rsi"] >= float(rsi_min)]
@@ -104,6 +105,12 @@ def results_page(request: Request):
     # the snapshot-keyed cache so filter changes don't re-call the LLM.
     force = q.get("run") in ("1", "true", "yes")
     sidebar = _sidebar_for(res, force=force)
+    meta = res.get("meta", {}) or {}
+    asof = meta.get("asof")
+    staleness_days = int(meta.get("staleness_days", ss.get_screen_params().get("staleness_days", 3)))
+    n_stale = se.days_stale(asof) if asof else None
+    is_stale = (n_stale is not None) and (n_stale > staleness_days)
+    snap = ss.get_active_snapshot()
     ctx = base_ctx(
         request, "results", empty=empty,
         oversold=df_to_records(oversold), overbought=df_to_records(overbought),
@@ -112,6 +119,10 @@ def results_page(request: Request):
         providers=providers, any_key=any_key,
         sidebar=sidebar,
         params=ss.get_screen_params(),
+        meta=meta, asof=asof, n_stale=n_stale, is_stale=is_stale,
+        staleness_days=staleness_days,
+        event_data_loaded=bool(meta.get("event_data_loaded", False)),
+        snapshot_uploaded_at=(snap.get("created_at") if snap else None),
     )
     return templates.TemplateResponse(request, "results.html", ctx)
 

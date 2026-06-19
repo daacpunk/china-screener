@@ -3,6 +3,14 @@
 <h1>Data Upload &amp; Indicator Engine</h1>
 <p class="subtitle">Upload completed FactSet price/volume data (tidy or offset grid). The app validates it, computes RSI/MACD, and runs the screen. Indicator backend: <span class="pill">{{ indicator_backend }}</span></p>
 
+{% if asof %}
+<div class="note {{ 'error' if is_stale else 'info' }}">
+  <b>Data as of {{ asof }}</b>{% if n_stale is not none %} ({{ n_stale }} day{{ 's' if n_stale != 1 else '' }} ago){% endif %}.
+  {% if snapshot and snapshot.created_at %}<span class="muted"> Snapshot uploaded {{ snapshot.created_at }}.</span>{% endif %}
+  {% if is_stale %} <b>⚠ Snapshot is {{ n_stale }} days old — re-pull FactSet before trading.</b>{% endif %}
+</div>
+{% endif %}
+
 <div class="grid grid-2">
   <div class="card">
     <h3>Upload price/volume data (CSV / XLSX)</h3>

@@ -9,6 +9,7 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 
 from .. import data_ingest as di
 from .. import indicators as ind
+from .. import screen_engine as se
 from .. import settings_store as ss
 from .common import active_prices, base_ctx, run_active_screen, templates
 
@@ -52,9 +53,21 @@ def _snapshot_indicator_preview(db_path=None):
 def data_page(request: Request):
     snap = ss.get_active_snapshot()
     quality = json.loads(snap["quality_json"]) if snap and snap.get("quality_json") else None
+    # As-of stamp + staleness (same helper as Results).
+    prices = active_prices()
+    asof = None
+    if not prices.empty and "date" in prices.columns:
+        d = pd.to_datetime(prices["date"], errors="coerce").max()
+        asof = d.date().isoformat() if pd.notna(d) else None
+    params = ss.get_screen_params()
+    staleness_days = int(params.get("staleness_days", 3))
+    n_stale = se.days_stale(asof) if asof else None
+    is_stale = (n_stale is not None) and (n_stale > staleness_days)
     ctx = base_ctx(request, "data", snapshot=snap, snapshots=ss.list_snapshots(),
                    quality=quality, indicator_backend=ind.INDICATOR_BACKEND,
-                   previews=_snapshot_indicator_preview())
+                   previews=_snapshot_indicator_preview(),
+                   asof=asof, n_stale=n_stale, is_stale=is_stale,
+                   staleness_days=staleness_days)
     return templates.TemplateResponse(request, "data.html", ctx)
 
 

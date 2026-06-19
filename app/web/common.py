@@ -52,17 +52,24 @@ def assemble_active_universe(db_path: Optional[str] = None) -> pd.DataFrame:
                 man["below_floor"] = False  # manual always included
                 frames.append(man)
     if not frames:
-        return pd.DataFrame(columns=["ticker", "name", "sector", "sub_industry", "index_weight", "adv_usd_20d", "below_floor"])
+        return pd.DataFrame(columns=["ticker", "name", "sector", "sub_industry", "index_weight", "adv_usd_20d", "below_floor", "adv_unknown", "event_date"])
     df = pd.concat(frames, ignore_index=True)
     df.columns = [str(c).strip().lower() for c in df.columns]
+    adv = pd.to_numeric(df["adv_usd_20d"], errors="coerce") if "adv_usd_20d" in df.columns else pd.Series([float("nan")] * len(df))
     if "adv_usd_20d" in df.columns and "below_floor" not in df.columns:
-        adv = pd.to_numeric(df["adv_usd_20d"], errors="coerce")
         # Only drop names whose ADV is KNOWN and below the floor. Names with
         # unknown ADV (e.g. index file without a liquidity column) stay
         # screenable — liquidity can be filled later from the price/volume pull.
         df["below_floor"] = adv.notna() & (adv < floor)
     if "below_floor" not in df.columns:
         df["below_floor"] = False
+    # adv_unknown: ADV blank/NaN. Computed here so the engine's unknown_adv_policy
+    # has a consistent flag (separate from below_floor). Manual tickers without an
+    # ADV column are also flagged unknown.
+    df["adv_unknown"] = adv.isna()
+    # carry event_date through (column may be absent -> add empty)
+    if "event_date" not in df.columns:
+        df["event_date"] = pd.NA
     # dedupe by ticker keeping first
     df = df.drop_duplicates(subset=["ticker"], keep="first").reset_index(drop=True)
     return df
@@ -75,14 +82,18 @@ def active_prices(db_path: Optional[str] = None) -> pd.DataFrame:
     return di.csv_to_df(snap["csv_text"])
 
 
-def run_active_screen(db_path: Optional[str] = None) -> Dict[str, pd.DataFrame]:
+def run_active_screen(db_path: Optional[str] = None) -> Dict[str, Any]:
     prices = active_prices(db_path)
     uni = assemble_active_universe(db_path)
     params = ss.get_screen_params(db_path)
     if prices.empty or uni.empty:
         empty = pd.DataFrame()
         return {"master": empty, "oversold": empty, "overbought": empty,
-                "skipped": pd.DataFrame(), "_empty": True}
+                "skipped": pd.DataFrame(),
+                "meta": {"asof": None, "event_data_loaded": False,
+                         "n_idiosyncratic": 0, "n_sector": 0,
+                         "staleness_days": int(params.get("staleness_days", 3))},
+                "_empty": True}
     res = se.run_screen(prices, uni, params)
     res["_empty"] = False
     return res

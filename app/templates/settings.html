@@ -110,13 +110,35 @@
       ('event_window_days','Event window (days)'),
       ('min_bars','Min bars (warm-up)'),
       ('adv_floor','ADV floor (USD)'),
-      ('z_weight_a','Composite weight: 1w'),
-      ('z_weight_b','Composite weight: 1m')
+      ('z_weight_a','Composite weight: 1w (weighted mode)'),
+      ('z_weight_b','Composite weight: 1m (weighted mode)'),
+      ('min_peers','Min peers (leave-one-out)'),
+      ('score_threshold','Scored playbook threshold (0..1)'),
+      ('score_w_z','Score weight: |z|'),
+      ('score_w_dist','Score weight: dist-from-SMA'),
+      ('score_w_rsi','Score weight: RSI extremity'),
+      ('score_macd_bonus','Score MACD confirmation bonus'),
+      ('staleness_days','Data staleness warning (days)')
     ] %}
     {% for key,label in fields %}
       <div><label>{{ label }}</label><input name="{{ key }}" value="{{ params[key] }}" step="any"></div>
     {% endfor %}
+    <div><label>Ranking mode (rank_mode)</label>
+      <select name="rank_mode">
+        {% for v in ['max_abs','weighted','horizon_a'] %}<option value="{{ v }}" {{ 'selected' if params['rank_mode']==v }}>{{ v }}</option>{% endfor %}
+      </select></div>
+    <div><label>Playbook mode</label>
+      <select name="playbook_mode">
+        {% for v in ['scored','strict'] %}<option value="{{ v }}" {{ 'selected' if params['playbook_mode']==v }}>{{ v }}</option>{% endfor %}
+      </select></div>
+    <div><label>Unknown-ADV policy</label>
+      <select name="unknown_adv_policy">
+        {% for v in ['flag','exclude','include'] %}<option value="{{ v }}" {{ 'selected' if params['unknown_adv_policy']==v }}>{{ v }}</option>{% endfor %}
+      </select></div>
+    <div><label>z normalization</label>
+      <label class="flex" style="margin-top:8px;font-weight:400"><input type="checkbox" name="demean" {{ 'checked' if params['demean'] }} style="width:auto"> Demean (subtract drift). Default OFF = raw z.</label></div>
   </div>
+  <p class="help">v2 defaults: rank_mode=max_abs, raw z (demean off), min_peers=3, scored playbooks, RSI 35/65, unknown-ADV=flag, staleness=3 days.</p>
   <div class="spacer"></div>
   <div class="flex">
     <button class="btn" type="submit">Save parameters</button>

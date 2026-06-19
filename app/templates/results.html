@@ -7,21 +7,29 @@
 <div class="table-wrap"><table>
   <thead><tr>
     <th>Ticker</th><th>Name</th><th>Sector</th><th>Sub-industry</th>
-    <th>1w z</th><th>1m-ex-wk z</th><th>|z|</th><th>Dist 20d</th><th>RSI</th><th>MACD</th>
-    <th>Peer-rel z</th><th>Type</th><th>Idx wt</th><th>Event</th>
+    <th>1w z</th><th>1m-ex-wk z</th><th>Rank z</th><th>|z|</th>
+    {% if kind=='os' %}<th>Reversion score</th>{% elif kind=='ob' %}<th>Fade score</th>{% endif %}
+    <th>Dist 20d</th><th>RSI</th><th>MACD</th>
+    <th>Peer-rel z</th><th>Peer group</th><th>Peers</th><th>Type</th><th>Idx wt</th><th>Flags</th><th>Event</th>
   </tr></thead>
   <tbody>
   {% for r in rows %}
     <tr class="{{ 'event-row' if r.event_flag }}">
       <td class="mono">{{ r.ticker }}</td><td>{{ r.name }}</td><td>{{ r.sector }}</td><td>{{ r.sub_industry }}</td>
       <td>{{ ztd(r.z_1w) }}</td><td>{{ ztd(r.z_1m_ex_week) }}</td>
+      <td>{{ ztd(r.rank_z) }}</td>
       <td><b>{{ '%.2f'|format(r.abs_z) if r.abs_z is not none else '—' }}</b></td>
+      {% if kind=='os' %}<td>{{ '%.3f'|format(r.reversion_score) if r.reversion_score is not none else '—' }}</td>
+      {% elif kind=='ob' %}<td>{{ '%.3f'|format(r.fade_score) if r.fade_score is not none else '—' }}</td>{% endif %}
       <td>{{ pct(r.dist_from_sma) }}</td>
       <td>{{ '%.1f'|format(r.rsi) if r.rsi is not none else '—' }}</td>
       <td>{{ r.macd_state }}</td>
       <td>{{ ztd(r.peer_relative_z) }}</td>
+      <td class="muted">{{ r.peer_group_used }}</td>
+      <td class="muted">{{ r.peer_count if r.peer_count is not none else '—' }}</td>
       <td>{{ idiotag(r.dislocation_type) }}</td>
       <td>{{ '%.2f'|format(r.index_weight) if r.index_weight is not none else '—' }}</td>
+      <td>{% if r.partial_history %}<span class="tag event" title="only one horizon available">partial</span> {% endif %}{% if r.adv_unknown %}<span class="tag sector" title="ADV unknown">adv?</span>{% endif %}</td>
       <td>{% if r.event_flag %}<span class="tag event">⚠ event</span>{% else %}—{% endif %}</td>
     </tr>
   {% endfor %}
@@ -31,7 +39,20 @@
 
 {% block content %}
 <h1>Results</h1>
-<p class="subtitle">Two ranked trade lists plus the master dislocation view. Ranked by |composite z|.</p>
+<p class="subtitle">Two ranked trade lists plus the master dislocation view. Ranked by |rank z| (max-abs horizon).</p>
+
+{% if not empty %}
+<div class="note {{ 'error' if is_stale else 'info' }}" style="display:flex;justify-content:space-between;align-items:center;gap:12px">
+  <span>
+    <b>Data as of {{ asof or 'unknown' }}</b>{% if n_stale is not none %} ({{ n_stale }} day{{ 's' if n_stale != 1 else '' }} ago){% endif %}.
+    {% if snapshot_uploaded_at %}<span class="muted"> Snapshot uploaded {{ snapshot_uploaded_at }}.</span>{% endif %}
+  </span>
+  {% if is_stale %}<b>⚠ Snapshot is {{ n_stale }} days old — re-pull FactSet before trading.</b>{% endif %}
+</div>
+{% if not event_data_loaded %}
+<div class="note info">Event calendar not loaded — catalyst flags disabled. Add a next-event date column to your universe to enable.</div>
+{% endif %}
+{% endif %}
 
 {% if empty %}
 <div class="empty">
@@ -53,7 +74,7 @@
   </div>
   <div class="flex" style="margin-top:10px">
     <label class="flex" style="margin:0"><input type="checkbox" name="idio_only" value="1" style="width:auto" {{ 'checked' if filters.get('idio_only') }}> Idiosyncratic only</label>
-    <label class="flex" style="margin:0"><input type="checkbox" name="hide_event" value="1" style="width:auto" {{ 'checked' if filters.get('hide_event') }}> Hide imminent-event names</label>
+    <label class="flex" style="margin:0{{ ';opacity:.5' if not event_data_loaded }}" {{ 'title="Event calendar not loaded — add a next-event date column to your universe."' if not event_data_loaded }}><input type="checkbox" name="hide_event" value="1" style="width:auto" {{ 'checked' if filters.get('hide_event') }} {{ 'disabled' if not event_data_loaded }}> Hide imminent-event names</label>
     <button class="btn secondary" type="submit">Apply filters</button>
     <a class="btn ghost" href="/results/export">Export Excel</a>
   </div>
