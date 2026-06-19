@@ -106,12 +106,26 @@ def test_method_a_grid_row_per_day():
 
 
 def test_build_workbook_method_a_stacked():
-    data = fg.build_formula_workbook(["AAA", "BBB"], DICT, method="A", layout="stacked")
+    # Stacked = tidy LONG format: one row per (ticker, day) with explicit
+    # single-date formulas (no array-spill). Tab-3 ingestible.
+    data = fg.build_formula_workbook(["AAA", "BBB"], DICT, method="A",
+                                     layout="stacked", lookback=10)
     wb = openpyxl.load_workbook(io.BytesIO(data))
     assert "AllTickers" in wb.sheetnames
     ws = wb["AllTickers"]
-    assert ws.cell(row=1, column=1).value == "ticker"
+    assert [c.value for c in ws[1]] == ["ticker", "date", "close", "volume"]
+    # header + 2 tickers * 10 days = 21 rows
+    assert ws.max_row == 1 + 2 * 10
+    # first ticker block: row 2 = AAA today, explicit single-date formula
     assert ws.cell(row=2, column=1).value == "AAA"
+    assert ws.cell(row=2, column=3).value == '=FDS("AAA","P_PRICE(0D)")'
+    assert ws.cell(row=3, column=3).value == '=FDS("AAA","P_PRICE(0D-1D)")'
+    # second ticker block starts at row 12
+    assert ws.cell(row=12, column=1).value == "BBB"
+    assert ws.cell(row=12, column=3).value == '=FDS("BBB","P_PRICE(0D)")'
+    # no colon range form anywhere in the close column
+    for r in range(2, ws.max_row + 1):
+        assert ":" not in str(ws.cell(row=r, column=3).value)
 
 
 def test_build_workbook_method_b_opens():

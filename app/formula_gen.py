@@ -250,6 +250,9 @@ def build_formula_workbook(
             ["5. 20D ADV (USD) is NOT pulled here — it is computed in-app (Tab 3) from"],
             ["   daily price * volume."],
             ["6. After refresh, export the resulting tidy data and upload in Tab 3."],
+            ["   (Stacked layout = a single 'AllTickers' sheet in tidy long format:"],
+            ["   columns ticker/date/close/volume, one row per ticker per day — also"],
+            ["   explicit per-row formulas, no spill. Upload that sheet directly.)"],
             [""],
             ["Note: if P_DATE returns blank in your entitlement, the close/volume"],
             ["columns still work; dates can be reconstructed from the row offset (row 1"],
@@ -282,14 +285,20 @@ def build_formula_workbook(
 
     if method.upper() == "A":
         if layout == "stacked":
+            # Tidy LONG format: one row per (ticker, trading day) with explicit
+            # single-date formulas (no array-spill). This is exactly the shape
+            # Tab 3 ingests, all tickers stacked in a single sheet.
             ws = wb.create_sheet("AllTickers")
-            ws.append(["ticker", "date_formula", "close_formula", "volume_formula"])
+            ws.append(["ticker", "date", "close", "volume"])
             _style_header(ws, 4)
             for t in tickers:
-                fs = method_a_timeseries_formulas(t, dictionary, start, end, freq,
-                                                  price_metric=price_metric,
-                                                  volume_metric=volume_metric)
-                ws.append([t, fs["date"], fs["close"], fs["volume"]])
+                grid = method_a_grid(t, dictionary, lookback=lookback,
+                                     price_metric=price_metric,
+                                     volume_metric=volume_metric)
+                for g in grid:
+                    ws.append([t, g["date_formula"], g["close_formula"], g["volume_formula"]])
+            for col, w in ((1, 14), (2, 24), (3, 30), (4, 32)):
+                ws.column_dimensions[get_column_letter(col)].width = w
         else:
             for t in tickers:
                 safe = _safe_sheet_name(t)
