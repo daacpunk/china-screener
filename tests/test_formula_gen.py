@@ -250,3 +250,149 @@ def test_workbook_has_no_empty_cached_value_elements():
         wb = openpyxl.load_workbook(io.BytesIO(data))
         sheet = "AllTickers" if layout == "stacked" else "9988-HK"
         assert any("FDS(" in str(c.value) for row in wb[sheet].iter_rows() for c in row)
+
+
+# ---- SPILL layout: single spilling range formula per series ----
+def test_method_a_spill_formulas_comma_range_and_volume():
+    s = fg.method_a_spill_formulas("9988-HK", DICT, lookback=109)
+    assert s["close"] == '=FDS("9988-HK","P_PRICE(0D,-109D,D)")'
+    assert s["volume"] == '=FDS("9988-HK","P_VOLUME_DAY(0D,-109D,D)")'
+    # comma range form, most-recent-first; no colon range form
+    assert "0D,-109D,D" in s["close"]
+    assert ":" not in s["close"] and ":" not in s["volume"]
+    assert "P_VOLUME_DAY" in s["volume"]
+    # include_date False (default) omits the date spill
+    assert "date" not in s
+
+
+def test_method_a_spill_formulas_include_date_toggle():
+    with_date = fg.method_a_spill_formulas("9988-HK", DICT, lookback=109, include_date=True)
+    assert with_date["date"] == '=FDS("9988-HK","P_DATE(0D,-109D,D)")'
+    assert "P_DATE" in with_date["date"]
+    without = fg.method_a_spill_formulas("9988-HK", DICT, lookback=109, include_date=False)
+    assert "date" not in without
+
+
+def test_method_a_spill_formulas_custom_dict_roots():
+    s = fg.method_a_spill_formulas("X", DICT_CUSTOM, lookback=50,
+                                   price_metric="px_last", volume_metric="vol")
+    assert "PX_LAST(0D,-50D,D)" in s["close"]
+    assert "P_PRICE" not in s["close"]
+    assert "VOL_TRADED(0D,-50D,D)" in s["volume"]
+
+
+def test_build_workbook_spill_layout_single_row():
+    data = fg.build_formula_workbook(["9988-HK", "PDD-CN"], DICT, method="A",
+                                     layout="spill", lookback=109)
+    wb = openpyxl.load_workbook(io.BytesIO(data))
+    assert "Instructions" in wb.sheetnames
+    assert "9988-HK" in wb.sheetnames
+    ws = wb["9988-HK"]
+    # default: no date col -> ticker, close, volume
+    assert [c.value for c in ws[1]] == ["ticker", "close", "volume"]
+    # A2 = ticker literal
+    assert ws.cell(row=2, column=1).value == "9988-HK"
+    # single spilling comma-range formulas in row 2 (NOT one-per-row)
+    close2 = str(ws.cell(row=2, column=2).value)
+    vol2 = str(ws.cell(row=2, column=3).value)
+    assert close2 == '=FDS("9988-HK","P_PRICE(0D,-109D,D)")'
+    assert "0D,-109D,D" in close2 and ":" not in close2
+    assert "P_VOLUME_DAY" in vol2 and "0D,-109D,D" in vol2
+    # no per-row grid: just header + 1 formula row
+    assert ws.max_row == 2
+
+
+def test_build_workbook_spill_is_default_layout():
+    # When layout is not specified, Method A defaults to spill.
+    data = fg.build_formula_workbook(["9988-HK"], DICT, method="A", lookback=109)
+    wb = openpyxl.load_workbook(io.BytesIO(data))
+    ws = wb["9988-HK"]
+    assert ws.cell(row=2, column=1).value == "9988-HK"
+    assert "P_PRICE(0D,-109D,D)" in str(ws.cell(row=2, column=2).value)
+    assert ws.max_row == 2
+
+
+def test_build_workbook_spill_include_date_column():
+    data = fg.build_formula_workbook(["9988-HK"], DICT, method="A",
+                                     layout="spill", lookback=109, include_date=True)
+    wb = openpyxl.load_workbook(io.BytesIO(data))
+    ws = wb["9988-HK"]
+    assert [c.value for c in ws[1]] == ["ticker", "date", "close", "volume"]
+    assert ws.cell(row=2, column=1).value == "9988-HK"
+    assert "P_DATE(0D,-109D,D)" in str(ws.cell(row=2, column=2).value)
+    assert "P_PRICE(0D,-109D,D)" in str(ws.cell(row=2, column=3).value)
+    assert "P_VOLUME_DAY(0D,-109D,D)" in str(ws.cell(row=2, column=4).value)
+    assert ws.max_row == 2
+
+
+def test_build_workbook_per_ticker_still_row_per_day_grid():
+    # per_ticker remains the explicit row-per-day grid (no spill) fallback.
+    data = fg.build_formula_workbook(["9988-HK"], DICT, method="A",
+                                     layout="per_ticker", lookback=20)
+    wb = openpyxl.load_workbook(io.BytesIO(data))
+    ws = wb["9988-HK"]
+    assert [c.value for c in ws[1]] == ["close", "volume"]
+    assert "P_PRICE(0D)" in str(ws.cell(row=2, column=1).value)
+    assert "P_PRICE(0D-1D)" in str(ws.cell(row=3, column=1).value)
+    assert ws.max_row == 1 + 20  # full grid, NOT a single spill row
+
+
+def test_build_formula_workbooks_batched_splits_200_at_75():
+    tickers = [f"T{i:03d}" for i in range(200)]
+    files = fg.build_formula_workbooks_batched(tickers, DICT, method="A",
+                                               layout="spill", lookback=109,
+                                               batch_size=75)
+    assert len(files) == 3  # ceil(200/75) = 3
+    names = [f for f, _ in files]
+    assert names[0] == "factset_formulas_method_A_batch_01_of_03.xlsx"
+    assert names[1] == "factset_formulas_method_A_batch_02_of_03.xlsx"
+    assert names[2] == "factset_formulas_method_A_batch_03_of_03.xlsx"
+    # batch sizes: 75, 75, 50
+    sizes = []
+    for fname, data in files:
+        wb = openpyxl.load_workbook(io.BytesIO(data))
+        # all sheets minus the Instructions sheet = ticker count in the batch
+        sizes.append(len(wb.sheetnames) - 1)
+    assert sizes == [75, 75, 50]
+    # Instructions sheet notes the batch range
+    wb1 = openpyxl.load_workbook(io.BytesIO(files[0][1]))
+    instr_text = " ".join(
+        str(c.value) for row in wb1["Instructions"].iter_rows() for c in row if c.value)
+    assert "Batch 1 of 3" in instr_text
+    assert "T000..T074" in instr_text
+
+
+def test_batched_workbooks_have_no_empty_cached_values():
+    import zipfile
+    tickers = [f"T{i:03d}" for i in range(160)]
+    files = fg.build_formula_workbooks_batched(tickers, DICT, method="A",
+                                               layout="spill", lookback=20,
+                                               batch_size=75)
+    assert len(files) == 3
+    for fname, data in files:
+        z = zipfile.ZipFile(io.BytesIO(data))
+        for n in z.namelist():
+            if n.startswith("xl/worksheets/") and n.endswith(".xml"):
+                xml = z.read(n).decode("utf-8")
+                assert "</f><v/>" not in xml and "</f><v />" not in xml, (fname, n)
+
+
+def test_zip_workbooks_packs_all_entries():
+    import zipfile
+    tickers = [f"T{i:03d}" for i in range(200)]
+    files = fg.build_formula_workbooks_batched(tickers, DICT, batch_size=75)
+    zbytes = fg.zip_workbooks(files)
+    z = zipfile.ZipFile(io.BytesIO(zbytes))
+    assert len(z.namelist()) == 3
+    assert all(n.endswith(".xlsx") for n in z.namelist())
+
+
+def test_spill_workbook_has_no_empty_cached_values():
+    import zipfile
+    data = fg.build_formula_workbook(["9988-HK", "BD5CMC"], DICT, method="A",
+                                     layout="spill", lookback=109, include_date=True)
+    z = zipfile.ZipFile(io.BytesIO(data))
+    for n in z.namelist():
+        if n.startswith("xl/worksheets/") and n.endswith(".xml"):
+            xml = z.read(n).decode("utf-8")
+            assert "</f><v/>" not in xml and "</f><v />" not in xml, n

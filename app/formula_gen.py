@@ -176,6 +176,46 @@ def method_a_grid(
 
 
 # ---------------------------------------------------------------------------
+# Spilling per-ticker layout — the fast default for Method A.
+# ---------------------------------------------------------------------------
+def method_a_spill_formulas(
+    ticker: str,
+    dictionary: dict,
+    lookback: int = 109,
+    price_metric: str = "price",
+    volume_metric: str = "volume",
+    include_date: bool = False,
+) -> Dict[str, str]:
+    """Return ONE spilling range FDS formula per series for a single ticker.
+
+    The FactSet add-in spill support means a single date-range formula fills the
+    whole series down its column, so we emit ~2 calls/ticker (price + volume),
+    optionally +1 for the date axis, instead of one call per cell.
+
+    Uses the COMMA range form, most-recent-first: ``(0D,-<N>D,D)``, e.g.
+    ``=FDS("9988-HK","P_PRICE(0D,-109D,D)")`` and
+    ``=FDS("9988-HK","P_VOLUME_DAY(0D,-109D,D)")``. The FQL function roots come
+    from the active dictionary's templates (via ``_fql_root``) so custom
+    dictionaries work; date uses the ``P_DATE`` root (best-effort).
+
+    Returns a dict with keys 'close', 'volume', and (if include_date) 'date'.
+    Each formula is meant for row 2 of its column on the ticker's own sheet.
+    """
+    formulas = dictionary.get("formulas", {})
+    price_fql = _fql_root(formulas, price_metric, "P_PRICE")
+    vol_fql = _fql_root(formulas, volume_metric, "P_VOLUME_DAY")
+    date_fql = _fql_root(formulas, "date_point", "P_DATE")
+    rng = f"0D,-{lookback}D,D"
+    out: Dict[str, str] = {
+        "close": f'=FDS("{ticker}","{price_fql}({rng})")',
+        "volume": f'=FDS("{ticker}","{vol_fql}({rng})")',
+    }
+    if include_date:
+        out["date"] = f'=FDS("{ticker}","{date_fql}({rng})")'
+    return out
+
+
+# ---------------------------------------------------------------------------
 # Method B — offset grid fallback.
 # ---------------------------------------------------------------------------
 def _fql_root(formulas: dict, metric: str, default: str) -> str:
@@ -249,18 +289,26 @@ def build_formula_workbook(
     start: str = "0D",
     end: str = "-150D",
     freq: str = "D",
-    layout: str = "per_ticker",  # 'per_ticker' or 'stacked'
+    layout: str = "spill",  # 'spill' (default) | 'per_ticker' | 'stacked'
     price_metric: str = "price",
     volume_metric: str = "volume",
     include_date: bool = False,
+    batch_note: str = "",
 ) -> bytes:
     """Build the formula workbook as xlsx bytes.
 
     Method A:
-      - per_ticker: one sheet per ticker with date/close/volume header formulas.
-      - stacked: a single Instructions sheet + one sheet listing all tickers.
+      - spill (DEFAULT): one sheet per ticker; A2 = ticker literal and a SINGLE
+        spilling range formula per series (price/volume, + date if requested)
+        in row 2. The add-in fills the whole column — ~2 calls/ticker.
+      - per_ticker: one sheet per ticker with an explicit row-per-day grid
+        (no spill dependency; one self-contained =FDS per trading day).
+      - stacked: a single Instructions sheet + one tidy-long sheet (all tickers).
     Method B:
       - one sheet per ticker with ticker cell + offset grid + date column.
+
+    ``batch_note`` (when set) is added to the Instructions sheet, e.g.
+    "Batch 1 of 8 — tickers AAA..ZZZ".
     """
     wb = Workbook()
     # Instructions sheet first
@@ -270,10 +318,41 @@ def build_formula_workbook(
         ["FactSet Price-Series Formula Generator"],
         [""],
         [f"Method: {method}  |  Lookback: {lookback} td  |  Range: {start}..{end} freq {freq}"],
+    ]
+    if batch_note:
+        instr += [[batch_note]]
+    instr += [
         [""],
         ["HOW TO USE:"],
     ]
-    if method.upper() == "A":
+    if method.upper() == "A" and layout == "spill":
+        instr += [
+            ["1. Open this workbook in Excel with the FactSet add-in installed."],
+            ["2. Each ticker sheet has ONE spilling formula per series (price /"],
+            ["   volume, + date if included). Enter once; FactSet fills the whole"],
+            ["   column. ~2 calls per ticker instead of one per cell."],
+            ["3. A2 holds the ticker literal (so the series is identifiable on"],
+            ["   upload). The spill formulas sit in row 2: close in column C (or B"],
+            ["   if no date column), volume next to it, date in column B if included."],
+            [f"4. Range form: P_PRICE(0D,-{lookback}D,D) and P_VOLUME_DAY(0D,-{lookback}D,D),"],
+            ["   most-recent-first. Volume uses P_VOLUME_DAY (NOT P_VOLUME)."],
+            ["5. Make sure spill is NOT blocked (no data to the right / below the"],
+            ["   spill formula on the sheet)."],
+            ["6. 20D ADV (USD) is NOT pulled here — it is computed in-app (Tab 3) from"],
+            ["   daily price * volume."],
+            ["7. After refresh, upload the per-ticker sheet(s) or export tidy long and"],
+            ["   upload in Tab 3. Tab 3 forward-fills the single A2 ticker down the"],
+            ["   spilled rows automatically."],
+            [""],
+            ["Note: if P_DATE returns blank in your entitlement, untick the date"],
+            ["column — close/volume still spill and dates are reconstructed in-app"],
+            ["from row order (row 1 = latest trading day)."],
+            [""],
+            ["Troubleshooting (no data): use commas not colons inside the field;"],
+            ["P_VOLUME_DAY not P_VOLUME; check identifier format (e.g. 9988-HK, BD5CMC);"],
+            ["use 0D-first (most-recent-first) order."],
+        ]
+    elif method.upper() == "A":
         instr += [
             ["1. Open this workbook in Excel with the FactSet add-in installed."],
             [f"2. Each ticker sheet has an EXPLICIT row-per-day grid: {lookback} rows,"],
@@ -322,7 +401,34 @@ def build_formula_workbook(
     info["A1"].font = Font(bold=True, size=14)
 
     if method.upper() == "A":
-        if layout == "stacked":
+        if layout == "spill":
+            # Spilling layout: each ticker on its OWN sheet (no collision). A2 =
+            # ticker literal; a SINGLE spilling range formula per series in row 2,
+            # so the FactSet add-in fills the whole column (~2 calls/ticker).
+            for t in tickers:
+                safe = _safe_sheet_name(t)
+                ws = wb.create_sheet(safe)
+                header = (["ticker", "date", "close", "volume"] if include_date
+                          else ["ticker", "close", "volume"])
+                ws.append(header)
+                _style_header(ws, len(header))
+                spill = method_a_spill_formulas(
+                    t, dictionary, lookback=lookback,
+                    price_metric=price_metric, volume_metric=volume_metric,
+                    include_date=include_date)
+                ws.cell(row=2, column=1, value=t)  # A2 = ticker literal
+                if include_date:
+                    ws.cell(row=2, column=2, value=spill["date"])    # B2 date spill
+                    ws.cell(row=2, column=3, value=spill["close"])   # C2 price spill
+                    ws.cell(row=2, column=4, value=spill["volume"])  # D2 volume spill
+                    widths = ((1, 14), (2, 26), (3, 30), (4, 32))
+                else:
+                    ws.cell(row=2, column=2, value=spill["close"])   # B2 price spill
+                    ws.cell(row=2, column=3, value=spill["volume"])  # C2 volume spill
+                    widths = ((1, 14), (2, 30), (3, 32))
+                for col, w in widths:
+                    ws.column_dimensions[get_column_letter(col)].width = w
+        elif layout == "stacked":
             # Tidy LONG format: one row per (ticker, trading day) with explicit
             # single-date formulas (no array-spill). This is exactly the shape
             # Tab 3 ingests, all tickers stacked in a single sheet.
@@ -392,6 +498,63 @@ def build_formula_workbook(
     bio = io.BytesIO()
     wb.save(bio)
     return _strip_empty_formula_values(bio.getvalue())
+
+
+def _chunk(seq: List[Any], size: int) -> List[List[Any]]:
+    size = max(1, int(size))
+    return [seq[i:i + size] for i in range(0, len(seq), size)]
+
+
+def build_formula_workbooks_batched(
+    tickers: List[str],
+    dictionary: dict,
+    method: str = "A",
+    lookback: int = 150,
+    start: str = "0D",
+    end: str = "-150D",
+    freq: str = "D",
+    layout: str = "spill",
+    price_metric: str = "price",
+    volume_metric: str = "volume",
+    include_date: bool = False,
+    batch_size: int = 75,
+) -> List[tuple]:
+    """Split ``tickers`` into chunks of ``batch_size`` and build one workbook per
+    chunk. Returns a list of ``(filename, xlsx_bytes)`` tuples.
+
+    Each workbook is a full standalone file (its own Instructions sheet noting
+    'Batch k of M — tickers X..Y'). ``_strip_empty_formula_values`` runs on every
+    workbook (inside ``build_formula_workbook``) so none trigger Excel's repair
+    prompt. Filenames: ``factset_formulas_method_A_batch_01_of_08.xlsx`` etc.
+    """
+    chunks = _chunk(list(tickers), batch_size)
+    total = len(chunks)
+    width = max(2, len(str(total)))
+    out: List[tuple] = []
+    for idx, chunk in enumerate(chunks, start=1):
+        first, last = chunk[0], chunk[-1]
+        note = f"Batch {idx} of {total} — tickers {first}..{last} ({len(chunk)} names)"
+        data = build_formula_workbook(
+            chunk, dictionary, method=method, lookback=lookback,
+            start=start, end=end, freq=freq, layout=layout,
+            price_metric=price_metric, volume_metric=volume_metric,
+            include_date=include_date, batch_note=note,
+        )
+        fname = (f"factset_formulas_method_{method}_batch_"
+                 f"{idx:0{width}d}_of_{total:0{width}d}.xlsx")
+        out.append((fname, data))
+    return out
+
+
+def zip_workbooks(files: List[tuple]) -> bytes:
+    """Assemble a list of ``(filename, bytes)`` into a single in-memory zip."""
+    import zipfile
+
+    bio = io.BytesIO()
+    with zipfile.ZipFile(bio, "w", zipfile.ZIP_DEFLATED) as zf:
+        for fname, data in files:
+            zf.writestr(fname, data)
+    return bio.getvalue()
 
 
 def _strip_empty_formula_values(xlsx_bytes: bytes) -> bytes:

@@ -260,6 +260,19 @@ def parse_prices(content: bytes, filename: str = "") -> Tuple[pd.DataFrame, Dict
     price_col = _find_col(cols, _PRICE_ALIASES)
     vol_col = _find_col(cols, _VOLUME_ALIASES)
 
+    # Spill per-ticker sheet uploaded directly: the ticker literal sits only in
+    # the first data row (A2) while close/volume spill down many rows below it.
+    # If a ticker column exists but is mostly blank/NaN while the price column is
+    # much longer, FORWARD-FILL the ticker down so every spilled row is labeled.
+    # (Don't touch the normal tidy path where the ticker repeats every row.)
+    if ticker_col and price_col and ticker_col in df.columns:
+        tser = df[ticker_col].astype(str).str.strip()
+        blank = df[ticker_col].isna() | tser.isin(["", "nan", "NaN", "None"])
+        n_nonblank = int((~blank).sum())
+        n_price = int(df[price_col].notna().sum())
+        if 0 < n_nonblank <= max(1, len(df) // 2) and n_price > n_nonblank:
+            df[ticker_col] = df[ticker_col].where(~blank, other=pd.NA).ffill()
+
     factset_errs = 0
     date_reconstructed = False
     if ticker_col and price_col and not date_col:

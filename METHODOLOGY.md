@@ -157,15 +157,38 @@ it can no longer be active or selected.
   today, looking back N trading days). **Default lookback = 150 trading days**
   (≈ 7 months; enough warm-up for RSI/MACD + the 60-day vol window). Re-pull
   anytime to refresh to the latest close.
-- **Method A = explicit row-per-day grid:** one self-contained `=FDS` formula
-  per trading day for date/close/volume (`P_PRICE(0D)`, `P_PRICE(0D-1D)`, …,
-  `P_PRICE(0D-149D)`). This does NOT depend on Excel dynamic-array spill, so a
-  full time series always returns regardless of add-in version. (A compact
-  single-spill variant still exists for the stacked layout.) Volume uses
-  `P_VOLUME_DAY` (not `P_VOLUME`). Method B emits the same per-row offset across
-  columns with an explicit-date column. 20-day ADV (USD) is computed in-app
-  (Tab 3) from daily price × volume — there is no `P_ADV_USD` field. Universe
-  Symbols are used as-is; FactSet resolves SEDOL/exchange-ticker identifiers
-  (e.g. `9988-HK`, `BD5CMC`) natively.
+- **Method A default = SPILLING per-ticker layout (fast):** the user's FactSet
+  add-in supports dynamic-array spill, so each ticker gets its OWN sheet with the
+  ticker literal in `A2` and a SINGLE spilling range formula per series —
+  `=FDS("9988-HK","P_PRICE(0D,-109D,D)")` (close) and
+  `=FDS("9988-HK","P_VOLUME_DAY(0D,-109D,D)")` (volume), comma range form,
+  most-recent-first. The add-in fills the whole column, so a 576-name pull drops
+  from ~125k per-cell calls to ~1,150 (~2 calls/ticker). The date axis spills in
+  column B as `P_DATE(0D,-Nd,D)` only when *Include date column* is on (best-
+  effort; if `P_DATE` is blank, leave it off — dates are reconstructed in-app from
+  row order). FQL roots come from the active dictionary's templates (via
+  `_fql_root`) so custom dictionaries work. `build_formula_workbook(layout="spill")`
+  is the default; `method_a_spill_formulas()` builds the per-ticker formulas.
+- **Batching for large universes:** `build_formula_workbooks_batched(tickers, …,
+  batch_size)` splits the universe into chunks (default 75/file) and returns a
+  list of `(filename, bytes)`; the `/formula/download` route zips them with
+  stdlib `zipfile` into `factset_formulas_method_A.zip` when the universe exceeds
+  the batch size. Each file is a standalone workbook whose Instructions sheet
+  notes `Batch k of M — tickers X..Y`; 576 names → 8 files at the default size.
+  `_strip_empty_formula_values` runs on EVERY generated workbook (including each
+  batched one) so Excel never shows the “problem with content” repair prompt.
+- **Fallback layouts (no spill):** `layout="per_ticker"` writes the explicit
+  row-per-day grid (`P_PRICE(0D)`, `P_PRICE(0D-1D)`, …, `P_PRICE(0D-149D)`) — a
+  full series always returns regardless of add-in version; `layout="stacked"`
+  emits a single tidy-long `AllTickers` sheet. Volume uses `P_VOLUME_DAY` (not
+  `P_VOLUME`). Method B emits the same per-row offset across columns with an
+  explicit-date column. 20-day ADV (USD) is computed in-app (Tab 3) from daily
+  price × volume — there is no `P_ADV_USD` field. Universe Symbols are used
+  as-is; FactSet resolves SEDOL/exchange-ticker identifiers (e.g. `9988-HK`,
+  `BD5CMC`) natively.
+- **Upload of spilled sheets:** Tab 3 `parse_prices` forward-fills the ticker
+  column when a spill per-ticker sheet is uploaded directly (ticker only in `A2`,
+  blank below, while close/volume fill down), without breaking the existing tidy
+  path or the date-reconstruction / all-NaT fallbacks.
   *Troubleshooting no-data:* commas not colons; `P_VOLUME_DAY` not `P_VOLUME`;
-  identifier format; `0D`-first order.
+  identifier format; `0D`-first order; ensure spill isn't blocked.

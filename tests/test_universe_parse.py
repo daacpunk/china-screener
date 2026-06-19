@@ -144,3 +144,38 @@ def test_parse_prices_reconstructs_dates_when_no_date_column():
     # most-recent-first was honored -> after ascending sort, last row = today = 100
     assert float(aaa.iloc[-1]["close"]) == 100.0
     assert float(aaa.iloc[0]["close"]) == 98.0
+
+
+def test_parse_prices_forward_fills_single_a2_ticker_block():
+    # Spill per-ticker sheet uploaded directly: ticker only in the first data row
+    # (A2), blank below, while close/volume spill down. parse_prices must ffill.
+    csv = (
+        "ticker,close,volume\n"
+        "9988-HK,100,1000\n"
+        ",99,1100\n"
+        ",98,1200\n"
+        ",97,1300\n"
+    )
+    tidy, rep = di.parse_prices(csv.encode("utf-8"), "spill_9988.csv")
+    # all four rows belong to 9988-HK after forward-fill (no 'nan'/blank tickers)
+    assert set(tidy["ticker"].unique()) == {"9988-HK"}
+    assert len(tidy) == 4
+    assert rep["n_tickers"] == 1
+    # close series intact
+    assert sorted(float(x) for x in tidy["close"]) == [97.0, 98.0, 99.0, 100.0]
+
+
+def test_parse_prices_tidy_path_still_works_with_repeating_ticker():
+    # Normal tidy path (ticker repeats every row + a real date col) must be
+    # untouched by the spill forward-fill heuristic.
+    csv = (
+        "ticker,date,close,volume\n"
+        "AAA,2024-01-02,10,100\n"
+        "AAA,2024-01-03,11,110\n"
+        "BBB,2024-01-02,20,200\n"
+        "BBB,2024-01-03,21,210\n"
+    )
+    tidy, rep = di.parse_prices(csv.encode("utf-8"), "tidy.csv")
+    assert rep["n_tickers"] == 2
+    assert set(tidy["ticker"].unique()) == {"AAA", "BBB"}
+    assert rep.get("date_reconstructed") is False

@@ -36,11 +36,15 @@ def formula_page(request: Request):
     if d and metric_keys and tickers:
         preview = fg.generate_formula(tickers[0], metric_keys[0], d["data"],
                                       start="0D", end="-150D", freq="D")
+    default_batch = 75
+    n = len(tickers)
+    n_files = (n + default_batch - 1) // default_batch if n else 0
     ctx = base_ctx(request, "formula", active_dict=d, metric_keys=metric_keys,
                    tickers=tickers, md_html=md_html, preview=preview,
                    default_price_metric=auto["price_metric"],
                    default_volume_metric=auto["volume_metric"],
-                   auto_depth=auto_depth, n_tickers=len(tickers))
+                   auto_depth=auto_depth, n_tickers=len(tickers),
+                   default_batch=default_batch, n_files=n_files)
     return templates.TemplateResponse(request, "formula.html", ctx)
 
 
@@ -72,9 +76,10 @@ def formula_preview(request: Request, ticker: str = Form(...), metric_key: str =
 @router.post("/formula/download")
 def formula_download(method: str = Form("A"), lookback: int = Form(0),
                      start: str = Form("0D"), end: str = Form("-150D"),
-                     freq: str = Form("D"), layout: str = Form("per_ticker"),
+                     freq: str = Form("D"), layout: str = Form("spill"),
                      price_metric: str = Form(""), volume_metric: str = Form(""),
-                     include_date: str = Form("")):
+                     include_date: str = Form(""),
+                     batch_size: int = Form(75), as_zip: str = Form("")):
     d = _active_dict()
     if not d:
         return Response("No active dictionary", status_code=400)
@@ -90,6 +95,31 @@ def formula_download(method: str = Form("A"), lookback: int = Form(0),
     inc_date = str(include_date).lower() in ("1", "true", "on", "yes")
     uni = assemble_active_universe()
     tickers = uni["ticker"].tolist() if not uni.empty else ["BABA-CN"]
+    bsize = batch_size if batch_size and batch_size > 0 else 75
+    # Default behavior: auto-zip when the universe exceeds the batch size, unless
+    # explicitly turned off. Honor an explicit as_zip flag when provided.
+    as_zip_raw = str(as_zip).strip().lower()
+    if as_zip_raw in ("1", "true", "on", "yes"):
+        want_zip = True
+    elif as_zip_raw in ("0", "false", "off", "no"):
+        want_zip = False
+    else:
+        want_zip = len(tickers) > bsize
+
+    if want_zip and len(tickers) > bsize:
+        files = fg.build_formula_workbooks_batched(
+            tickers, d["data"], method=method, lookback=lookback,
+            start=start, end=end, freq=freq, layout=layout,
+            price_metric=pm, volume_metric=vm, include_date=inc_date,
+            batch_size=bsize)
+        zip_bytes = fg.zip_workbooks(files)
+        zname = f"factset_formulas_method_{method}.zip"
+        return Response(
+            content=zip_bytes,
+            media_type="application/zip",
+            headers={"Content-Disposition": f"attachment; filename={zname}"},
+        )
+
     data = fg.build_formula_workbook(tickers, d["data"], method=method, lookback=lookback,
                                      start=start, end=end, freq=freq, layout=layout,
                                      price_metric=pm, volume_metric=vm,

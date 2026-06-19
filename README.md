@@ -204,16 +204,38 @@ looking back N trading days. Re-pull anytime to refresh to the latest close.
 - Combined, this is ~**50% fewer FactSet cells** for a 576-name universe
   (≈ 126k vs ≈ 259k cells) vs the old 150-day × 3-column pull.
 
-**Method A (recommended) writes an explicit row-per-day grid** — one
-self-contained `=FDS` formula PER trading day for date / close / volume. This does
-**not** rely on Excel dynamic-array spill, so a full time series always returns
-(one value per row) on any FactSet add-in version:
+**Method A default = a SPILLING per-ticker layout (fast).** The user's FactSet
+add-in supports dynamic-array spill, so each ticker gets its **own sheet** with the
+ticker literal in `A2` and a **single spilling range formula per series** — the
+add-in fills the whole column. This is ~**2 FactSet calls per ticker** (price +
+volume) instead of one call per cell, cutting a 576-name pull from ~125k calls to
+~1,150:
 
-- Row 2 (today): `=FDS("9988-HK","P_PRICE(0D)")`, `=FDS("9988-HK","P_VOLUME_DAY(0D)")`
-- Row 3: `=FDS("9988-HK","P_PRICE(0D-1D)")` … down to `0D-149D`
-- Date column: `=FDS("9988-HK","P_DATE(0D-N D)")` (best-effort; if `P_DATE` is not
-  in your entitlement, dates follow from the row offset — row 2 = latest day)
+- Header: `A1=ticker  B1=date  C1=close  D1=volume` (date column optional).
+- `A2` = the ticker literal (so the series is identifiable on upload).
+- `C2` close spill: `=FDS("9988-HK","P_PRICE(0D,-109D,D)")` (comma range form,
+  most-recent-first; `B2`/`C2` when the date column is omitted).
+- `D2` volume spill: `=FDS("9988-HK","P_VOLUME_DAY(0D,-109D,D)")`.
+- `B2` date spill (only if **Include date column** is ticked):
+  `=FDS("9988-HK","P_DATE(0D,-109D,D)")` — best-effort; if `P_DATE` is blank in your
+  entitlement, leave it off and dates are reconstructed in-app from row order.
+- Make sure spill is not blocked (no data to the right/below the formula).
 - Use **`P_VOLUME_DAY`**, not `P_VOLUME`.
+
+**Batching for large universes.** When the universe exceeds the **batch size**
+(default **75** tickers/file), the download is split into one workbook per chunk
+and returned as a **`.zip`** (`factset_formulas_method_A_batch_01_of_NN.xlsx`, …),
+so each file refreshes quickly and can be run sequentially. Each workbook's
+Instructions sheet notes `Batch k of M — tickers X..Y`. At the default batch size a
+576-name universe splits into **8 files** (ceil(576/75): seven of 75 + one of 51).
+
+**Fallback layouts (no spill needed):**
+
+- **Explicit row-per-day grid** (`layout=per_ticker`) — one self-contained `=FDS`
+  formula PER trading day (`P_PRICE(0D)`, `P_PRICE(0D-1D)`, … down to `0D-149D`).
+  A full series always returns regardless of add-in spill support.
+- **Stacked tidy** (`layout=stacked`) — a single `AllTickers` sheet in tidy-long
+  format, also explicit per-row formulas.
 - Method B (offset grid, also explicit): `=FDS($A$2,"P_PRICE(0D-"&(ROW()-3)&"D)")`
   and `=FDS($A$2,"P_VOLUME_DAY(0D-"&(ROW()-3)&"D)")`, plus an explicit-date column.
 - **20-day ADV (USD) is computed in-app** (Tab 3) from daily price × volume —

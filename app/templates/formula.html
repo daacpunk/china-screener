@@ -60,7 +60,11 @@ The generator uses the universe's Symbol <b>as-is</b> — FactSet resolves SEDOL
         <div><label>Method</label>
           <select name="method"><option value="A">A — time-series block (preferred)</option><option value="B">B — offset grid (fallback)</option></select></div>
         <div><label>Layout (Method A)</label>
-          <select name="layout"><option value="per_ticker">Per-ticker sheets</option><option value="stacked">Stacked / tidy long (one sheet, Tab-3 ready)</option></select></div>
+          <select name="layout">
+            <option value="spill" selected>Spilling series (fast, 1 formula/series)</option>
+            <option value="per_ticker">Explicit row-per-day grid (no spill, robust)</option>
+            <option value="stacked">Stacked tidy (one sheet)</option>
+          </select></div>
       </div>
       <div class="row">
         <div><label>Price metric</label>
@@ -75,20 +79,24 @@ The generator uses the universe's Symbol <b>as-is</b> — FactSet resolves SEDOL
       </div>
       <div class="row">
         <div><label><input type="checkbox" name="include_date" value="1"> Include date column</label>
-          <span class="help">Off by default — saves ~1/3 of FactSet cells. Dates are reconstructed in-app from row order (row 1 = latest day).</span></div>
+          <span class="help">Off by default — saves a formula per ticker. Dates are reconstructed in-app from row order (row 1 = latest day).</span></div>
+        <div><label>Batch size (tickers per file)</label><input type="number" name="batch_size" value="{{ default_batch }}" min="1">
+          <span class="help">Large universes are split into multiple workbooks (zipped) so each refreshes fast.</span></div>
       </div>
       <div class="note info" style="margin-top:6px">
-        Efficiency: with <b>{{ n_tickers or '—' }}</b> tickers × <b>Auto ({{ auto_depth }})</b> days,
-        dropping the date column pulls only close + volume — about
-        <b>{{ (n_tickers * auto_depth * 2) if n_tickers else 0 }}</b> FDS cells
-        (vs {{ (n_tickers * 150 * 3) if n_tickers else 0 }} at the old 150d × 3-column default).
+        <b>Spilling layout = ~2 FactSet calls per ticker</b> (price + volume), vs one call per cell.
+        For <b>{{ n_tickers or '—' }}</b> tickers that's about <b>{{ (n_tickers * 2) if n_tickers else 0 }}</b> FDS calls.
+        At a batch size of <b>{{ default_batch }}</b>, that's <b>{{ n_files }}</b> file(s)
+        (ceil({{ n_tickers or 0 }}/{{ default_batch }})) of ≤{{ default_batch }} tickers each, zipped together.
       </div>
       <div class="spacer"></div>
       <button class="btn" type="submit">Download .xlsx</button>
     </form>
-    <p class="help" style="margin-top:12px"><b>Method A (recommended):</b> each ticker sheet has an explicit row-per-day grid — one
-    <span class="mono">=FDS</span> formula per trading day for date / close / volume (e.g. <span class="mono">=FDS("9988-HK","P_PRICE(0D)")</span>,
-    <span class="mono">…(0D-1D)</span>, …). A full series always returns — no array-spill needed.
+    <p class="help" style="margin-top:12px"><b>Method A — Spilling (default, fast):</b> each ticker has its OWN sheet with the
+    ticker literal in <span class="mono">A2</span> and a SINGLE spilling range formula per series, e.g.
+    <span class="mono">=FDS("9988-HK","P_PRICE(0D,-109D,D)")</span> and <span class="mono">=FDS("9988-HK","P_VOLUME_DAY(0D,-109D,D)")</span> —
+    the add-in fills the whole column. ~2 calls per ticker (your add-in supports spill).
+    <b>Explicit row-per-day grid (no spill, robust):</b> one <span class="mono">=FDS</span> formula per trading day for close / volume — a full series always returns even without spill.
     <b>Method B:</b> put ticker in A2; column C holds rolling <span class="mono">0D-Nd</span> price formulas, column D <span class="mono">P_VOLUME_DAY</span> volume formulas, column E explicit-date formulas (dates in B).</p>
   </div>
 </div>
