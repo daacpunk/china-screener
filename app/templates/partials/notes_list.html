@@ -1,0 +1,18 @@
+{% if notes %}
+<div class="table-wrap"><table>
+  <thead><tr><th>ID</th><th>Created</th><th>As of</th><th>Provider</th><th></th></tr></thead>
+  <tbody>
+  {% for n in notes %}
+    <tr>
+      <td class="mono">{{ n.id }}</td>
+      <td class="muted">{{ n.created_at }}</td>
+      <td>{{ n.asof or '—' }}</td>
+      <td>{{ n.provider or '—' }}</td>
+      <td><a class="btn ghost" href="/results/note/export?id={{ n.id }}">Download .md</a></td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table></div>
+{% else %}
+<div class="empty">No research notes saved yet. Generate one above.</div>
+{% endif %}

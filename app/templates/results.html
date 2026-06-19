@@ -116,6 +116,30 @@
   <div class="note info">AI analysis is disabled — no enabled provider with a key. Add one in <a href="/settings">Settings</a>. The screen works fully without it.</div>
   {% endif %}
 </div>
+
+<h2>Research note <span class="muted">(select → catalyst triage → structured note)</span></h2>
+<div class="card">
+  <form hx-post="/results/note" hx-target="#note-out" hx-swap="innerHTML" hx-indicator="#note-spin">
+    <div class="row">
+      {% if any_key %}
+      <div><label>Provider</label><select name="provider">
+        <option value="">(Results default)</option>
+        {% for p in providers %}{% if p.enabled and p.has_key %}<option value="{{ p.provider }}">{{ p.provider }} ({{ p.model }})</option>{% endif %}{% endfor %}
+      </select></div>
+      {% endif %}
+      <div><label>Max longs</label><input type="number" name="max_longs" value="2" min="0" max="10" style="width:80px"></div>
+      <div><label>Max shorts</label><input type="number" name="max_shorts" value="2" min="0" max="10" style="width:80px"></div>
+    </div>
+    <div class="flex" style="margin-top:10px">
+      <label class="flex" style="margin:0"><input type="checkbox" name="idio_only" value="1" style="width:auto" checked> Idiosyncratic only</label>
+      <button class="btn" type="submit">Generate research note</button>
+      <button class="btn ghost" type="button" hx-get="/results/notes" hx-target="#note-out" hx-swap="innerHTML">Past notes</button>
+    </div>
+  </form>
+  <div id="note-spin" class="htmx-indicator muted">Selecting candidates &amp; triaging…</div>
+  <div id="note-out"></div>
+  {% if not any_key %}<div class="note info" style="margin-top:8px">Candidate selection works without a key; add a provider in <a href="/settings">Settings</a> to generate the written note.</div>{% endif %}
+</div>
 </div>{# /results-main #}
 
 <aside class="results-sidebar">

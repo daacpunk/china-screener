@@ -1,0 +1,48 @@
+{% macro vtag(v) %}{% if v=='MECHANICAL_DISLOCATION' %}<span class="tag idio">mechanical</span>{% elif v=='BROKEN_STORY' %}<span class="tag event">broken story</span>{% elif v=='NEEDS_DATA' %}<span class="tag sector">needs data</span>{% else %}—{% endif %}{% endmacro %}
+
+<div class="note {{ 'error' if is_stale else 'info' }}">
+  <b>Research note · as of {{ note.asof or asof or 'unknown' }}</b>{% if n_stale is not none %} ({{ n_stale }} day{{ 's' if n_stale != 1 else '' }} ago){% endif %}.
+  {% if is_stale %} <b>⚠ Snapshot is {{ n_stale }} days old — re-pull FactSet before trading.</b>{% endif %}
+</div>
+
+{% if note.error and not note.html %}
+<div class="note info">{{ note.error }} {% if not note.provider %}<a href="/settings">Settings →</a>{% endif %}</div>
+{% elif note.error %}
+<div class="note error">Some calls failed: {{ note.error }}</div>
+{% endif %}
+
+{% if note.candidates %}
+<h3>Selected candidates</h3>
+<div class="table-wrap"><table>
+  <thead><tr><th>Ticker</th><th>Name</th><th>Side</th><th>Sector</th><th>Rank z</th><th>Peer-rel z</th><th>RSI</th><th>Score</th><th>Type</th><th>Triage</th></tr></thead>
+  <tbody>
+  {% for c in note.candidates %}
+    <tr>
+      <td class="mono">{{ c.ticker }}</td><td>{{ c.name }}</td>
+      <td>{% if c.side=='long' %}<span class="tag idio">LONG</span>{% else %}<span class="tag event">SHORT</span>{% endif %}</td>
+      <td>{{ c.sector }}</td>
+      <td>{{ '%.2f'|format(c.rank_z) if c.rank_z is not none else '—' }}</td>
+      <td>{{ '%.2f'|format(c.peer_relative_z) if c.peer_relative_z is not none else '—' }}</td>
+      <td>{{ '%.1f'|format(c.rsi) if c.rsi is not none else '—' }}</td>
+      <td>{{ '%.3f'|format(c.reversion_score) if c.side=='long' and c.reversion_score is not none else ('%.3f'|format(c.fade_score) if c.fade_score is not none else '—') }}</td>
+      <td>{% if c.dislocation_type=='IDIOSYNCRATIC' %}<span class="tag idio">idiosyncratic</span>{% else %}<span class="tag sector">sector/macro</span>{% endif %}</td>
+      <td>{{ vtag(c.verdict) }}</td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table></div>
+{% else %}
+<div class="empty">No idiosyncratic candidates under current settings.</div>
+{% endif %}
+
+{% if note.html %}
+<h3>Note</h3>
+<div class="card md">{{ note.html|safe }}</div>
+{% if note.provider %}<div class="muted" style="margin-top:8px;font-size:12px">via {{ note.provider }} · qualitative only — signals computed in-app</div>{% endif %}
+{% endif %}
+
+{% if note.id %}
+<div class="flex" style="margin-top:10px">
+  <a class="btn ghost" href="/results/note/export?id={{ note.id }}">Download .md</a>
+</div>
+{% endif %}

@@ -98,6 +98,16 @@ CREATE TABLE IF NOT EXISTS llm_usage (
     ok INTEGER DEFAULT 1,
     note TEXT
 );
+
+CREATE TABLE IF NOT EXISTS research_notes (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    created_at TEXT,
+    asof TEXT,
+    provider TEXT,
+    candidates_json TEXT,
+    markdown TEXT,
+    council_json TEXT
+);
 """
 
 
