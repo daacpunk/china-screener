@@ -246,6 +246,25 @@ def _scrub_factset(series: pd.Series) -> Tuple[pd.Series, int]:
     return cleaned, n_err
 
 
+def _parse_dates(series: pd.Series) -> pd.Series:
+    """Parse a date column that may be normal date strings OR numeric serials.
+
+    The spill date formula uses FactSet ``JULIAN(...)``, which (like Excel) counts
+    days from 1899-12-30, so refreshed values can arrive as integers/serials. If
+    the column is predominantly numeric in the plausible serial range
+    (~1990..2050 => ~33000..55000), convert via the 1899-12-30 origin; otherwise
+    fall back to normal datetime parsing.
+    """
+    num = pd.to_numeric(series, errors="coerce")
+    n_total = series.notna().sum()
+    n_num = num.notna().sum()
+    if n_total and n_num >= 0.8 * n_total:
+        med = float(num.dropna().median()) if n_num else 0.0
+        if 20000 <= med <= 80000:  # Excel/FactSet-Julian serial day range
+            return pd.to_datetime(num, unit="D", origin="1899-12-30", errors="coerce")
+    return pd.to_datetime(series, errors="coerce")
+
+
 def parse_prices(content: bytes, filename: str = "") -> Tuple[pd.DataFrame, Dict[str, Any]]:
     """Parse price data. Supports tidy (ticker,date,close,volume) or wide.
 
@@ -301,7 +320,7 @@ def parse_prices(content: bytes, filename: str = "") -> Tuple[pd.DataFrame, Dict
         # tidy
         tidy = pd.DataFrame()
         tidy["ticker"] = df[ticker_col].astype(str).str.strip()
-        tidy["date"] = pd.to_datetime(df[date_col], errors="coerce")
+        tidy["date"] = _parse_dates(df[date_col])
         tidy["close"], e1 = _scrub_factset(df[price_col])
         factset_errs += e1
         if vol_col and vol_col in df.columns:
@@ -323,7 +342,7 @@ def parse_prices(content: bytes, filename: str = "") -> Tuple[pd.DataFrame, Dict
         if not date_col:
             date_col = cols[0]
         df = df.rename(columns={date_col: "date"})
-        df["date"] = pd.to_datetime(df["date"], errors="coerce")
+        df["date"] = _parse_dates(df["date"])
         value_cols = [c for c in df.columns if c != "date"]
         long = df.melt(id_vars=["date"], value_vars=value_cols, var_name="ticker", value_name="close")
         long["close"], e1 = _scrub_factset(long["close"])

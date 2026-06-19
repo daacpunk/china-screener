@@ -179,3 +179,21 @@ def test_parse_prices_tidy_path_still_works_with_repeating_ticker():
     assert rep["n_tickers"] == 2
     assert set(tidy["ticker"].unique()) == {"AAA", "BBB"}
     assert rep.get("date_reconstructed") is False
+
+
+def test_parse_prices_julian_serial_dates():
+    # The spill date column uses FactSet JULIAN -> Excel-style serial integers
+    # (days from 1899-12-30). 46000 ~ 2025-12; ensure they parse, not become NaT.
+    import pandas as pd
+    s = int((pd.Timestamp("2026-06-18") - pd.Timestamp("1899-12-30")).days)
+    csv = (
+        "ticker,date,close,volume\n"
+        f"AAA,{s},100,1000\n"
+        f"AAA,{s-1},99,1100\n"
+        f"AAA,{s-2},98,1200\n"
+    )
+    tidy, rep = di.parse_prices(csv.encode("utf-8"), "fill.csv")
+    assert rep["n_tickers"] == 1
+    g = tidy[tidy.ticker == "AAA"].sort_values("date")
+    assert g["date"].notna().all()
+    assert str(g["date"].max().date()) == "2026-06-18"

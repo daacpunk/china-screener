@@ -17,6 +17,7 @@ P_VOLUME_DAY (not P_VOLUME). ADV (USD) is computed in-app, not pulled.
 from __future__ import annotations
 
 import io
+import re
 from typing import Any, Dict, List
 
 from openpyxl import Workbook
@@ -179,40 +180,45 @@ def method_a_grid(
 # Spilling per-ticker layout — the fast default for Method A.
 # ---------------------------------------------------------------------------
 def method_a_spill_formulas(
-    ticker: str,
     dictionary: dict,
     lookback: int = 109,
     price_metric: str = "price",
     volume_metric: str = "volume",
-    include_date: bool = False,
+    ticker_cell: str = "A2",
 ) -> Dict[str, str]:
-    """Return ONE spilling range FDS formula per series for a single ticker.
+    """Return ONE spilling range FDS formula per series, referencing a ticker CELL.
 
-    The FactSet add-in spill support means a single date-range formula fills the
-    whole series down its column, so we emit ~2 calls/ticker (price + volume),
-    optionally +1 for the date axis, instead of one call per cell.
+    The FactSet add-in spills a single date-range formula down its column, so we
+    emit ~2-3 calls/ticker (date + price + volume) instead of one call per cell.
 
-    Uses the COMMA range form, most-recent-first: ``(0D,-<N>D,D)``, e.g.
-    ``=FDS("9988-HK","P_PRICE(0D,-109D,D)")`` and
-    ``=FDS("9988-HK","P_VOLUME_DAY(0D,-109D,D)")``. The FQL function roots come
-    from the active dictionary's templates (via ``_fql_root``) so custom
-    dictionaries work; date uses the ``P_DATE`` root (best-effort).
+    Verified against the user's live FactSet add-in:
+      - Reference the ticker CELL (A2), NOT an embedded literal string:
+            =FDS(A2,"P_PRICE(0,-109D,D)")
+      - Start anchor is ``0`` (NOT ``0D``): ``(0,-<N>D,D)``.
+      - The date axis uses JULIAN on the price series' .dates accessor:
+            =FDS(A2,"JULIAN(P_PRICE(0,-109D,D).dates)")
+      - These MUST be written as dynamic-array (spilling) formulas so Excel does
+        not prepend the implicit-intersection ``@`` (which would force a single
+        value and kill the spill). See _write_spill_formula / array markup.
 
-    Returns a dict with keys 'close', 'volume', and (if include_date) 'date'.
-    Each formula is meant for row 2 of its column on the ticker's own sheet.
+    Column convention on each ticker's own sheet: B=date, C=close, D=volume,
+    with the ticker literal in A2.
+
+    FQL roots come from the active dictionary's templates (via _fql_root) so
+    custom dictionaries work.
+
+    Returns a dict with keys 'date', 'close', 'volume' (formulas as strings).
     """
     formulas = dictionary.get("formulas", {})
     price_fql = _fql_root(formulas, price_metric, "P_PRICE")
     vol_fql = _fql_root(formulas, volume_metric, "P_VOLUME_DAY")
-    date_fql = _fql_root(formulas, "date_point", "P_DATE")
-    rng = f"0D,-{lookback}D,D"
-    out: Dict[str, str] = {
-        "close": f'=FDS("{ticker}","{price_fql}({rng})")',
-        "volume": f'=FDS("{ticker}","{vol_fql}({rng})")',
+    rng = f"0,-{lookback}D,D"
+    price_expr = f"{price_fql}({rng})"
+    return {
+        "date": f'=FDS({ticker_cell},"JULIAN({price_expr}.dates)")',
+        "close": f'=FDS({ticker_cell},"{price_expr}")',
+        "volume": f'=FDS({ticker_cell},"{vol_fql}({rng})")',
     }
-    if include_date:
-        out["date"] = f'=FDS("{ticker}","{date_fql}({rng})")'
-    return out
 
 
 # ---------------------------------------------------------------------------
@@ -328,29 +334,29 @@ def build_formula_workbook(
     if method.upper() == "A" and layout == "spill":
         instr += [
             ["1. Open this workbook in Excel with the FactSet add-in installed."],
-            ["2. Each ticker sheet has ONE spilling formula per series (price /"],
-            ["   volume, + date if included). Enter once; FactSet fills the whole"],
-            ["   column. ~2 calls per ticker instead of one per cell."],
-            ["3. A2 holds the ticker literal (so the series is identifiable on"],
-            ["   upload). The spill formulas sit in row 2: close in column C (or B"],
-            ["   if no date column), volume next to it, date in column B if included."],
-            [f"4. Range form: P_PRICE(0D,-{lookback}D,D) and P_VOLUME_DAY(0D,-{lookback}D,D),"],
-            ["   most-recent-first. Volume uses P_VOLUME_DAY (NOT P_VOLUME)."],
-            ["5. Make sure spill is NOT blocked (no data to the right / below the"],
-            ["   spill formula on the sheet)."],
+            ["2. Each ticker is on its OWN sheet. A2 holds the ticker; the spill"],
+            ["   formulas in row 2 REFERENCE A2 and fill the whole column down:"],
+            ["     B2 = date, C2 = close, D2 = volume."],
+            [f"3. Formulas (entered as dynamic-array / spilling, N={lookback}):"],
+            [f'     B2: =FDS(A2,"JULIAN(P_PRICE(0,-{lookback}D,D).dates)")'],
+            [f'     C2: =FDS(A2,"P_PRICE(0,-{lookback}D,D)")'],
+            [f'     D2: =FDS(A2,"P_VOLUME_DAY(0,-{lookback}D,D)")'],
+            ["   One formula per series fills the whole column (~3 calls/ticker"],
+            ["   instead of one per cell)."],
+            ["4. Start anchor is 0 (NOT 0D); range is most-recent-first; volume uses"],
+            ["   P_VOLUME_DAY (NOT P_VOLUME); the ticker is a CELL reference (A2),"],
+            ["   NOT a quoted literal."],
+            ["5. These are written as spilling (dynamic-array) formulas so Excel does"],
+            ["   NOT prepend '@'. Make sure nothing blocks the spill (keep the cells"],
+            ["   below/right of B2:D2 empty)."],
             ["6. 20D ADV (USD) is NOT pulled here — it is computed in-app (Tab 3) from"],
             ["   daily price * volume."],
-            ["7. After refresh, upload the per-ticker sheet(s) or export tidy long and"],
-            ["   upload in Tab 3. Tab 3 forward-fills the single A2 ticker down the"],
-            ["   spilled rows automatically."],
+            ["7. After refresh, upload the sheet(s) or export tidy long and upload in"],
+            ["   Tab 3. Tab 3 forward-fills the single A2 ticker down the spilled rows."],
             [""],
-            ["Note: if P_DATE returns blank in your entitlement, untick the date"],
-            ["column — close/volume still spill and dates are reconstructed in-app"],
-            ["from row order (row 1 = latest trading day)."],
-            [""],
-            ["Troubleshooting (no data): use commas not colons inside the field;"],
-            ["P_VOLUME_DAY not P_VOLUME; check identifier format (e.g. 9988-HK, BD5CMC);"],
-            ["use 0D-first (most-recent-first) order."],
+            ["Troubleshooting (no data / single value): if you see '@FDS', the spill"],
+            ["was blocked — clear cells under the formula and re-enter. Use commas not"],
+            ["colons; P_VOLUME_DAY not P_VOLUME; identifier in A2 (e.g. 9988-HK, BD5CMC)."],
         ]
     elif method.upper() == "A":
         instr += [
@@ -402,31 +408,27 @@ def build_formula_workbook(
 
     if method.upper() == "A":
         if layout == "spill":
-            # Spilling layout: each ticker on its OWN sheet (no collision). A2 =
-            # ticker literal; a SINGLE spilling range formula per series in row 2,
-            # so the FactSet add-in fills the whole column (~2 calls/ticker).
+            # Spilling layout: each ticker on its OWN sheet (no collision).
+            # A2 = ticker literal; the spill formulas REFERENCE A2 and sit in row
+            # 2: B2=date (JULIAN ...dates), C2=price, D2=volume. Each is written as
+            # a DYNAMIC-ARRAY formula so Excel does not prepend the implicit-
+            # intersection '@' (which would force a single value and kill spill).
+            from openpyxl.worksheet.formula import ArrayFormula
             for t in tickers:
                 safe = _safe_sheet_name(t)
                 ws = wb.create_sheet(safe)
-                header = (["ticker", "date", "close", "volume"] if include_date
-                          else ["ticker", "close", "volume"])
-                ws.append(header)
-                _style_header(ws, len(header))
+                ws.append(["ticker", "date", "close", "volume"])
+                _style_header(ws, 4)
                 spill = method_a_spill_formulas(
-                    t, dictionary, lookback=lookback,
+                    dictionary, lookback=lookback,
                     price_metric=price_metric, volume_metric=volume_metric,
-                    include_date=include_date)
+                    ticker_cell="A2")
                 ws.cell(row=2, column=1, value=t)  # A2 = ticker literal
-                if include_date:
-                    ws.cell(row=2, column=2, value=spill["date"])    # B2 date spill
-                    ws.cell(row=2, column=3, value=spill["close"])   # C2 price spill
-                    ws.cell(row=2, column=4, value=spill["volume"])  # D2 volume spill
-                    widths = ((1, 14), (2, 26), (3, 30), (4, 32))
-                else:
-                    ws.cell(row=2, column=2, value=spill["close"])   # B2 price spill
-                    ws.cell(row=2, column=3, value=spill["volume"])  # C2 volume spill
-                    widths = ((1, 14), (2, 30), (3, 32))
-                for col, w in widths:
+                # Dynamic-array (spilling) formulas anchored at their own cell.
+                ws.cell(row=2, column=2, value=ArrayFormula("B2", spill["date"]))
+                ws.cell(row=2, column=3, value=ArrayFormula("C2", spill["close"]))
+                ws.cell(row=2, column=4, value=ArrayFormula("D2", spill["volume"]))
+                for col, w in ((1, 14), (2, 16), (3, 30), (4, 32)):
                     ws.column_dimensions[get_column_letter(col)].width = w
         elif layout == "stacked":
             # Tidy LONG format: one row per (ticker, trading day) with explicit
@@ -578,6 +580,15 @@ def _strip_empty_formula_values(xlsx_bytes: bytes) -> bytes:
             if item.filename.startswith("xl/worksheets/") and item.filename.endswith(".xml"):
                 txt = data.decode("utf-8")
                 txt = txt.replace("</f><v/>", "</f>").replace("</f><v />", "</f>")
+                # Upgrade legacy array formulas to DYNAMIC-array (spilling) form so
+                # modern Excel does NOT prepend the implicit-intersection '@'
+                # (which forces a single value and kills the FactSet spill).
+                # Excel marks a spilling formula with aca="1" ca="1".
+                txt = re.sub(
+                    r'<f t="array" ref="([^"]+)">',
+                    r'<f t="array" ref="\1" aca="1" ca="1">',
+                    txt,
+                )
                 data = txt.encode("utf-8")
             zout.writestr(item, data)
     return out.getvalue()

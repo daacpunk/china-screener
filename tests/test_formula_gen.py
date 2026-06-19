@@ -253,76 +253,74 @@ def test_workbook_has_no_empty_cached_value_elements():
 
 
 # ---- SPILL layout: single spilling range formula per series ----
-def test_method_a_spill_formulas_comma_range_and_volume():
-    s = fg.method_a_spill_formulas("9988-HK", DICT, lookback=109)
-    assert s["close"] == '=FDS("9988-HK","P_PRICE(0D,-109D,D)")'
-    assert s["volume"] == '=FDS("9988-HK","P_VOLUME_DAY(0D,-109D,D)")'
-    # comma range form, most-recent-first; no colon range form
-    assert "0D,-109D,D" in s["close"]
-    assert ":" not in s["close"] and ":" not in s["volume"]
+def _af(v):
+    # ArrayFormula values expose .text; plain strings pass through.
+    return getattr(v, "text", v)
+
+
+def test_method_a_spill_formulas_cell_ref_and_julian():
+    s = fg.method_a_spill_formulas(DICT, lookback=109, ticker_cell="A2")
+    # References the ticker CELL (A2), NOT a literal string. Start is 0 (not 0D).
+    assert s["close"] == '=FDS(A2,"P_PRICE(0,-109D,D)")'
+    assert s["volume"] == '=FDS(A2,"P_VOLUME_DAY(0,-109D,D)")'
+    # Date axis uses JULIAN(...dates) on the price series.
+    assert s["date"] == '=FDS(A2,"JULIAN(P_PRICE(0,-109D,D).dates)")'
+    assert "0,-109D,D" in s["close"] and ":" not in s["close"]
+    assert '"P_PRICE(0D' not in s["close"]  # not the old 0D anchor
     assert "P_VOLUME_DAY" in s["volume"]
-    # include_date False (default) omits the date spill
-    assert "date" not in s
-
-
-def test_method_a_spill_formulas_include_date_toggle():
-    with_date = fg.method_a_spill_formulas("9988-HK", DICT, lookback=109, include_date=True)
-    assert with_date["date"] == '=FDS("9988-HK","P_DATE(0D,-109D,D)")'
-    assert "P_DATE" in with_date["date"]
-    without = fg.method_a_spill_formulas("9988-HK", DICT, lookback=109, include_date=False)
-    assert "date" not in without
 
 
 def test_method_a_spill_formulas_custom_dict_roots():
-    s = fg.method_a_spill_formulas("X", DICT_CUSTOM, lookback=50,
+    s = fg.method_a_spill_formulas(DICT_CUSTOM, lookback=50,
                                    price_metric="px_last", volume_metric="vol")
-    assert "PX_LAST(0D,-50D,D)" in s["close"]
+    assert s["close"] == '=FDS(A2,"PX_LAST(0,-50D,D)")'
     assert "P_PRICE" not in s["close"]
-    assert "VOL_TRADED(0D,-50D,D)" in s["volume"]
+    assert "VOL_TRADED(0,-50D,D)" in s["volume"]
+    assert "JULIAN(PX_LAST(0,-50D,D).dates)" in s["date"]
 
 
-def test_build_workbook_spill_layout_single_row():
+def test_build_workbook_spill_layout_bcd_columns():
     data = fg.build_formula_workbook(["9988-HK", "PDD-CN"], DICT, method="A",
                                      layout="spill", lookback=109)
     wb = openpyxl.load_workbook(io.BytesIO(data))
     assert "Instructions" in wb.sheetnames
     assert "9988-HK" in wb.sheetnames
     ws = wb["9988-HK"]
-    # default: no date col -> ticker, close, volume
-    assert [c.value for c in ws[1]] == ["ticker", "close", "volume"]
-    # A2 = ticker literal
-    assert ws.cell(row=2, column=1).value == "9988-HK"
-    # single spilling comma-range formulas in row 2 (NOT one-per-row)
-    close2 = str(ws.cell(row=2, column=2).value)
-    vol2 = str(ws.cell(row=2, column=3).value)
-    assert close2 == '=FDS("9988-HK","P_PRICE(0D,-109D,D)")'
-    assert "0D,-109D,D" in close2 and ":" not in close2
-    assert "P_VOLUME_DAY" in vol2 and "0D,-109D,D" in vol2
-    # no per-row grid: just header + 1 formula row
+    assert [c.value for c in ws[1]] == ["ticker", "date", "close", "volume"]
+    assert ws.cell(row=2, column=1).value == "9988-HK"  # A2 = ticker literal
+    assert _af(ws.cell(row=2, column=2).value) == '=FDS(A2,"JULIAN(P_PRICE(0,-109D,D).dates)")'
+    assert _af(ws.cell(row=2, column=3).value) == '=FDS(A2,"P_PRICE(0,-109D,D)")'
+    assert _af(ws.cell(row=2, column=4).value) == '=FDS(A2,"P_VOLUME_DAY(0,-109D,D)")'
     assert ws.max_row == 2
 
 
 def test_build_workbook_spill_is_default_layout():
-    # When layout is not specified, Method A defaults to spill.
     data = fg.build_formula_workbook(["9988-HK"], DICT, method="A", lookback=109)
     wb = openpyxl.load_workbook(io.BytesIO(data))
     ws = wb["9988-HK"]
     assert ws.cell(row=2, column=1).value == "9988-HK"
-    assert "P_PRICE(0D,-109D,D)" in str(ws.cell(row=2, column=2).value)
+    assert _af(ws.cell(row=2, column=3).value) == '=FDS(A2,"P_PRICE(0,-109D,D)")'
     assert ws.max_row == 2
 
 
-def test_build_workbook_spill_include_date_column():
+def test_spill_formulas_written_as_dynamic_array():
+    import zipfile
     data = fg.build_formula_workbook(["9988-HK"], DICT, method="A",
-                                     layout="spill", lookback=109, include_date=True)
-    wb = openpyxl.load_workbook(io.BytesIO(data))
-    ws = wb["9988-HK"]
-    assert [c.value for c in ws[1]] == ["ticker", "date", "close", "volume"]
-    assert ws.cell(row=2, column=1).value == "9988-HK"
-    assert "P_DATE(0D,-109D,D)" in str(ws.cell(row=2, column=2).value)
-    assert "P_PRICE(0D,-109D,D)" in str(ws.cell(row=2, column=3).value)
-    assert "P_VOLUME_DAY(0D,-109D,D)" in str(ws.cell(row=2, column=4).value)
-    assert ws.max_row == 2
+                                     layout="spill", lookback=109)
+    z = zipfile.ZipFile(io.BytesIO(data))
+    found = False
+    for n in z.namelist():
+        if n.startswith("xl/worksheets/") and n.endswith(".xml"):
+            xml = z.read(n).decode("utf-8")
+            # The worksheet stores the formula with quotes XML-escaped (&quot;)
+            # inside an array-formula <f> element.
+            if "P_PRICE(0,-109D,D)" in xml and "<f " in xml:
+                found = True
+                assert 't="array"' in xml
+                assert 'aca="1"' in xml and 'ca="1"' in xml
+                assert ">@FDS" not in xml and "&gt;@FDS" not in xml
+    assert found
+
 
 
 def test_build_workbook_per_ticker_still_row_per_day_grid():
