@@ -411,9 +411,10 @@ def build_formula_workbook(
             # Spilling layout: each ticker on its OWN sheet (no collision).
             # A2 = ticker literal; the spill formulas REFERENCE A2 and sit in row
             # 2: B2=date (JULIAN ...dates), C2=price, D2=volume. Each is written as
-            # a DYNAMIC-ARRAY formula so Excel does not prepend the implicit-
-            # intersection '@' (which would force a single value and kill spill).
-            from openpyxl.worksheet.formula import ArrayFormula
+            # PLAIN formulas (NOT openpyxl ArrayFormula, which produces a legacy
+            # CSE {array} that does not spill). _strip_empty_formula_values then
+            # injects the dynamic-array metadata + cm="1" so Excel treats them as
+            # spilling dynamic arrays (no leading '{' and no '@').
             for t in tickers:
                 safe = _safe_sheet_name(t)
                 ws = wb.create_sheet(safe)
@@ -424,10 +425,9 @@ def build_formula_workbook(
                     price_metric=price_metric, volume_metric=volume_metric,
                     ticker_cell="A2")
                 ws.cell(row=2, column=1, value=t)  # A2 = ticker literal
-                # Dynamic-array (spilling) formulas anchored at their own cell.
-                ws.cell(row=2, column=2, value=ArrayFormula("B2", spill["date"]))
-                ws.cell(row=2, column=3, value=ArrayFormula("C2", spill["close"]))
-                ws.cell(row=2, column=4, value=ArrayFormula("D2", spill["volume"]))
+                ws.cell(row=2, column=2, value=spill["date"])
+                ws.cell(row=2, column=3, value=spill["close"])
+                ws.cell(row=2, column=4, value=spill["volume"])
                 for col, w in ((1, 14), (2, 16), (3, 30), (4, 32)):
                     ws.column_dimensions[get_column_letter(col)].width = w
         elif layout == "stacked":
@@ -572,26 +572,75 @@ def _strip_empty_formula_values(xlsx_bytes: bytes) -> bytes:
     """
     import zipfile
 
+    has_dynamic = False
     zin = zipfile.ZipFile(io.BytesIO(xlsx_bytes))
     out = io.BytesIO()
     with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as zout:
+        names = set(zin.namelist())
         for item in zin.infolist():
             data = zin.read(item.filename)
             if item.filename.startswith("xl/worksheets/") and item.filename.endswith(".xml"):
                 txt = data.decode("utf-8")
                 txt = txt.replace("</f><v/>", "</f>").replace("</f><v />", "</f>")
-                # Upgrade legacy array formulas to DYNAMIC-array (spilling) form so
-                # modern Excel does NOT prepend the implicit-intersection '@'
-                # (which forces a single value and kills the FactSet spill).
-                # Excel marks a spilling formula with aca="1" ca="1".
-                txt = re.sub(
-                    r'<f t="array" ref="([^"]+)">',
-                    r'<f t="array" ref="\1" aca="1" ca="1">',
-                    txt,
-                )
+                # Mark bare =FDS(...) spill formulas as DYNAMIC arrays so Excel
+                # spills them (no leading '{' CSE, no '@' implicit intersection).
+                # Target only cells whose entire formula is a single FDS(...) call
+                # (the spill layout) — NOT Method B's '&'-concatenated offset
+                # formulas, which must stay plain.
+                def _mark(m):
+                    nonlocal has_dynamic
+                    cell_open, formula = m.group(1), m.group(2)
+                    if formula.startswith("FDS(") and "&" not in formula and "ROW(" not in formula:
+                        has_dynamic = True
+                        return f'{cell_open} cm="1"><f>{formula}</f>'
+                    return m.group(0)
+                txt = re.sub(r'(<c r="[A-Z]+\d+"[^>]*)><f>([^<]*)</f>', _mark, txt)
                 data = txt.encode("utf-8")
+            if item.filename == "[Content_Types].xml":
+                t = data.decode("utf-8")
+                if "sheetMetadata" not in t:
+                    t = t.replace(
+                        "</Types>",
+                        '<Override PartName="/xl/metadata.xml" '
+                        'ContentType="application/vnd.openxmlformats-officedocument.'
+                        'spreadsheetml.sheetMetadata+xml"/></Types>',
+                    )
+                data = t.encode("utf-8")
+            rels_name = "xl/_rels/workbook.xml.rels"
+            if item.filename == rels_name and "metadata.xml" not in data.decode("utf-8"):
+                t = data.decode("utf-8")
+                t = t.replace(
+                    "</Relationships>",
+                    '<Relationship Id="rIdMeta1" '
+                    'Type="http://schemas.openxmlformats.org/officeDocument/2006/'
+                    'relationships/sheetMetadata" Target="metadata.xml"/></Relationships>',
+                )
+                data = t.encode("utf-8")
             zout.writestr(item, data)
+        # Add the dynamic-array metadata part (only meaningful if we marked cells,
+        # but harmless to always include when spill formulas are present).
+        if has_dynamic and "xl/metadata.xml" not in names:
+            zout.writestr("xl/metadata.xml", _DYNAMIC_ARRAY_METADATA)
     return out.getvalue()
+
+
+_DYNAMIC_ARRAY_METADATA = (
+    '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\r\n'
+    '<metadata xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" '
+    'xmlns:xlrd="http://schemas.microsoft.com/office/spreadsheetml/2017/richdata" '
+    'xmlns:xda="http://schemas.microsoft.com/office/spreadsheetml/2017/dynamicarray">'
+    '<metadataTypes count="1">'
+    '<metadataType name="XLDAPR" minSupportedVersion="120000" copy="1" pasteAll="1" '
+    'pasteValues="1" merge="1" splitFirst="1" rowColShift="1" clearFormats="1" '
+    'clearComments="1" assign="1" coerce="1" cellMeta="1"/>'
+    '</metadataTypes>'
+    '<futureMetadata name="XLDAPR" count="1"><bk><extLst>'
+    '<ext uri="{bdbb8cdc-fa1e-496e-a857-3c3f30c029c3}">'
+    '<xda:dynamicArrayProperties fDynamic="1" fCollapsed="0"/></ext>'
+    '</extLst></bk></futureMetadata>'
+    '<cellMetadata count="1"><bk><rc t="1" v="0"/></bk></cellMetadata>'
+    '</metadata>'
+)
 
 
 def _safe_sheet_name(name: str) -> str:
