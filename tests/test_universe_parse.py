@@ -121,3 +121,26 @@ def test_clean_file_not_broken_by_header_detection():
     assert rep["rows"] == 1
     assert float(df.iloc[0]["index_weight"]) == 1.5
     assert float(df.iloc[0]["adv_usd_20d"]) == 50000000
+
+
+def test_parse_prices_reconstructs_dates_when_no_date_column():
+    # Efficient pull: no date column. Grid is most-recent-first per ticker.
+    # close values: AAA row1(today)=100, row2=99, row3=98 ; BBB row1=50, row2=49
+    csv = (
+        "ticker,close,volume\n"
+        "AAA,100,1000\n"
+        "AAA,99,1100\n"
+        "AAA,98,1200\n"
+        "BBB,50,2000\n"
+        "BBB,49,2100\n"
+    )
+    tidy, rep = di.parse_prices(csv.encode("utf-8"), "fill.csv")
+    assert rep.get("date_reconstructed") is True
+    # dates present, sorted ascending per ticker
+    aaa = tidy[tidy["ticker"] == "AAA"].reset_index(drop=True)
+    assert len(aaa) == 3
+    assert list(aaa["date"]) == sorted(aaa["date"])
+    # the LATEST date row must carry the latest close (100), i.e. row-order
+    # most-recent-first was honored -> after ascending sort, last row = today = 100
+    assert float(aaa.iloc[-1]["close"]) == 100.0
+    assert float(aaa.iloc[0]["close"]) == 98.0

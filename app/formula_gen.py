@@ -27,6 +27,38 @@ from openpyxl.utils import get_column_letter
 # ---------------------------------------------------------------------------
 # Reference function — replicated EXACTLY (generalised via kwargs).
 # ---------------------------------------------------------------------------
+def min_required_bars(params: Dict[str, Any] | None = None, buffer_pct: float = 0.25,
+                      hard_floor: int = 90) -> int:
+    """Compute the minimum CONTIGUOUS daily depth the screen actually needs.
+
+    Indicators are consecutive-day calcs (Wilder RSI, MACD EMAs, rolling SMA,
+    trailing vol window) so dates cannot be skipped — 'only needed dates' means
+    the minimum contiguous lookback that warms every indicator. Binding terms:
+      - trailing vol window reaching back past Horizon B's start
+        (vol_window covers returns; Horizon B reaches day -21)
+      - MACD warm-up for STABLE values (~3x slow EMA + signal)
+      - RSI warm-up (~3.5x length)
+      - the engine's hard min_bars floor
+    A safety buffer is added on top, then a sensible hard floor.
+    """
+    p = dict(params or {})
+    vol_window = int(p.get("vol_window", 60))
+    h_b_start = int(p.get("horizon_b_start", 21))
+    macd_slow = int(p.get("macd_slow", 26))
+    macd_signal = int(p.get("macd_signal", 9))
+    rsi_length = int(p.get("rsi_length", 14))
+    min_bars = int(p.get("min_bars", 60))
+    sma_length = int(p.get("sma_length", 20))
+
+    # +1 because returns consume one bar; vol window must sit before latest moves.
+    vol_need = vol_window + max(h_b_start, 5) + 1
+    macd_need = macd_slow * 3 + macd_signal
+    rsi_need = int(rsi_length * 3.5)
+    base = max(min_bars, vol_need, macd_need, rsi_need, sma_length)
+    depth = int(round(base * (1.0 + buffer_pct)))
+    return max(hard_floor, depth)
+
+
 def autodetect_metrics(dictionary: dict) -> Dict[str, str]:
     """Pick smart default price/volume metric keys from a dictionary.
 
@@ -107,6 +139,7 @@ def method_a_grid(
     price_metric: str = "price",
     volume_metric: str = "volume",
     header_rows: int = 1,
+    include_date: bool = False,
 ) -> List[Dict[str, Any]]:
     """Explicit row-per-day grid for one ticker (no array-spill dependency).
 
@@ -128,13 +161,17 @@ def method_a_grid(
     rows: List[Dict[str, Any]] = []
     for i in range(lookback):
         off = f"0D-{i}D" if i else "0D"
-        rows.append({
+        entry = {
             "row": header_rows + 1 + i,
             "offset": i,
-            "date_formula": f'=FDS("{ticker}","{date_fql}({off})")',
             "close_formula": f'=FDS("{ticker}","{price_fql}({off})")',
             "volume_formula": f'=FDS("{ticker}","{vol_fql}({off})")',
-        })
+        }
+        # Date column is optional: dropping it removes ~1/3 of FDS calls. Dates
+        # are reconstructed in-app from row order (row 1 = latest trading day).
+        if include_date:
+            entry["date_formula"] = f'=FDS("{ticker}","{date_fql}({off})")'
+        rows.append(entry)
     return rows
 
 
@@ -215,6 +252,7 @@ def build_formula_workbook(
     layout: str = "per_ticker",  # 'per_ticker' or 'stacked'
     price_metric: str = "price",
     volume_metric: str = "volume",
+    include_date: bool = False,
 ) -> bytes:
     """Build the formula workbook as xlsx bytes.
 
@@ -289,34 +327,48 @@ def build_formula_workbook(
             # single-date formulas (no array-spill). This is exactly the shape
             # Tab 3 ingests, all tickers stacked in a single sheet.
             ws = wb.create_sheet("AllTickers")
-            ws.append(["ticker", "date", "close", "volume"])
-            _style_header(ws, 4)
+            header = (["ticker", "date", "close", "volume"] if include_date
+                      else ["ticker", "close", "volume"])
+            ws.append(header)
+            _style_header(ws, len(header))
             for t in tickers:
                 grid = method_a_grid(t, dictionary, lookback=lookback,
                                      price_metric=price_metric,
-                                     volume_metric=volume_metric)
+                                     volume_metric=volume_metric,
+                                     include_date=include_date)
                 for g in grid:
-                    ws.append([t, g["date_formula"], g["close_formula"], g["volume_formula"]])
-            for col, w in ((1, 14), (2, 24), (3, 30), (4, 32)):
+                    if include_date:
+                        ws.append([t, g["date_formula"], g["close_formula"], g["volume_formula"]])
+                    else:
+                        ws.append([t, g["close_formula"], g["volume_formula"]])
+            widths = ((1, 14), (2, 24), (3, 30), (4, 32)) if include_date else ((1, 14), (2, 30), (3, 32))
+            for col, w in widths:
                 ws.column_dimensions[get_column_letter(col)].width = w
         else:
             for t in tickers:
                 safe = _safe_sheet_name(t)
                 ws = wb.create_sheet(safe)
-                ws.append(["date", "close", "volume"])
-                _style_header(ws, 3)
+                header = ["date", "close", "volume"] if include_date else ["close", "volume"]
+                ws.append(header)
+                _style_header(ws, len(header))
                 # Explicit row-per-day grid: one self-contained FDS formula per
-                # trading day for date/close/volume. No reliance on array-spill,
-                # so a full ~N-day time series always returns.
+                # trading day. No reliance on array-spill, so a full ~N-day time
+                # series always returns. Row 2 = today, row 3 = -1D, ...
                 grid = method_a_grid(t, dictionary, lookback=lookback,
                                      price_metric=price_metric,
-                                     volume_metric=volume_metric)
+                                     volume_metric=volume_metric,
+                                     include_date=include_date)
                 for g in grid:
                     r = g["row"]
-                    ws.cell(row=r, column=1, value=g["date_formula"])
-                    ws.cell(row=r, column=2, value=g["close_formula"])
-                    ws.cell(row=r, column=3, value=g["volume_formula"])
-                for col, w in ((1, 22), (2, 30), (3, 32)):
+                    if include_date:
+                        ws.cell(row=r, column=1, value=g["date_formula"])
+                        ws.cell(row=r, column=2, value=g["close_formula"])
+                        ws.cell(row=r, column=3, value=g["volume_formula"])
+                    else:
+                        ws.cell(row=r, column=1, value=g["close_formula"])
+                        ws.cell(row=r, column=2, value=g["volume_formula"])
+                widths = ((1, 22), (2, 30), (3, 32)) if include_date else ((1, 30), (2, 32))
+                for col, w in widths:
                     ws.column_dimensions[get_column_letter(col)].width = w
     else:
         for t in tickers:

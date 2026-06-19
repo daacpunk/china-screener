@@ -261,7 +261,30 @@ def parse_prices(content: bytes, filename: str = "") -> Tuple[pd.DataFrame, Dict
     vol_col = _find_col(cols, _VOLUME_ALIASES)
 
     factset_errs = 0
-    if ticker_col and date_col and price_col:
+    date_reconstructed = False
+    if ticker_col and price_col and not date_col:
+        # No date column (efficient pull dropped it). Reconstruct dates from ROW
+        # ORDER per ticker: the generated grid is most-recent-first (row 1 =
+        # latest trading day), so assign descending business days from today.
+        # Indicators only need correct chronological ORDER, not exact calendar
+        # dates; the event-flag (which needs real dates) degrades gracefully.
+        tidy = pd.DataFrame()
+        tidy["ticker"] = df[ticker_col].astype(str).str.strip()
+        tidy["close"], e1 = _scrub_factset(df[price_col])
+        factset_errs += e1
+        if vol_col and vol_col in df.columns:
+            tidy["volume"], e2 = _scrub_factset(df[vol_col])
+            factset_errs += e2
+        else:
+            tidy["volume"] = np.nan
+        tidy["__pos"] = tidy.groupby("ticker").cumcount()  # 0 = first row = latest
+        max_off = int(tidy["__pos"].max()) if len(tidy) else 0
+        cal = pd.bdate_range(end=pd.Timestamp.today().normalize(), periods=max_off + 1)
+        # offset 0 -> last (latest) calendar day; offset k -> k business days back
+        tidy["date"] = tidy["__pos"].map(lambda k: cal[-1 - int(k)])
+        tidy = tidy.drop(columns="__pos")
+        date_reconstructed = True
+    elif ticker_col and date_col and price_col:
         # tidy
         tidy = pd.DataFrame()
         tidy["ticker"] = df[ticker_col].astype(str).str.strip()
@@ -273,6 +296,15 @@ def parse_prices(content: bytes, filename: str = "") -> Tuple[pd.DataFrame, Dict
             factset_errs += e2
         else:
             tidy["volume"] = np.nan
+        # If a date column exists but parsed entirely to NaT (e.g. P_DATE came
+        # back blank), fall back to row-order reconstruction too.
+        if tidy["date"].notna().sum() == 0:
+            tidy["__pos"] = tidy.groupby("ticker").cumcount()
+            max_off = int(tidy["__pos"].max()) if len(tidy) else 0
+            cal = pd.bdate_range(end=pd.Timestamp.today().normalize(), periods=max_off + 1)
+            tidy["date"] = tidy["__pos"].map(lambda k: cal[-1 - int(k)])
+            tidy = tidy.drop(columns="__pos")
+            date_reconstructed = True
     else:
         # attempt wide -> tidy: first col dates, remaining columns tickers (close)
         if not date_col:
@@ -291,6 +323,7 @@ def parse_prices(content: bytes, filename: str = "") -> Tuple[pd.DataFrame, Dict
     tidy = tidy.sort_values(["ticker", "date"]).reset_index(drop=True)
 
     report = build_quality_report(tidy, factset_errs)
+    report["date_reconstructed"] = bool(date_reconstructed)
     return tidy, report
 
 

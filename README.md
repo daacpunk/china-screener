@@ -190,9 +190,19 @@ falling back to the generic `P_PRICE` / `P_VOLUME_DAY` templates.
 
 The generated `=FDS(...)` formulas use the **correct Excel add-in syntax** and a
 **rolling window anchored at today**: `0D` = today / most-recent trading day,
-looking back N trading days. **Default lookback = 150 trading days (≈ 7 months)** —
-enough warm-up for RSI(14), MACD(12,26,9) and the 60-day vol window. Re-pull
-anytime to refresh to the latest close.
+looking back N trading days. Re-pull anytime to refresh to the latest close.
+
+**Efficient by default (important for ~500+ name universes):**
+- **Auto lookback depth** — leave the Lookback field blank and the app sizes the
+  pull to the *minimum contiguous depth the screen actually needs* (computed from
+  the current screen params: MACD 26+9, RSI 14, 60-day vol window, 21-day
+  horizon, +25% buffer — ≈ **109 trading days** at defaults). Override to pull more.
+  Indicators are consecutive-day calcs, so depth (not sparsity) is what matters.
+- **Date column off by default** — the grid pulls only **close + volume**
+  (≈ 1/3 fewer FDS cells). Dates are reconstructed in-app from row order
+  (row 1 = latest trading day). Tick "Include date column" to pull `P_DATE` too.
+- Combined, this is ~**50% fewer FactSet cells** for a 576-name universe
+  (≈ 126k vs ≈ 259k cells) vs the old 150-day × 3-column pull.
 
 **Method A (recommended) writes an explicit row-per-day grid** — one
 self-contained `=FDS` formula PER trading day for date / close / volume. This does

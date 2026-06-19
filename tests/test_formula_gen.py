@@ -73,24 +73,34 @@ def test_method_b_offset_grid():
 
 
 def test_build_workbook_method_a_opens():
-    # Method A per-ticker now writes an EXPLICIT row-per-day grid (no array spill).
+    # Default: NO date column (efficient). close=col1, volume=col2.
     data = fg.build_formula_workbook(["9988-HK", "PDD-CN"], DICT, method="A",
                                      layout="per_ticker", lookback=150)
     wb = openpyxl.load_workbook(io.BytesIO(data))
     assert "Instructions" in wb.sheetnames
     assert "9988-HK" in wb.sheetnames
     ws = wb["9988-HK"]
-    assert ws.cell(row=1, column=1).value == "date"
-    # Row 2 = today (0D); row 3 = 0D-1D; full grid = 150 data rows.
-    close2 = str(ws.cell(row=2, column=2).value)
-    close3 = str(ws.cell(row=3, column=2).value)
-    volume2 = str(ws.cell(row=2, column=3).value)
+    assert [c.value for c in ws[1]] == ["close", "volume"]  # no date column
+    close2 = str(ws.cell(row=2, column=1).value)
+    close3 = str(ws.cell(row=3, column=1).value)
+    volume2 = str(ws.cell(row=2, column=2).value)
     assert 'P_PRICE(0D)' in close2
     assert 'P_PRICE(0D-1D)' in close3
     assert "P_VOLUME_DAY" in volume2
-    assert ws.max_row == 1 + 150  # header + 150 daily rows
-    # No colon form anywhere
+    assert ws.max_row == 1 + 150
     assert ":" not in close2 and ":" not in close3
+
+
+def test_build_workbook_method_a_with_date_column():
+    # include_date=True restores the date column (col1) -> close col2, volume col3.
+    data = fg.build_formula_workbook(["9988-HK"], DICT, method="A",
+                                     layout="per_ticker", lookback=10, include_date=True)
+    wb = openpyxl.load_workbook(io.BytesIO(data))
+    ws = wb["9988-HK"]
+    assert [c.value for c in ws[1]] == ["date", "close", "volume"]
+    assert 'P_DATE(0D)' in str(ws.cell(row=2, column=1).value)
+    assert 'P_PRICE(0D)' in str(ws.cell(row=2, column=2).value)
+    assert 'P_VOLUME_DAY(0D)' in str(ws.cell(row=2, column=3).value)
 
 
 def test_method_a_grid_row_per_day():
@@ -113,19 +123,19 @@ def test_build_workbook_method_a_stacked():
     wb = openpyxl.load_workbook(io.BytesIO(data))
     assert "AllTickers" in wb.sheetnames
     ws = wb["AllTickers"]
-    assert [c.value for c in ws[1]] == ["ticker", "date", "close", "volume"]
+    # Default: no date column -> ticker, close, volume.
+    assert [c.value for c in ws[1]] == ["ticker", "close", "volume"]
     # header + 2 tickers * 10 days = 21 rows
     assert ws.max_row == 1 + 2 * 10
-    # first ticker block: row 2 = AAA today, explicit single-date formula
+    # first ticker block: row 2 = AAA today, explicit single-date formula (col2)
     assert ws.cell(row=2, column=1).value == "AAA"
-    assert ws.cell(row=2, column=3).value == '=FDS("AAA","P_PRICE(0D)")'
-    assert ws.cell(row=3, column=3).value == '=FDS("AAA","P_PRICE(0D-1D)")'
+    assert ws.cell(row=2, column=2).value == '=FDS("AAA","P_PRICE(0D)")'
+    assert ws.cell(row=3, column=2).value == '=FDS("AAA","P_PRICE(0D-1D)")'
     # second ticker block starts at row 12
     assert ws.cell(row=12, column=1).value == "BBB"
-    assert ws.cell(row=12, column=3).value == '=FDS("BBB","P_PRICE(0D)")'
-    # no colon range form anywhere in the close column
+    assert ws.cell(row=12, column=2).value == '=FDS("BBB","P_PRICE(0D)")'
     for r in range(2, ws.max_row + 1):
-        assert ":" not in str(ws.cell(row=r, column=3).value)
+        assert ":" not in str(ws.cell(row=r, column=2).value)
 
 
 def test_build_workbook_method_b_opens():
@@ -192,8 +202,9 @@ def test_workbook_honors_custom_metric_keys():
     )
     wb = openpyxl.load_workbook(io.BytesIO(data))
     ws = wb["9988-HK"]
-    close = str(ws.cell(row=2, column=2).value)
-    volume = str(ws.cell(row=2, column=3).value)
+    # default: no date column -> close col1, volume col2
+    close = str(ws.cell(row=2, column=1).value)
+    volume = str(ws.cell(row=2, column=2).value)
     # The user's fql_template root is used, NOT the generic fallback (grid form).
     assert "PX_LAST(0D)" in close
     assert "P_PRICE" not in close
@@ -206,3 +217,18 @@ def test_method_b_honors_custom_price_metric():
     assert "PX_LAST" in grid[0]["relative_formula"]
     assert "P_PRICE" not in grid[0]["relative_formula"]
     assert "VOL_TRADED" in grid[0]["relative_volume_formula"]
+
+
+def test_min_required_bars_defaults_and_floor():
+    # With default params: max(60, 60+21+1=82, 26*3+9=87, 14*3.5=49, 20) = 87
+    # *1.25 = ~109, above the 90 floor.
+    d = fg.min_required_bars(None)
+    assert 95 <= d <= 130
+    # Tiny params still respect the hard floor.
+    tiny = {"vol_window": 10, "horizon_b_start": 5, "macd_slow": 5, "macd_signal": 3,
+            "rsi_length": 5, "min_bars": 20, "sma_length": 10}
+    assert fg.min_required_bars(tiny) == 90
+    # Bigger vol window pushes depth up.
+    big = {"vol_window": 120, "horizon_b_start": 21, "macd_slow": 26, "macd_signal": 9,
+           "rsi_length": 14, "min_bars": 60, "sma_length": 20}
+    assert fg.min_required_bars(big) > fg.min_required_bars(None)

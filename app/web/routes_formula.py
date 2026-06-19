@@ -27,6 +27,10 @@ def formula_page(request: Request):
     metric_keys = list(d["data"].get("formulas", {}).keys()) if d else []
     md_html = md.markdown(d["md_text"], extensions=["tables"]) if d and d.get("md_text") else ""
     auto = fg.autodetect_metrics(d["data"]) if d else {"price_metric": "", "volume_metric": ""}
+    try:
+        auto_depth = fg.min_required_bars(ss.get_screen_params())
+    except Exception:
+        auto_depth = fg.min_required_bars(None)
     # sample preview
     preview = None
     if d and metric_keys and tickers:
@@ -35,7 +39,8 @@ def formula_page(request: Request):
     ctx = base_ctx(request, "formula", active_dict=d, metric_keys=metric_keys,
                    tickers=tickers, md_html=md_html, preview=preview,
                    default_price_metric=auto["price_metric"],
-                   default_volume_metric=auto["volume_metric"])
+                   default_volume_metric=auto["volume_metric"],
+                   auto_depth=auto_depth, n_tickers=len(tickers))
     return templates.TemplateResponse(request, "formula.html", ctx)
 
 
@@ -65,19 +70,30 @@ def formula_preview(request: Request, ticker: str = Form(...), metric_key: str =
 
 
 @router.post("/formula/download")
-def formula_download(method: str = Form("A"), lookback: int = Form(150),
+def formula_download(method: str = Form("A"), lookback: int = Form(0),
                      start: str = Form("0D"), end: str = Form("-150D"),
                      freq: str = Form("D"), layout: str = Form("per_ticker"),
-                     price_metric: str = Form(""), volume_metric: str = Form("")):
+                     price_metric: str = Form(""), volume_metric: str = Form(""),
+                     include_date: str = Form("")):
     d = _active_dict()
     if not d:
         return Response("No active dictionary", status_code=400)
     pm, vm = _resolve_metrics(d, price_metric, volume_metric)
+    # Efficient default: size the pull to the MINIMUM contiguous depth the screen
+    # needs (from current params) when lookback isn't explicitly set (<=0).
+    if not lookback or lookback <= 0:
+        try:
+            params = ss.get_screen_params()
+        except Exception:
+            params = None
+        lookback = fg.min_required_bars(params)
+    inc_date = str(include_date).lower() in ("1", "true", "on", "yes")
     uni = assemble_active_universe()
     tickers = uni["ticker"].tolist() if not uni.empty else ["BABA-CN"]
     data = fg.build_formula_workbook(tickers, d["data"], method=method, lookback=lookback,
                                      start=start, end=end, freq=freq, layout=layout,
-                                     price_metric=pm, volume_metric=vm)
+                                     price_metric=pm, volume_metric=vm,
+                                     include_date=inc_date)
     fname = f"factset_formulas_method_{method}.xlsx"
     return Response(
         content=data,
