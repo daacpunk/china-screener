@@ -303,32 +303,31 @@ def test_build_workbook_spill_is_default_layout():
     assert ws.max_row == 2
 
 
-def test_spill_formulas_written_as_dynamic_array():
-    # Spill formulas must be native DYNAMIC arrays: plain <f> + cm="1" on the cell
-    # + an xl/metadata.xml with fDynamic="1". This avoids both the legacy CSE
-    # '{' (openpyxl ArrayFormula) and the implicit-intersection '@'.
+def test_spill_formulas_stored_as_text_not_live_formula():
+    # Spill formulas are stored as TEXT (no <f> element) so Excel does not inject
+    # the implicit-intersection '@' on open. A bundled macro re-enters them via
+    # .Formula2 to activate spilling. Verify they are inert strings.
     import zipfile
     data = fg.build_formula_workbook(["9988-HK"], DICT, method="A",
                                      layout="spill", lookback=109)
     z = zipfile.ZipFile(io.BytesIO(data))
-    assert "xl/metadata.xml" in z.namelist()
-    meta = z.read("xl/metadata.xml").decode("utf-8")
-    assert 'fDynamic="1"' in meta
-    assert "sheetMetadata" in z.read("[Content_Types].xml").decode("utf-8")
-    assert "metadata.xml" in z.read("xl/_rels/workbook.xml.rels").decode("utf-8")
     found = False
     for n in z.namelist():
         if n.startswith("xl/worksheets/") and n.endswith(".xml"):
             xml = z.read(n).decode("utf-8")
-            if "P_PRICE(0,-109D,D)" in xml and "<f>" in xml:
+            if "P_PRICE(0,-109D,D)" in xml:
                 found = True
-                # plain <f> (NOT t="array"), cell carries cm="1"
-                assert 't="array"' not in xml
-                assert 'cm="1"' in xml
-                assert ">@FDS" not in xml and "&gt;@FDS" not in xml
-                # no legacy CSE curly braces around the formula
-                assert "<f>{" not in xml
+                # stored as inline string, NOT a live formula element
+                assert "<f>" not in xml and 't="array"' not in xml
+                assert "@FDS" not in xml and "&gt;@" not in xml
+                assert "<f>{" not in xml  # no legacy CSE
     assert found
+    # The activation macro is documented in the Instructions sheet.
+    wb = openpyxl.load_workbook(io.BytesIO(data))
+    instr = "\n".join(
+        str(c.value) for row in wb["Instructions"].iter_rows() for c in row if c.value
+    )
+    assert "ActivateSpills" in instr and "Formula2" in instr
 
 
 

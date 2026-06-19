@@ -333,30 +333,50 @@ def build_formula_workbook(
     ]
     if method.upper() == "A" and layout == "spill":
         instr += [
-            ["1. Open this workbook in Excel with the FactSet add-in installed."],
-            ["2. Each ticker is on its OWN sheet. A2 holds the ticker; the spill"],
-            ["   formulas in row 2 REFERENCE A2 and fill the whole column down:"],
-            ["     B2 = date, C2 = close, D2 = volume."],
-            [f"3. Formulas (entered as dynamic-array / spilling, N={lookback}):"],
-            [f'     B2: =FDS(A2,"JULIAN(P_PRICE(0,-{lookback}D,D).dates)")'],
-            [f'     C2: =FDS(A2,"P_PRICE(0,-{lookback}D,D)")'],
-            [f'     D2: =FDS(A2,"P_VOLUME_DAY(0,-{lookback}D,D)")'],
-            ["   One formula per series fills the whole column (~3 calls/ticker"],
-            ["   instead of one per cell)."],
-            ["4. Start anchor is 0 (NOT 0D); range is most-recent-first; volume uses"],
-            ["   P_VOLUME_DAY (NOT P_VOLUME); the ticker is a CELL reference (A2),"],
-            ["   NOT a quoted literal."],
-            ["5. These are written as spilling (dynamic-array) formulas so Excel does"],
-            ["   NOT prepend '@'. Make sure nothing blocks the spill (keep the cells"],
-            ["   below/right of B2:D2 empty)."],
-            ["6. 20D ADV (USD) is NOT pulled here — it is computed in-app (Tab 3) from"],
-            ["   daily price * volume."],
-            ["7. After refresh, upload the sheet(s) or export tidy long and upload in"],
-            ["   Tab 3. Tab 3 forward-fills the single A2 ticker down the spilled rows."],
+            ["SPILL LAYOUT — the formulas are stored as TEXT so Excel doesn't add"],
+            ["the '@' implicit-intersection on open. Run the ONE-CLICK macro below"],
+            ["once to activate every sheet's spills (it re-enters each formula via"],
+            [".Formula2, exactly as if you typed it — so they spill, no '@')."],
             [""],
-            ["Troubleshooting (no data / single value): if you see '@FDS', the spill"],
-            ["was blocked — clear cells under the formula and re-enter. Use commas not"],
-            ["colons; P_VOLUME_DAY not P_VOLUME; identifier in A2 (e.g. 9988-HK, BD5CMC)."],
+            ["STEP 1 — Activate the spills (one time):"],
+            ["  a) Open this workbook in Excel with the FactSet add-in installed."],
+            ["  b) Press Option+F11 (Mac) / Alt+F11 (Win) to open the VBA editor."],
+            ["  c) Insert > Module, paste the macro below, press F5 (or Run)."],
+            ["  d) Close the editor. Every ticker sheet now has LIVE spilling"],
+            ["     formulas in B2:D2 that fill the whole column."],
+            [""],
+            ["STEP 2 — Let FactSet refresh, then upload the workbook in Tab 3"],
+            ["  (Tab 3 forward-fills the A2 ticker down the spilled rows, and reads"],
+            ["   JULIAN dates automatically)."],
+            [""],
+            ["---------- COPY THIS MACRO ----------"],
+            ["Sub ActivateSpills()"],
+            ["  Dim ws As Worksheet, c As Range, cols As Variant, i As Integer"],
+            ["  cols = Array(2, 3, 4)   ' B=date, C=close, D=volume"],
+            ["  For Each ws In ThisWorkbook.Worksheets"],
+            ['    If ws.Name <> "Instructions" Then'],
+            ["      For i = LBound(cols) To UBound(cols)"],
+            ["        Set c = ws.Cells(2, cols(i))"],
+            ['        If Left(c.Text, 1) = "=" Then'],
+            ["          Dim f As String: f = c.Text"],
+            ['          c.Value = ""            ' + "' clear the text"],
+            ["          c.Formula2 = f          " + "' enter as dynamic array (spills)"],
+            ["        End If"],
+            ["      Next i"],
+            ["    End If"],
+            ["  Next ws"],
+            ["End Sub"],
+            ["---------- END MACRO ----------"],
+            [""],
+            [f"Formulas (N={lookback}, rolling from today, your add-in's syntax):"],
+            [f'  B2: =FDS(A2,"JULIAN(P_PRICE(0,-{lookback}D,D).dates)")'],
+            [f'  C2: =FDS(A2,"P_PRICE(0,-{lookback}D,D)")'],
+            [f'  D2: =FDS(A2,"P_VOLUME_DAY(0,-{lookback}D,D)")'],
+            ["~3 calls per ticker. Volume uses P_VOLUME_DAY. ADV is computed in-app."],
+            [""],
+            ["No macros? Manual fallback: click C2, press F2 then Enter to re-enter"],
+            ["the formula (it will spill); repeat for B2/D2. Or use the 'Explicit"],
+            ["row-per-day grid' layout, which needs no spill."],
         ]
     elif method.upper() == "A":
         instr += [
@@ -411,10 +431,11 @@ def build_formula_workbook(
             # Spilling layout: each ticker on its OWN sheet (no collision).
             # A2 = ticker literal; the spill formulas REFERENCE A2 and sit in row
             # 2: B2=date (JULIAN ...dates), C2=price, D2=volume. Each is written as
-            # PLAIN formulas (NOT openpyxl ArrayFormula, which produces a legacy
-            # CSE {array} that does not spill). _strip_empty_formula_values then
-            # injects the dynamic-array metadata + cm="1" so Excel treats them as
-            # spilling dynamic arrays (no leading '{' and no '@').
+            # Store the spill formulas as TEXT (leading apostrophe) so Excel does
+            # NOT process them on open (which injects the implicit-intersection
+            # '@' that kills the spill). The one-click 'Activate spills' macro
+            # (see Instructions sheet) re-enters them via .Formula2, exactly as if
+            # typed by hand -> they spill with no '@'.
             for t in tickers:
                 safe = _safe_sheet_name(t)
                 ws = wb.create_sheet(safe)
@@ -425,9 +446,10 @@ def build_formula_workbook(
                     price_metric=price_metric, volume_metric=volume_metric,
                     ticker_cell="A2")
                 ws.cell(row=2, column=1, value=t)  # A2 = ticker literal
-                ws.cell(row=2, column=2, value=spill["date"])
-                ws.cell(row=2, column=3, value=spill["close"])
-                ws.cell(row=2, column=4, value=spill["volume"])
+                # Force TEXT storage so '=' is inert until the macro activates it.
+                for col, key in ((2, "date"), (3, "close"), (4, "volume")):
+                    c = ws.cell(row=2, column=col, value=spill[key])
+                    c.data_type = "s"  # string, not formula
                 for col, w in ((1, 14), (2, 16), (3, 30), (4, 32)):
                     ws.column_dimensions[get_column_letter(col)].width = w
         elif layout == "stacked":

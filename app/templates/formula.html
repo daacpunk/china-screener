@@ -91,10 +91,10 @@ The generator uses the universe's Symbol <b>as-is</b> — FactSet resolves SEDOL
       <button class="btn" type="submit">Download .xlsx</button>
     </form>
     <p class="help" style="margin-top:12px"><b>Method A — Spilling (default, fast):</b> each ticker has its OWN sheet with the
-    ticker in <span class="mono">A2</span>; spill formulas in row 2 REFERENCE A2 and fill the whole column —
-    B2 <span class="mono">=FDS(A2,"JULIAN(P_PRICE(0,-109D,D).dates)")</span> (date), C2 <span class="mono">=FDS(A2,"P_PRICE(0,-109D,D)")</span> (close),
-    D2 <span class="mono">=FDS(A2,"P_VOLUME_DAY(0,-109D,D)")</span> (volume). Written as dynamic-array formulas so Excel does not add
-    <span class="mono">@</span>. ~3 calls per ticker (your add-in supports spill).
+    ticker in <span class="mono">A2</span> and the spill formulas in B2:D2 — B2 date <span class="mono">=FDS(A2,"JULIAN(P_PRICE(0,-109D,D).dates)")</span>,
+    C2 close <span class="mono">=FDS(A2,"P_PRICE(0,-109D,D)")</span>, D2 volume <span class="mono">=FDS(A2,"P_VOLUME_DAY(0,-109D,D)")</span>.
+    The formulas are stored as <b>text</b> so Excel can't add <span class="mono">@</span> on open; run the bundled one-click
+    <b>ActivateSpills</b> macro (in the Instructions sheet) once to turn them into live spilling formulas. ~3 calls per ticker.
     <b>Explicit row-per-day grid (no spill, robust):</b> one <span class="mono">=FDS</span> formula per trading day for close / volume — a full series always returns even without spill.
     <b>Method B:</b> put ticker in A2; column C holds rolling <span class="mono">0D-Nd</span> price formulas, column D <span class="mono">P_VOLUME_DAY</span> volume formulas, column E explicit-date formulas (dates in B).</p>
   </div>
