@@ -197,3 +197,34 @@ def test_parse_prices_julian_serial_dates():
     g = tidy[tidy.ticker == "AAA"].sort_values("date")
     assert g["date"].notna().all()
     assert str(g["date"].max().date()) == "2026-06-18"
+
+
+def test_parse_prices_multisheet_spill_workbook():
+    # Activated spill workbook: Instructions sheet + one per-ticker sheet each,
+    # A2=ticker, B=JULIAN date, C=close, D=volume spilled down. Must read ALL
+    # ticker sheets and decode JULIAN dates.
+    import io
+    import pandas as pd
+    from openpyxl import Workbook
+    wb = Workbook(); wb.active.title = "Instructions"
+    wb["Instructions"]["A1"] = "HOW TO USE"
+    base = pd.Timestamp("1899-12-30")
+    for t, p0 in [("9988-HK", 80.0), ("BD5CMC", 95.0)]:
+        ws = wb.create_sheet(t)
+        ws.append(["ticker", "date", "close", "volume"])
+        ws["A2"] = t
+        for i in range(70):
+            d = pd.Timestamp("2026-06-18") - pd.tseries.offsets.BDay(i)
+            ws.cell(row=2 + i, column=2, value=(d - base).days)
+            ws.cell(row=2 + i, column=3, value=round(p0 - i * 0.1, 3))
+            ws.cell(row=2 + i, column=4, value=1_000_000 + i)
+    bio = io.BytesIO(); wb.save(bio)
+    tidy, rep = di.parse_prices(bio.getvalue(), "spill.xlsx")
+    assert rep.get("multisheet_spill") is True
+    assert rep["n_tickers"] == 2
+    assert rep.get("sheets_read") == 2
+    g = tidy[tidy.ticker == "9988-HK"].sort_values("date")
+    assert len(g) == 70
+    assert str(g["date"].max().date()) == "2026-06-18"  # JULIAN decoded
+    assert float(g.iloc[-1]["close"]) == 80.0           # latest date = latest close
+    assert "Instructions" not in set(tidy["ticker"])     # Instructions skipped

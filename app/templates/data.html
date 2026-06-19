@@ -30,6 +30,7 @@
   <div class="stat"><div class="v">{{ quality.total_rows }}</div><div class="l">Rows</div></div>
   <div class="stat"><div class="v">{{ quality.factset_error_cells }}</div><div class="l">FactSet error cells</div></div>
 </div>
+{% if quality.multisheet_spill %}<div class="note ok">Read <b>{{ quality.sheets_read }}</b> per-ticker spill sheets and combined them into one series set.</div>{% endif %}
 {% if quality.date_reconstructed %}<div class="note info">No date column in the upload — dates were <b>reconstructed from row order</b> (row 1 = latest trading day, going back). Indicators use chronological order; the event-calendar flag relies on a real next-event date supplied separately.</div>{% endif %}
 {% if quality.short_series %}<div class="note error">Short series (will be flagged/skipped): {{ quality.short_series|join(', ') }}</div>{% endif %}
 {% if quality.tickers_with_nans %}<div class="note info">Tickers with NaNs (gaps filled-forward where possible): {{ quality.tickers_with_nans|join(', ') }}</div>{% endif %}

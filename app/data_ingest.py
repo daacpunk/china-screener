@@ -265,11 +265,109 @@ def _parse_dates(series: pd.Series) -> pd.Series:
     return pd.to_datetime(series, errors="coerce")
 
 
+def _read_multisheet_spill(content: bytes, filename: str):
+    """If the upload is a multi-sheet spill workbook (one per-ticker sheet, each
+    with A2=ticker and date/close/volume columns), read & concatenate ALL ticker
+    sheets into a tidy frame. Returns (tidy_df, report) or None if not applicable.
+    """
+    name = (filename or "").lower()
+    if not (name.endswith(".xlsx") or name.endswith(".xls")):
+        return None
+    try:
+        xls = pd.read_excel(io.BytesIO(content), sheet_name=None, header=0)
+    except Exception:
+        return None
+    if not xls or len(xls) < 2:
+        return None
+
+    frames = []
+    factset_errs = 0
+    date_reconstructed = False
+    skip = {"instructions", "readme", "info", "alltickers"}
+    sheet_count = 0
+    for sheet_name, sdf in xls.items():
+        if str(sheet_name).strip().lower() in skip:
+            continue
+        if sdf is None or sdf.empty:
+            continue
+        sdf = _norm_cols(sdf)
+        scols = list(sdf.columns)
+        s_tkr = _find_col(scols, _TICKER_ALIASES)
+        s_date = _find_col(scols, _DATE_ALIASES)
+        s_price = _find_col(scols, _PRICE_ALIASES)
+        s_vol = _find_col(scols, _VOLUME_ALIASES)
+        if not s_price:
+            continue  # not a price sheet
+        sheet_count += 1
+        # Ticker: prefer the in-sheet ticker cell (A2), else the sheet name.
+        if s_tkr and sdf[s_tkr].astype(str).str.strip().replace(
+                {"": None, "nan": None, "None": None}).dropna().shape[0] > 0:
+            tkr_val = (
+                sdf[s_tkr].astype(str).str.strip()
+                .replace({"": None, "nan": None, "None": None}).dropna().iloc[0]
+            )
+        else:
+            tkr_val = str(sheet_name).strip()
+
+        out = pd.DataFrame(index=sdf.index)
+        out["close"], e1 = _scrub_factset(sdf[s_price])
+        factset_errs += e1
+        if s_vol and s_vol in sdf.columns:
+            out["volume"], e2 = _scrub_factset(sdf[s_vol])
+            factset_errs += e2
+        else:
+            out["volume"] = np.nan
+        if s_date and s_date in sdf.columns:
+            out["date"] = _parse_dates(sdf[s_date]).values
+        else:
+            out["date"] = pd.NaT
+        # drop rows with no price (blank spill tail / ticker-only A2 row)
+        out = out[out["close"].notna()].reset_index(drop=True)
+        if out.empty:
+            continue
+        # If dates are all missing/blank, reconstruct from row order.
+        if pd.Series(out["date"]).notna().sum() == 0:
+            out["date"] = _reconstruct_dates(len(out)).values
+            date_reconstructed = True
+        out["ticker"] = tkr_val
+        frames.append(out[["ticker", "date", "close", "volume"]])
+
+    # Require it to actually look like a multi-ticker spill workbook.
+    if sheet_count < 1 or not frames:
+        return None
+    tidy = pd.concat(frames, ignore_index=True)
+    tidy = tidy.dropna(subset=["date"])
+    tidy = tidy[tidy["ticker"].astype(str).str.lower() != "nan"]
+    tidy = tidy.sort_values(["ticker", "date"]).reset_index(drop=True)
+    report = build_quality_report(tidy, factset_errs)
+    report["date_reconstructed"] = bool(date_reconstructed)
+    report["multisheet_spill"] = True
+    report["sheets_read"] = int(sheet_count)
+    return tidy, report
+
+
+def _reconstruct_dates(n: int) -> pd.Series:
+    """Descending business days from today for n rows (row 0 = latest)."""
+    if n <= 0:
+        return pd.Series([], dtype="datetime64[ns]")
+    cal = pd.bdate_range(end=pd.Timestamp.today().normalize(), periods=n)
+    # row 0 = most recent -> cal[-1]; row k -> cal[-1-k]
+    return pd.Series([cal[-1 - k] for k in range(n)])
+
+
 def parse_prices(content: bytes, filename: str = "") -> Tuple[pd.DataFrame, Dict[str, Any]]:
-    """Parse price data. Supports tidy (ticker,date,close,volume) or wide.
+    """Parse price data. Supports tidy (ticker,date,close,volume), wide, OR a
+    multi-sheet spill workbook (one per-ticker sheet each, A2=ticker, B/C/D
+    spilled down).
 
     Returns (tidy_df, quality_report). tidy columns: ticker, date, close, volume
     """
+    # Multi-sheet spill workbook: each ticker on its OWN sheet. Detect and
+    # concatenate ALL ticker sheets into one tidy frame before normal parsing.
+    ms = _read_multisheet_spill(content, filename)
+    if ms is not None:
+        return ms
+
     raw = _read_any(content, filename)
     df = _norm_cols(raw)
     cols = list(df.columns)

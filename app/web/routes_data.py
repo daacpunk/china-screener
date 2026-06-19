@@ -60,11 +60,22 @@ def data_page(request: Request):
 
 @router.post("/data/upload")
 async def data_upload(file: UploadFile = File(...), note: str = Form("")):
+    from urllib.parse import quote
     content = await file.read()
-    tidy, report = di.parse_prices(content, file.filename)
+    try:
+        tidy, report = di.parse_prices(content, file.filename)
+    except Exception as e:  # noqa: BLE001 — never 500 on a bad upload
+        msg = f"Could not parse the price file: {e}"
+        return RedirectResponse(f"/data?err={quote(msg[:300])}", status_code=303)
+    if tidy is None or tidy.empty:
+        msg = ("No price rows were read from the file. If this is a spill workbook, "
+               "make sure you ran the ActivateSpills macro so the formulas filled "
+               "in, and that each ticker sheet has close values.")
+        return RedirectResponse(f"/data?err={quote(msg[:300])}", status_code=303)
     ss.add_snapshot(tidy.to_csv(index=False), quality_json=json.dumps(report),
                     filename=file.filename or "prices.csv", note=note, make_active=True)
-    return RedirectResponse("/data", status_code=303)
+    n = int(report.get("n_tickers", 0))
+    return RedirectResponse(f"/data?msg={quote(f'Loaded {n} tickers, {len(tidy)} rows.')}", status_code=303)
 
 
 @router.post("/data/activate")
