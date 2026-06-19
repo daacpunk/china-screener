@@ -391,7 +391,33 @@ def build_formula_workbook(
 
     bio = io.BytesIO()
     wb.save(bio)
-    return bio.getvalue()
+    return _strip_empty_formula_values(bio.getvalue())
+
+
+def _strip_empty_formula_values(xlsx_bytes: bytes) -> bytes:
+    """Remove empty cached-value elements (``<v/>``) that openpyxl writes after
+    every formula cell.
+
+    openpyxl emits ``<f>FORMULA</f><v/>`` for formula cells. An empty-but-present
+    cached value on a formula that references an add-in function not yet loaded
+    (``FDS``) makes Excel report 'We found a problem with some content...' and
+    offer to repair on open. Stripping the empty ``<v/>`` yields a clean
+    ``<f>FORMULA</f>`` cell that Excel opens without complaint and recalculates
+    once the FactSet add-in is present. The XML stays well-formed.
+    """
+    import zipfile
+
+    zin = zipfile.ZipFile(io.BytesIO(xlsx_bytes))
+    out = io.BytesIO()
+    with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as zout:
+        for item in zin.infolist():
+            data = zin.read(item.filename)
+            if item.filename.startswith("xl/worksheets/") and item.filename.endswith(".xml"):
+                txt = data.decode("utf-8")
+                txt = txt.replace("</f><v/>", "</f>").replace("</f><v />", "</f>")
+                data = txt.encode("utf-8")
+            zout.writestr(item, data)
+    return out.getvalue()
 
 
 def _safe_sheet_name(name: str) -> str:

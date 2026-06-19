@@ -232,3 +232,21 @@ def test_min_required_bars_defaults_and_floor():
     big = {"vol_window": 120, "horizon_b_start": 21, "macd_slow": 26, "macd_signal": 9,
            "rsi_length": 14, "min_bars": 60, "sma_length": 20}
     assert fg.min_required_bars(big) > fg.min_required_bars(None)
+
+
+def test_workbook_has_no_empty_cached_value_elements():
+    # Excel flags formula cells that carry an empty <v/> cached value (repair
+    # prompt). Generated workbooks must not contain any.
+    import zipfile
+    for method, layout in [("A", "per_ticker"), ("A", "stacked"), ("B", "per_ticker")]:
+        data = fg.build_formula_workbook(["9988-HK", "BD5CMC"], DICT, method=method,
+                                         layout=layout, lookback=8)
+        z = zipfile.ZipFile(io.BytesIO(data))
+        for n in z.namelist():
+            if n.startswith("xl/worksheets/") and n.endswith(".xml"):
+                xml = z.read(n).decode("utf-8")
+                assert "</f><v/>" not in xml and "</f><v />" not in xml, (method, layout, n)
+        # still reopenable + formula intact
+        wb = openpyxl.load_workbook(io.BytesIO(data))
+        sheet = "AllTickers" if layout == "stacked" else "9988-HK"
+        assert any("FDS(" in str(c.value) for row in wb[sheet].iter_rows() for c in row)
