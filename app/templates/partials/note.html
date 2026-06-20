@@ -15,7 +15,7 @@
 <div class="note info" style="font-size:12px">{{ note.notice }}</div>
 {% endif %}
 
-{% macro stag(s, ed) %}{% if s=='event' %}<span class="tag event">event{% if ed %} {{ ed }}{% endif %}</span>{% elif s=='event+llm' %}<span class="tag event">event+web{% if ed %} {{ ed }}{% endif %}</span>{% elif s=='llm' %}<span class="tag sector">web/LLM</span>{% else %}—{% endif %}{% endmacro %}
+{% macro stag(s, ed) %}{% if s=='event' %}<span class="tag event">event{% if ed %} {{ ed }}{% endif %}</span>{% elif s=='event+llm' %}<span class="tag event">event+web{% if ed %} {{ ed }}{% endif %}</span>{% elif s=='web-event' %}<span class="tag event">web-event</span>{% elif s=='llm' %}<span class="tag sector">web/LLM</span>{% else %}—{% endif %}{% endmacro %}
 
 {% if note.candidates %}
 <h3>Selected candidates</h3>
@@ -38,6 +38,7 @@
   {% endfor %}
   </tbody>
 </table></div>
+<div class="muted" style="margin-top:6px;font-size:11px">Source: <b>event</b> = universe corporate-event flag · <b>event+web</b> = event flag confirmed/colored by web · <b>web-event</b> = web found a concrete mechanical event (upgraded from needs-data) · <b>web/LLM</b> = model triage only.</div>
 {% else %}
 <div class="empty">No idiosyncratic candidates under current settings.</div>
 {% endif %}

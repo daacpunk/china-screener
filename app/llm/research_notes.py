@@ -7,10 +7,59 @@ logged via the same best-effort _log_usage pattern.
 """
 from __future__ import annotations
 
+import re
 from typing import Any, Dict, List, Optional
 
 from .base import LLMProvider
 from .prompts import _METHODOLOGY, _row_line
+
+
+# Concrete mechanical-event phrases. If web-grounded triage describes one of
+# these in its rationale, the move is a tradeable mechanical/technical
+# dislocation by construction — even when the cautious LLM still labels it
+# NEEDS_DATA. Order matters only for which matched phrase is reported first;
+# matching is case-insensitive with loose hyphen/space/plural tolerance.
+_MECHANICAL_EVENT_PATTERNS: List[str] = [
+    # Dividends / distributions
+    "ex-dividend", "ex dividend", "ex-div", "ex-date", "ex date", "goes ex",
+    "dividend record date", "dividend payment", "special dividend",
+    "scrip dividend", "scrip",
+    # Index / passive flow
+    "index inclusion", "index exclusion", "index rebalance", "rebalancing",
+    "rebalance", "added to the index", "added to index", "removed from the index",
+    "removed from index", "index reconstitution", "float adjustment",
+    "weighting change", "msci rebalance", "ftse", "msci", "sse 180",
+    # Supply / forced flow
+    "share placement", "placement", "placing", "block trade", "block sale",
+    "secondary offering", "follow-on", "forced selling", "forced flow",
+    "margin call", "liquidation", "fund redemption", "rights issue",
+    "share buyback", "buyback", "repurchase", "tender",
+    # Corporate structure / capital actions
+    "spin-off", "spinoff", "spin off", "capital return", "share consolidation",
+    "stock split", "lock-up expiry", "lockup expiry", "lock up expiry",
+]
+
+
+def detect_mechanical_event(text: Optional[str]) -> Optional[str]:
+    """Scan triage rationale for a concrete mechanical-event phrase.
+
+    Returns the first matched phrase (for provenance) or None. Matching is
+    case-insensitive and tolerant of hyphen/space variants and simple plurals.
+    Safe on None/empty input.
+    """
+    if not text:
+        return None
+    hay = str(text).lower()
+    for phrase in _MECHANICAL_EVENT_PATTERNS:
+        # Treat hyphens and spaces in the phrase as interchangeable whitespace/
+        # hyphen, and allow an optional trailing 's' for simple plurals.
+        sep = r"[\s\-]+"
+        parts = re.split(r"[\s\-]+", phrase)
+        body = sep.join(re.escape(p) for p in parts if p)
+        pat = r"(?<![a-z0-9])" + body + r"s?(?![a-z0-9])"
+        if re.search(pat, hay):
+            return phrase
+    return None
 
 
 def _log_usage(provider: Optional[LLMProvider], section: str, ok: bool, note: str = "") -> None:
@@ -349,6 +398,25 @@ def generate_note(
                         verdict = llm_verdict
                         rationale = llm_rationale
                         source = "llm"
+                        # Option B: a name with NO universe event_flag, rescued
+                        # by what the WEB found. If web lookup actually ran for
+                        # this triage and the cautious model returned NEEDS_DATA
+                        # while its rationale describes a concrete mechanical
+                        # event, upgrade to MECHANICAL_DISLOCATION. BROKEN_STORY
+                        # is a real reject and is never upgraded.
+                        if (
+                            with_news and web_capable
+                            and llm_verdict == "NEEDS_DATA"
+                        ):
+                            matched = detect_mechanical_event(llm_rationale)
+                            if matched:
+                                verdict = "MECHANICAL_DISLOCATION"
+                                source = "web-event"
+                                rationale = (
+                                    f"Web-detected mechanical event ({matched}); "
+                                    "upgraded from NEEDS_DATA. "
+                                    + (llm_rationale or "")
+                                ).strip()
                     _log_usage(provider, "sidebar", ok=True, note=f"triage {r.get('ticker')}")
                 except Exception as e:  # noqa: BLE001
                     errors.append(f"triage {r.get('ticker')}: {e}")

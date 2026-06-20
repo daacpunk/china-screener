@@ -236,3 +236,105 @@ def test_non_event_no_web_needs_data_stays_pass():
     assert verdicts["AAA"] == "NEEDS_DATA"
     sources = {c["ticker"]: c["source"] for c in out["candidates"]}
     assert sources["AAA"] == "llm"
+
+
+# --- Option B: web-detected mechanical event upgrades NEEDS_DATA ----------
+
+class WebExDivProvider(LLMProvider):
+    """Web-capable fake: describes an ex-dividend yet cautiously votes NEEDS_DATA."""
+    name = "perplexity"
+
+    def __init__(self, *a, **k):
+        super().__init__("fake-key", "fake-model")
+
+    @property
+    def available(self):
+        return True
+
+    def complete(self, prompt, **opts):
+        return (
+            "The stock went ex-dividend on June 12 [1][7], which mechanically "
+            "lowers the price; fundamentals appear intact but I cannot fully "
+            "confirm the magnitude.\n"
+            "VERDICT: NEEDS_DATA"
+        )
+
+
+class WebBrokenDivProvider(LLMProvider):
+    """Web-capable fake: BROKEN_STORY verdict whose text mentions 'dividend'."""
+    name = "perplexity"
+
+    def __init__(self, *a, **k):
+        super().__init__("fake-key", "fake-model")
+
+    @property
+    def available(self):
+        return True
+
+    def complete(self, prompt, **opts):
+        return (
+            "Management cut the dividend amid a guidance reduction and structural "
+            "demand decline — this is a deteriorating story.\n"
+            "VERDICT: BROKEN_STORY"
+        )
+
+
+def test_detect_mechanical_event_matches_representative_strings():
+    assert rn.detect_mechanical_event("went ex-dividend on June 12")
+    assert rn.detect_mechanical_event("part of the MSCI index rebalance")
+    assert rn.detect_mechanical_event("a large share placement was announced")
+    assert rn.detect_mechanical_event("driven by a block trade overnight")
+    assert rn.detect_mechanical_event("the spin-off completed last week")
+
+
+def test_detect_mechanical_event_none_for_generic_and_empty():
+    assert rn.detect_mechanical_event("the stock fell for unclear reasons") is None
+    assert rn.detect_mechanical_event("") is None
+    assert rn.detect_mechanical_event(None) is None
+
+
+def test_web_needs_data_with_mechanical_event_upgrades_to_mechanical():
+    out = rn.generate_note(WebExDivProvider(), _master(OS), OS, OB, params={},
+                           max_longs=1, max_shorts=0, with_news=True,
+                           asof="2026-06-19")
+    c = {x["ticker"]: x for x in out["candidates"]}["BBB"]
+    assert c["verdict"] == "MECHANICAL_DISLOCATION"
+    assert c["source"] == "web-event"
+
+
+def test_web_off_needs_data_with_event_text_stays_needs_data():
+    # Same rationale text, but with_news=False -> honest NEEDS_DATA, no upgrade.
+    out = rn.generate_note(WebExDivProvider(), _master(OS), OS, OB, params={},
+                           max_longs=1, max_shorts=0, with_news=False,
+                           asof="2026-06-19")
+    c = {x["ticker"]: x for x in out["candidates"]}["BBB"]
+    assert c["verdict"] == "NEEDS_DATA"
+    assert c["source"] == "llm"
+
+
+def test_non_web_provider_needs_data_with_event_text_no_upgrade():
+    # Provider not web-capable even with with_news -> no upgrade.
+    out = rn.generate_note(NeedsDataProvider(), _master(OS), OS, OB, params={},
+                           max_longs=1, max_shorts=0, with_news=True,
+                           asof="2026-06-19")
+    c = {x["ticker"]: x for x in out["candidates"]}["BBB"]
+    assert c["verdict"] == "NEEDS_DATA"
+    assert c["source"] == "llm"
+
+
+def test_web_needs_data_no_mechanical_keywords_stays_needs_data():
+    out = rn.generate_note(FakePerplexity(), _master(OS), OS, OB, params={},
+                           max_longs=1, max_shorts=0, with_news=True,
+                           asof="2026-06-19")
+    c = {x["ticker"]: x for x in out["candidates"]}["BBB"]
+    assert c["verdict"] == "NEEDS_DATA"
+    assert c["source"] == "llm"
+
+
+def test_web_broken_story_with_dividend_text_never_upgraded():
+    out = rn.generate_note(WebBrokenDivProvider(), _master(OS), OS, OB, params={},
+                           max_longs=1, max_shorts=0, with_news=True,
+                           asof="2026-06-19")
+    c = {x["ticker"]: x for x in out["candidates"]}["BBB"]
+    assert c["verdict"] == "BROKEN_STORY"
+    assert c["source"] == "llm"
