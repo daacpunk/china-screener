@@ -61,8 +61,7 @@ CREATE TABLE IF NOT EXISTS dictionaries (
     json_text TEXT NOT NULL,
     md_text TEXT,
     created_at TEXT,
-    is_active INTEGER DEFAULT 0,
-    is_demo INTEGER DEFAULT 0
+    is_active INTEGER DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS universes (
@@ -115,11 +114,6 @@ def init_db(db_path: Optional[str] = None) -> None:
     conn = get_conn(db_path)
     try:
         conn.executescript(SCHEMA)
-        # Safe migration for pre-existing DBs created before is_demo existed.
-        try:
-            conn.execute("ALTER TABLE dictionaries ADD COLUMN is_demo INTEGER DEFAULT 0")
-        except sqlite3.OperationalError:
-            pass  # column already exists
         conn.commit()
     finally:
         conn.close()

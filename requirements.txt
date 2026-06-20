@@ -18,6 +18,11 @@ numpy>=1.26,<3
 # File parsing / docs
 openpyxl>=3.1,<4
 markdown>=3.6,<4
+# Note exporters — pip-only, no system libs (Nixpacks-safe):
+# python-docx builds Word files natively; xhtml2pdf (reportlab-based) renders
+# the styled HTML to PDF without cairo/pango. Do NOT switch to weasyprint.
+python-docx>=1.1,<2
+xhtml2pdf>=0.2.11,<0.3
 
 # Secrets
 cryptography>=42,<50

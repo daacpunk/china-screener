@@ -1,4 +1,4 @@
-"""z-score math, non-overlapping window logic, peer-divergence tagging, demo flow."""
+"""z-score math, non-overlapping window logic, peer-divergence tagging, screen flow."""
 import numpy as np
 import pandas as pd
 
@@ -98,16 +98,13 @@ def test_min_bars_flagging():
     assert "AAA" in skipped["ticker"].tolist()
 
 
-def test_demo_flow_non_empty_lists():
-    """Acceptance #3: demo data -> both playbooks non-empty and ranked by |z|."""
-    import os
-    here = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    prices = pd.read_csv(os.path.join(here, "sample_data", "prices_sample.csv"))
-    uni = pd.read_csv(os.path.join(here, "sample_data", "universe_sample.csv"))
-    uni["below_floor"] = uni["20D_ADV_USD"] < 10_000_000
+def test_screen_flow_non_empty_lists():
+    """Synthetic flow: an oversold crash + overbought rally -> both playbooks
+    non-empty and ranked (scored mode by score desc; master by |z| desc)."""
+    uni, prices = _synthetic_universe_and_prices()
     res = se.run_screen(prices, uni, se.DEFAULT_PARAMS)
-    assert len(res["oversold"]) > 0, "oversold-reversion list must be non-empty in demo"
-    assert len(res["overbought"]) > 0, "overbought-fade list must be non-empty in demo"
+    assert len(res["oversold"]) > 0, "oversold-reversion list must be non-empty"
+    assert len(res["overbought"]) > 0, "overbought-fade list must be non-empty"
     # scored mode (default): playbooks ranked by reversion_score / fade_score desc
     os_scores = res["oversold"]["reversion_score"].tolist()
     assert os_scores == sorted(os_scores, reverse=True)

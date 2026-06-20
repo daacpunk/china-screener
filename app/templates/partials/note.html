@@ -43,6 +43,10 @@
 
 {% if note.id %}
 <div class="flex" style="margin-top:10px">
-  <a class="btn ghost" href="/results/note/export?id={{ note.id }}">Download .md</a>
+  <span class="muted" style="align-self:center">Download:</span>
+  <a class="btn ghost" href="/analysis/note/export?id={{ note.id }}&fmt=md">MD</a>
+  <a class="btn ghost" href="/analysis/note/export?id={{ note.id }}&fmt=html">HTML</a>
+  <a class="btn ghost" href="/analysis/note/export?id={{ note.id }}&fmt=docx">DOCX</a>
+  <a class="btn ghost" href="/analysis/note/export?id={{ note.id }}&fmt=pdf">PDF</a>
 </div>
 {% endif %}

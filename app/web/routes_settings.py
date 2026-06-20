@@ -5,7 +5,6 @@ import markdown as md
 from fastapi import APIRouter, File, Form, Request, UploadFile
 from fastapi.responses import HTMLResponse, RedirectResponse
 
-from .. import demo as demo_mod
 from .. import settings_store as ss
 from ..llm.models import PROVIDER_MODELS
 from ..llm.registry import build_provider
@@ -53,13 +52,9 @@ async def settings_dictionary(json_file: UploadFile = File(...),
         if md_file is not None and md_file.filename:
             md_text = (await md_file.read()).decode("utf-8")
         result = ss.add_dictionary(json_text, md_text, filename=json_file.filename or "dict.json",
-                                   note=note, make_active=True, is_demo=False)
-        # A real user upload voids the bundled sample/demo dictionary.
-        voided = ss.void_demo_dictionaries()
+                                   note=note, make_active=True)
         diff = result["diff"]
         msg = f"Dictionary v{result['id']} active. Added: {diff['added']} Removed: {diff['removed']}"
-        if voided:
-            msg += f". Voided {voided} demo dictionary row(s)."
         return RedirectResponse(f"/settings?msg={msg}", status_code=303)
     except ValueError as e:
         return RedirectResponse(f"/settings?err=Dictionary rejected: {e}", status_code=303)
@@ -161,13 +156,6 @@ async def settings_params(request: Request):
 def settings_params_reset():
     ss.reset_screen_params()
     return RedirectResponse("/settings?msg=Parameters reset to defaults", status_code=303)
-
-
-# ---- demo data ----
-@router.post("/settings/demo")
-def settings_demo():
-    summary = demo_mod.load_demo_data()
-    return RedirectResponse(f"/settings?msg=Demo data loaded: {summary}", status_code=303)
 
 
 # ---- 5d AI usage & cost audit ----

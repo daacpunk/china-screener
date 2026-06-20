@@ -256,7 +256,7 @@ def validate_dictionary(json_text: str) -> Dict[str, Any]:
 
 def add_dictionary(
     json_text: str, md_text: str = "", filename: str = "", note: str = "",
-    make_active: bool = True, is_demo: bool = False, db_path: Optional[str] = None,
+    make_active: bool = True, db_path: Optional[str] = None,
 ) -> Dict[str, Any]:
     parsed = validate_dictionary(json_text)  # raises on bad
     prev = get_active_dictionary(db_path)
@@ -265,9 +265,9 @@ def add_dictionary(
         if make_active:
             conn.execute("UPDATE dictionaries SET is_active=0")
         cur = conn.execute(
-            "INSERT INTO dictionaries(filename,note,json_text,md_text,created_at,is_active,is_demo) "
-            "VALUES(?,?,?,?,?,?,?)",
-            (filename, note, json_text, md_text, _now(), int(make_active), int(is_demo)),
+            "INSERT INTO dictionaries(filename,note,json_text,md_text,created_at,is_active) "
+            "VALUES(?,?,?,?,?,?)",
+            (filename, note, json_text, md_text, _now(), int(make_active)),
         )
         conn.commit()
         new_id = cur.lastrowid
@@ -275,23 +275,6 @@ def add_dictionary(
         conn.close()
     diff = _dict_diff(prev["data"] if prev else None, parsed)
     return {"id": new_id, "diff": diff}
-
-
-def void_demo_dictionaries(db_path: Optional[str] = None) -> int:
-    """Delete all bundled sample/demo dictionary rows (is_demo=1).
-
-    Called when a user uploads their own dictionary so the demo dictionary is
-    no longer selectable/active and vanishes from the version list. Only ever
-    touches demo rows — user uploads (is_demo=0) are never removed.
-    Returns the number of demo rows removed.
-    """
-    conn = get_conn(db_path)
-    try:
-        cur = conn.execute("DELETE FROM dictionaries WHERE is_demo=1")
-        conn.commit()
-        return cur.rowcount
-    finally:
-        conn.close()
 
 
 def _dict_diff(old: Optional[dict], new: dict) -> Dict[str, List[str]]:
@@ -380,12 +363,47 @@ def list_universes(db_path: Optional[str] = None) -> List[Dict[str, Any]]:
 
 
 def get_active_universe(db_path: Optional[str] = None) -> Optional[Dict[str, Any]]:
+    """Active universe = the version flagged is_active (the user's explicit pin,
+    or the most recent upload, which is auto-activated on add). If no row is
+    flagged active but versions exist (e.g. a legacy/migrated DB), fall back to
+    the newest version so the latest upload is always the default."""
     conn = get_conn(db_path)
     try:
         row = conn.execute(
             "SELECT * FROM universes WHERE is_active=1 ORDER BY id DESC LIMIT 1"
         ).fetchone()
+        if row is None:
+            row = conn.execute(
+                "SELECT * FROM universes ORDER BY id DESC LIMIT 1"
+            ).fetchone()
         return dict(row) if row else None
+    finally:
+        conn.close()
+
+
+def ensure_active_universe(db_path: Optional[str] = None) -> Optional[int]:
+    """Guarantee exactly the newest universe is active when none is pinned.
+
+    Called on startup. If versions exist but none is flagged is_active, promote
+    the most recent one so the latest uploaded universe is the persisted default
+    after a restart/redeploy. Returns the active universe id (or None if empty).
+    """
+    conn = get_conn(db_path)
+    try:
+        active = conn.execute(
+            "SELECT id FROM universes WHERE is_active=1 ORDER BY id DESC LIMIT 1"
+        ).fetchone()
+        if active is not None:
+            return int(active["id"])
+        newest = conn.execute(
+            "SELECT id FROM universes ORDER BY id DESC LIMIT 1"
+        ).fetchone()
+        if newest is None:
+            return None
+        conn.execute("UPDATE universes SET is_active=0")
+        conn.execute("UPDATE universes SET is_active=1 WHERE id=?", (newest["id"],))
+        conn.commit()
+        return int(newest["id"])
     finally:
         conn.close()
 

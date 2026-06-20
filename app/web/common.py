@@ -19,8 +19,9 @@ TABS = [
     {"id": "universe", "label": "Universe", "href": "/universe", "n": 1},
     {"id": "formula", "label": "Formula Generator", "href": "/formula", "n": 2},
     {"id": "data", "label": "Data & Indicators", "href": "/data", "n": 3},
-    {"id": "results", "label": "Results", "href": "/results", "n": 4},
-    {"id": "settings", "label": "Settings", "href": "/settings", "n": 5},
+    {"id": "results", "label": "Results Data", "href": "/results", "n": 4},
+    {"id": "analysis", "label": "Analysis", "href": "/analysis", "n": 5},
+    {"id": "settings", "label": "Settings", "href": "/settings", "n": 6},
 ]
 
 

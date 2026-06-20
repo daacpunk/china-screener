@@ -103,7 +103,7 @@ def data_run(request: Request):
     if res.get("_empty"):
         return HTMLResponse(
             "<div class='note error'>No active universe or price snapshot. "
-            "Load sample/demo data in Settings, or upload data above.</div>")
+            "Upload your universe and FactSet data first.</div>")
     # Invalidate the cached Results sidebar synthesis for this snapshot so it
     # is regenerated on the next Results load (an explicit Run Screen).
     from .routes_results import _SIDEBAR_CACHE

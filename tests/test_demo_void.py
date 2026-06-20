@@ -1,40 +1,35 @@
-"""CHANGE 2 — uploading a user dictionary voids the bundled demo dictionary."""
-import json
+"""CHANGE 1 — demo seeding removed: empty DB yields clean empty states.
 
-from app import demo as demo_mod
+The bundled demo loader and sample universe/prices were removed. A fresh DB must
+expose no active dictionary/universe/snapshot and the screen must return an
+empty (non-crashing) result.
+"""
+import pandas as pd
+
 from app import settings_store as ss
-
-USER_DICT = json.dumps({"formulas": {
-    "user_metric": {"fql_template": "P_USER({start})"},
-}})
+from app.web import common
 
 
-def test_user_upload_voids_demo_dictionary(temp_db):
-    # Seed the demo dictionary (tagged is_demo=True via demo loader).
-    demo_mod.load_demo_data(temp_db)
-    versions = ss.list_dictionaries(temp_db)
-    assert len(versions) >= 1
-    demo_active = ss.get_active_dictionary(temp_db)
-    assert demo_active is not None
-
-    # User uploads their own dictionary (is_demo defaults False), then void demo.
-    ss.add_dictionary(USER_DICT, "# user wiki", filename="user.json",
-                      note="real upload", make_active=True, is_demo=False, db_path=temp_db)
-    removed = ss.void_demo_dictionaries(temp_db)
-    assert removed >= 1
-
-    # Demo rows gone; only the user's row remains and is active.
-    versions = ss.list_dictionaries(temp_db)
-    assert all(v["filename"] != "dictionary.json" for v in versions)
-    active = ss.get_active_dictionary(temp_db)
-    assert active["filename"] == "user.json"
-    assert "user_metric" in active["data"]["formulas"]
-    assert sum(v["is_active"] for v in versions) == 1
+def test_empty_db_has_no_active_assets(temp_db):
+    assert ss.get_active_dictionary(temp_db) is None
+    assert ss.get_active_universe(temp_db) is None
+    assert ss.get_active_snapshot(temp_db) is None
+    assert ss.list_universes(temp_db) == []
 
 
-def test_void_never_touches_user_rows(temp_db):
-    ss.add_dictionary(USER_DICT, filename="u1.json", is_demo=False, db_path=temp_db)
-    ss.add_dictionary(USER_DICT, filename="u2.json", is_demo=False, db_path=temp_db)
-    removed = ss.void_demo_dictionaries(temp_db)
-    assert removed == 0
-    assert len(ss.list_dictionaries(temp_db)) == 2
+def test_empty_db_screen_is_empty_not_crash(temp_db):
+    res = common.run_active_screen(temp_db)
+    assert res.get("_empty") is True
+    assert isinstance(res["master"], pd.DataFrame)
+    assert res["master"].empty
+
+
+def test_no_demo_module():
+    """app.demo must no longer exist."""
+    import importlib
+
+    try:
+        importlib.import_module("app.demo")
+    except ModuleNotFoundError:
+        return
+    raise AssertionError("app.demo should have been removed")

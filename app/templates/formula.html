@@ -17,7 +17,7 @@ Indicators are <b>not</b> pulled here — they are computed in Tab 3.</p>
 The generator uses the universe's Symbol <b>as-is</b> — FactSet resolves SEDOL / exchange-ticker identifiers natively, so A-share identifiers like <span class="mono">BD5CMC</span> are not mangled.</p>
 
 {% if not active_dict %}
-<div class="note error">No active FactSet dictionary. Upload one in <a href="/settings">Settings</a> or load demo data.</div>
+<div class="note error">No active FactSet dictionary. Upload one in <a href="/settings">Settings</a>.</div>
 {% else %}
 <div class="note info">Active dictionary: <b>{{ active_dict.filename }}</b> (v{{ active_dict.id }}) · {{ metric_keys|length }} metrics · {{ tickers|length }} universe tickers.</div>
 <div class="note">This generator reflects all {{ metric_keys|length }} metrics from your active dictionary: <span class="mono">{{ metric_keys|join(', ') }}</span>.</div>

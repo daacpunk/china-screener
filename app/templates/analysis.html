@@ -1,0 +1,81 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>Analysis</h1>
+<p class="subtitle">Optional, key-gated AI synthesis and the research-note generator. Both run the same active screen as <a href="/results">Results Data</a>.</p>
+
+{% if empty %}
+<div class="empty">
+  <p>No active universe or price snapshot yet.</p>
+  <p class="help">Upload your FactSet universe in <a href="/universe">Universe</a> and your price snapshot in <a href="/data">Data &amp; Indicators</a>, then return here to synthesize and generate notes.</p>
+</div>
+{% else %}
+
+{% if not any_key %}
+<div class="note info">No enabled provider with a key. Add one in <a href="/settings">Settings</a> to enable AI synthesis and written research notes. Candidate selection still works without a key.</div>
+{% endif %}
+
+<div class="results-layout">
+<div class="results-main">
+
+<h2>AI analysis <span class="muted">(optional, key-gated)</span></h2>
+<div class="card">
+  {% if any_key %}
+  <form hx-post="/analysis/analyze" hx-target="#analysis-out" hx-swap="innerHTML" hx-indicator="#ai-spin">
+    <div class="row">
+      <div><label>Provider</label><select name="provider">
+        {% for p in providers %}{% if p.enabled and p.has_key %}<option value="{{ p.provider }}">{{ p.provider }} ({{ p.model }})</option>{% endif %}{% endfor %}
+      </select></div>
+      <button class="btn" type="submit">Analyze / Synthesize</button>
+    </div>
+  </form>
+  <div id="ai-spin" class="htmx-indicator muted">Contacting provider…</div>
+  <div id="analysis-out"></div>
+  {% else %}
+  <div class="note info">AI analysis is disabled — no enabled provider with a key. Add one in <a href="/settings">Settings</a>. The screen works fully without it.</div>
+  {% endif %}
+</div>
+
+<h2>Research note <span class="muted">(select → catalyst triage → structured note)</span></h2>
+<div class="card">
+  <form hx-post="/analysis/note" hx-target="#note-out" hx-swap="innerHTML" hx-indicator="#note-spin">
+    <div class="row">
+      {% if any_key %}
+      <div><label>Provider</label><select name="provider">
+        <option value="">(Analysis default)</option>
+        {% for p in providers %}{% if p.enabled and p.has_key %}<option value="{{ p.provider }}">{{ p.provider }} ({{ p.model }})</option>{% endif %}{% endfor %}
+      </select></div>
+      {% endif %}
+      <div><label>Max longs</label><input type="number" name="max_longs" value="2" min="0" max="10" style="width:80px"></div>
+      <div><label>Max shorts</label><input type="number" name="max_shorts" value="2" min="0" max="10" style="width:80px"></div>
+    </div>
+    <div class="flex" style="margin-top:10px">
+      <label class="flex" style="margin:0"><input type="checkbox" name="idio_only" value="1" style="width:auto" checked> Idiosyncratic only</label>
+      <button class="btn" type="submit">Generate research note</button>
+      <button class="btn ghost" type="button" hx-get="/analysis/notes" hx-target="#note-out" hx-swap="innerHTML">Past notes</button>
+    </div>
+  </form>
+  <div id="note-spin" class="htmx-indicator muted">Selecting candidates &amp; triaging…</div>
+  <div id="note-out"></div>
+  {% if not any_key %}<div class="note info" style="margin-top:8px">Candidate selection works without a key; add a provider in <a href="/settings">Settings</a> to generate the written note.</div>{% endif %}
+</div>
+</div>{# /results-main #}
+
+<aside class="results-sidebar">
+  <div class="sidebar-card">
+    <h3>AI synthesis</h3>
+    <p class="help">Auto-generated explanation of the current results. Uses the <span class="mono">sidebar</span> section provider.</p>
+    {% if sidebar and sidebar.enabled and sidebar.html %}
+      <div class="sidebar-body md">{{ sidebar.html|safe }}</div>
+      {% if sidebar.provider %}<div class="muted" style="margin-top:8px;font-size:12px">via {{ sidebar.provider }} · qualitative only</div>{% endif %}
+    {% elif sidebar and sidebar.enabled and sidebar.error %}
+      <div class="note info">{{ sidebar.error }}</div>
+    {% elif sidebar and not sidebar.enabled %}
+      <div class="note info">{{ sidebar.error or 'Set an AI key in Settings to enable synthesis.' }} <a href="/settings">Settings →</a></div>
+    {% else %}
+      <div class="note info">Run a screen to populate this synthesis.</div>
+    {% endif %}
+  </div>
+</aside>
+</div>{# /results-layout #}
+{% endif %}
+{% endblock %}

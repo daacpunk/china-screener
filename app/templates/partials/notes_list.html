@@ -8,7 +8,12 @@
       <td class="muted">{{ n.created_at }}</td>
       <td>{{ n.asof or '—' }}</td>
       <td>{{ n.provider or '—' }}</td>
-      <td><a class="btn ghost" href="/results/note/export?id={{ n.id }}">Download .md</a></td>
+      <td>
+        <a class="btn ghost" href="/analysis/note/export?id={{ n.id }}&fmt=md">MD</a>
+        <a class="btn ghost" href="/analysis/note/export?id={{ n.id }}&fmt=html">HTML</a>
+        <a class="btn ghost" href="/analysis/note/export?id={{ n.id }}&fmt=docx">DOCX</a>
+        <a class="btn ghost" href="/analysis/note/export?id={{ n.id }}&fmt=pdf">PDF</a>
+      </td>
     </tr>
   {% endfor %}
   </tbody>

@@ -6,12 +6,6 @@
 {% if msg %}<div class="note ok">{{ msg }}</div>{% endif %}
 {% if err %}<div class="note error">{{ err }}</div>{% endif %}
 
-<div class="card" style="border-color:var(--accent)">
-  <h3>▶ Load sample/demo data (synthetic)</h3>
-  <p class="help">Seeds a <b>synthetic test dataset</b> (dictionary + universe + 250-day price series) so Run Screen returns populated tables immediately. This is fabricated test data, <b>not market data</b> — for real screening, upload your own FactSet dictionary, universe, and price snapshot. A fresh deploy starts empty; nothing is auto-seeded.</p>
-  <form method="post" action="/settings/demo"><button class="btn" type="submit">Load sample/demo data (synthetic)</button></form>
-</div>
-
 <h2>5a · FactSet dictionary management</h2>
 <div class="grid grid-2">
   <div class="card">
