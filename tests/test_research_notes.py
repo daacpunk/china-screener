@@ -24,6 +24,26 @@ class FakeProvider(LLMProvider):
         )
 
 
+class NeedsDataProvider(LLMProvider):
+    """Always returns NEEDS_DATA — models the blanket-NEEDS_DATA failure mode."""
+    name = "fake"
+
+    def __init__(self, *a, **k):
+        super().__init__("fake-key", "fake-model")
+
+    @property
+    def available(self):
+        return True
+
+    def complete(self, prompt, **opts):
+        return "Cannot tell why it moved.\nVERDICT: NEEDS_DATA"
+
+
+class FakePerplexity(NeedsDataProvider):
+    """Web-capable fake (name=='perplexity') that still returns NEEDS_DATA."""
+    name = "perplexity"
+
+
 def _master(rows):
     return rows
 
@@ -142,3 +162,77 @@ def test_notes_store_round_trip(temp_db):
     assert got["candidates"] == cands
     assert got["council"] is None
     assert ns.get_note(99999, db_path=temp_db) is None
+
+
+# --- Option A: web-grounded catalyst lookup -------------------------------
+
+def test_catalyst_prompt_with_news_adds_web_block_and_targeting():
+    row = dict(OS[0], asof="2026-06-19")
+    p = rn.build_catalyst_prompt(row, "long", with_news=True)
+    assert "USE LIVE WEB" in p
+    assert "AAA" in p and "Alpha" in p and "2026-06-19" in p
+    # relaxed no-fabricate rule: only NEEDS_DATA after searching
+    assert "yields nothing specific" in p
+    # without with_news, no web block and the strict no-fabricate rule stays
+    p0 = rn.build_catalyst_prompt(row, "long", with_news=False)
+    assert "USE LIVE WEB" not in p0
+    assert "do NOT fabricate a catalyst" in p0
+
+
+def test_is_web_capable_true_for_perplexity_only():
+    assert rn.is_web_capable(FakePerplexity()) is True
+    assert rn.is_web_capable(FakeProvider()) is False
+    assert rn.is_web_capable(None) is False
+
+
+def test_notice_set_when_with_news_but_provider_not_web_capable():
+    out = rn.generate_note(FakeProvider(), _master(OS), OS, OB, params={},
+                           with_news=True, asof="2026-06-19")
+    assert out["notice"]
+    assert "Perplexity" in out["notice"]
+
+
+def test_no_notice_when_provider_web_capable():
+    out = rn.generate_note(FakePerplexity(), _master(OS), OS, OB, params={},
+                           with_news=True, asof="2026-06-19")
+    assert out["notice"] == ""
+
+
+# --- Option C: deterministic event tagging --------------------------------
+
+EVENT_OS = [
+    dict(OS[0], ticker="EVT", name="EventCo", event_flag=True,
+         event_date="2026-06-29"),
+]
+
+
+def test_event_flag_pretag_mechanical_even_when_llm_says_needs_data():
+    # No web -> LLM not even called for an event-flagged name; pre-tag stands.
+    out = rn.generate_note(NeedsDataProvider(), _master(EVENT_OS), EVENT_OS, [],
+                           params={}, max_longs=1, max_shorts=0, asof="2026-06-19")
+    c = {x["ticker"]: x for x in out["candidates"]}["EVT"]
+    assert c["verdict"] == "MECHANICAL_DISLOCATION"
+    assert c["source"] == "event"
+    assert c["event_date"] == "2026-06-29"
+
+
+def test_event_flag_with_web_overrides_llm_needs_data():
+    # Web on + web-capable -> LLM runs, returns NEEDS_DATA, but event biases to
+    # MECHANICAL_DISLOCATION (event-backed) rather than PASS.
+    out = rn.generate_note(FakePerplexity(), _master(EVENT_OS), EVENT_OS, [],
+                           params={}, max_longs=1, max_shorts=0,
+                           with_news=True, asof="2026-06-19")
+    c = {x["ticker"]: x for x in out["candidates"]}["EVT"]
+    assert c["verdict"] == "MECHANICAL_DISLOCATION"
+    assert c["source"] == "event+llm"
+
+
+def test_non_event_no_web_needs_data_stays_pass():
+    # No event flag, no web access, LLM says NEEDS_DATA -> honest NEEDS_DATA
+    # (note synthesis renders this as PASS); verdict is NOT mechanical.
+    out = rn.generate_note(NeedsDataProvider(), _master(OS), OS, OB, params={},
+                           max_longs=2, max_shorts=1, asof="2026-06-19")
+    verdicts = {c["ticker"]: c["verdict"] for c in out["candidates"]}
+    assert verdicts["AAA"] == "NEEDS_DATA"
+    sources = {c["ticker"]: c["source"] for c in out["candidates"]}
+    assert sources["AAA"] == "llm"

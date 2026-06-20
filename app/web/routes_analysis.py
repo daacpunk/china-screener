@@ -90,10 +90,13 @@ def analysis_page(request: Request):
         "enabled": False, "html": "", "error": "", "provider": None, "empty": True}
     meta = res.get("meta", {}) or {}
     stale = _staleness(meta)
+    note_provider = ss.get_section_provider("sidebar")
+    note_web_default = (str(note_provider).lower() == "perplexity")
     ctx = base_ctx(
         request, "analysis", empty=empty,
         providers=providers, any_key=any_key,
-        sidebar=sidebar, **stale,
+        sidebar=sidebar, note_web_default=note_web_default,
+        **stale,
     )
     return templates.TemplateResponse(request, "analysis.html", ctx)
 
@@ -112,7 +115,7 @@ def analysis_analyze(request: Request, provider: str = Form("")):
 
 
 def _generate_note(request: Request, provider: str, max_longs: int,
-                   max_shorts: int, idio_only: str) -> HTMLResponse:
+                   max_shorts: int, idio_only: str, with_news: str) -> HTMLResponse:
     res = run_active_screen()
     if res.get("_empty"):
         return HTMLResponse("<div class='note error'>No screen results — run a screen first.</div>")
@@ -128,6 +131,7 @@ def _generate_note(request: Request, provider: str, max_longs: int,
         max_longs=max(0, int(max_longs)),
         max_shorts=max(0, int(max_shorts)),
         idio_only=_truthy(idio_only),
+        with_news=_truthy(with_news),
         asof=stale["asof"],
     )
     note_id = None
@@ -141,7 +145,7 @@ def _generate_note(request: Request, provider: str, max_longs: int,
         "note": {
             "id": note_id, "html": html, "candidates": out.get("candidates") or [],
             "error": out.get("error"), "provider": out.get("provider"),
-            "asof": out.get("asof"),
+            "asof": out.get("asof"), "notice": out.get("notice"),
         },
         **stale,
     })
@@ -154,8 +158,9 @@ def analysis_note(
     max_longs: int = Form(2),
     max_shorts: int = Form(2),
     idio_only: str = Form(""),
+    with_news: str = Form(""),
 ):
-    return _generate_note(request, provider, max_longs, max_shorts, idio_only)
+    return _generate_note(request, provider, max_longs, max_shorts, idio_only, with_news)
 
 
 @router.get("/analysis/notes", response_class=HTMLResponse)
@@ -188,8 +193,9 @@ def results_note(
     max_longs: int = Form(2),
     max_shorts: int = Form(2),
     idio_only: str = Form(""),
+    with_news: str = Form(""),
 ):
-    return _generate_note(request, provider, max_longs, max_shorts, idio_only)
+    return _generate_note(request, provider, max_longs, max_shorts, idio_only, with_news)
 
 
 @router.get("/results/notes", response_class=HTMLResponse)

@@ -11,10 +11,16 @@
 <div class="note error">Some calls failed: {{ note.error }}</div>
 {% endif %}
 
+{% if note.notice %}
+<div class="note info" style="font-size:12px">{{ note.notice }}</div>
+{% endif %}
+
+{% macro stag(s, ed) %}{% if s=='event' %}<span class="tag event">event{% if ed %} {{ ed }}{% endif %}</span>{% elif s=='event+llm' %}<span class="tag event">event+web{% if ed %} {{ ed }}{% endif %}</span>{% elif s=='llm' %}<span class="tag sector">web/LLM</span>{% else %}—{% endif %}{% endmacro %}
+
 {% if note.candidates %}
 <h3>Selected candidates</h3>
 <div class="table-wrap"><table>
-  <thead><tr><th>Ticker</th><th>Name</th><th>Side</th><th>Sector</th><th>Rank z</th><th>Peer-rel z</th><th>RSI</th><th>Score</th><th>Type</th><th>Triage</th></tr></thead>
+  <thead><tr><th>Ticker</th><th>Name</th><th>Side</th><th>Sector</th><th>Rank z</th><th>Peer-rel z</th><th>RSI</th><th>Score</th><th>Type</th><th>Triage</th><th>Source</th></tr></thead>
   <tbody>
   {% for c in note.candidates %}
     <tr>
@@ -27,6 +33,7 @@
       <td>{{ '%.3f'|format(c.reversion_score) if c.side=='long' and c.reversion_score is not none else ('%.3f'|format(c.fade_score) if c.fade_score is not none else '—') }}</td>
       <td>{% if c.dislocation_type=='IDIOSYNCRATIC' %}<span class="tag idio">idiosyncratic</span>{% else %}<span class="tag sector">sector/macro</span>{% endif %}</td>
       <td>{{ vtag(c.verdict) }}</td>
+      <td>{{ stag(c.source, c.event_date) }}</td>
     </tr>
   {% endfor %}
   </tbody>
