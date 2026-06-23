@@ -12,6 +12,7 @@ from typing import Any, Dict, List, Optional
 
 from .base import LLMProvider
 from .prompts import _METHODOLOGY, _row_line
+from .resilience import complete_with_fallback, complete_with_retry
 
 
 # Concrete mechanical-event phrases. If web-grounded triage describes one of
@@ -316,6 +317,7 @@ def generate_note(
     idio_only: bool = True,
     with_news: bool = False,
     asof: Any = None,
+    fallback_providers: Optional[List[LLMProvider]] = None,
 ) -> Dict[str, Any]:
     """Orchestrate select -> per-name catalyst triage -> note synthesis.
 
@@ -350,6 +352,7 @@ def generate_note(
             "notice": "",
         }
 
+    fallback_providers = fallback_providers or []
     web_capable = is_web_capable(provider)
     notice = ""
     if with_news and not web_capable:
@@ -379,8 +382,14 @@ def generate_note(
             run_llm = (not has_event) or (with_news and web_capable)
             if run_llm:
                 try:
-                    text = provider.complete(
+                    # Triage: retry on the SAME provider first (web behavior
+                    # depends on Perplexity); only fall back if it stays
+                    # overloaded — a non-web fallback answer is acceptable.
+                    text, _used = complete_with_fallback(
+                        provider,
                         build_catalyst_prompt(r, side, with_news=with_news),
+                        fallback_providers=fallback_providers,
+                        section="triage",
                         max_tokens=300,
                     )
                     llm_verdict = _parse_verdict(text)
@@ -437,7 +446,12 @@ def generate_note(
                 "validate or update the catalyst for each name; otherwise rely "
                 "strictly on the rows above and do not fabricate news.\n"
             )
-        markdown = provider.complete(prompt, max_tokens=1200) or ""
+        text, _used = complete_with_fallback(
+            provider, prompt,
+            fallback_providers=fallback_providers,
+            section="note", max_tokens=1200,
+        )
+        markdown = text or ""
         _log_usage(provider, "sidebar", ok=True, note="note synthesis")
     except Exception as e:  # noqa: BLE001
         errors.append(f"note: {e}")

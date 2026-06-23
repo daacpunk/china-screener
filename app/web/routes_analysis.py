@@ -23,6 +23,25 @@ from .routes_results import _SIDEBAR_CACHE
 router = APIRouter()
 
 
+def build_fallback_providers(primary_name: str) -> list:
+    """Built providers for every OTHER configured provider that is enabled and
+    has a key, EXCLUDING the primary. This is the fallback pool used when the
+    primary stays overloaded. Skips any that fail to build."""
+    out = []
+    for cfg in ss.list_provider_configs():
+        name = cfg["provider"]
+        if name == primary_name or not (cfg["enabled"] and cfg["has_key"]):
+            continue
+        try:
+            key = ss.get_api_key(name)
+            prov = build_provider(name, key, cfg["model"])
+            if prov is not None:
+                out.append(prov)
+        except Exception:  # noqa: BLE001 — a bad fallback must never crash the screen
+            continue
+    return out
+
+
 def _resolve_sidebar_provider():
     prov_name = ss.get_section_provider("sidebar")
     key = ss.get_api_key(prov_name)
@@ -64,11 +83,13 @@ def _sidebar_for(res: dict, force: bool = False) -> dict:
     if not force and snap_id in _SIDEBAR_CACHE:
         return _SIDEBAR_CACHE[snap_id]
     provider = _resolve_sidebar_provider()
+    fallbacks = build_fallback_providers(getattr(provider, "name", "")) if provider else []
     out = la.synthesize_sidebar(
         provider,
         df_to_records(res["oversold"]),
         df_to_records(res["overbought"]),
         df_to_records(res["master"]),
+        fallback_providers=fallbacks,
     )
     html = md.markdown(out["markdown"], extensions=["tables"]) if out.get("markdown") else ""
     rendered = {"enabled": out["enabled"], "html": html,
@@ -110,7 +131,11 @@ def analysis_analyze(request: Request, provider: str = Form("")):
     key = ss.get_api_key(prov_name)
     cfg = ss.get_provider_config(prov_name)
     prov = build_provider(prov_name, key, cfg["model"]) if (key and cfg["enabled"]) else None
-    result = la.analyze_rows(prov, df_to_records(res["oversold"]), df_to_records(res["overbought"]))
+    fallbacks = build_fallback_providers(prov_name) if prov else []
+    result = la.analyze_rows(
+        prov, df_to_records(res["oversold"]), df_to_records(res["overbought"]),
+        max_workers=4, fallback_providers=fallbacks,
+    )
     return templates.TemplateResponse(request, "partials/analysis.html", {"analysis": result})
 
 
@@ -122,6 +147,7 @@ def _generate_note(request: Request, provider: str, max_longs: int,
     meta = res.get("meta", {}) or {}
     stale = _staleness(meta)
     prov = _resolve_note_provider(provider)
+    fallbacks = build_fallback_providers(getattr(prov, "name", "")) if prov else []
     out = rn.generate_note(
         prov,
         df_to_records(res["master"]),
@@ -133,6 +159,7 @@ def _generate_note(request: Request, provider: str, max_longs: int,
         idio_only=_truthy(idio_only),
         with_news=_truthy(with_news),
         asof=stale["asof"],
+        fallback_providers=fallbacks,
     )
     note_id = None
     try:

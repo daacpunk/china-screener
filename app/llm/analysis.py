@@ -5,10 +5,12 @@ structured result with an error note instead.
 """
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Dict, List, Optional
 
 from .base import LLMProvider
 from .prompts import _METHODOLOGY, _row_line
+from .resilience import complete_with_fallback
 
 
 def _log_usage(provider: Optional[LLMProvider], section: str, ok: bool, note: str = "") -> None:
@@ -23,6 +25,18 @@ def _log_usage(provider: Optional[LLMProvider], section: str, ok: bool, note: st
             ok=ok,
             note=note,
         )
+    except Exception:
+        pass
+
+
+def _log_usage_captured(name: str, model: str, section: str, usage: Any,
+                        ok: bool, note: str = "") -> None:
+    """Log usage from a captured snapshot (name/model/usage). Used by the
+    concurrent path: each worker snapshots its answering provider's usage in its
+    OWN thread, so reading shared ``last_usage`` here can't race other calls."""
+    try:
+        from .. import settings_store as ss
+        ss.log_usage(name, model or "", section, usage if ok else None, ok=ok, note=note)
     except Exception:
         pass
 
@@ -85,11 +99,13 @@ def synthesize_sidebar(
     overbought: List[Dict],
     master: Optional[List[Dict]] = None,
     max_tokens: int = 600,
+    fallback_providers: Optional[List[LLMProvider]] = None,
 ) -> Dict[str, Any]:
     """Run the sidebar synthesis. Key-gated and crash-proof.
 
     Returns dict: {enabled, markdown, error, provider}. With provider=None (no
-    key/disabled) returns a clean disabled hint and never raises.
+    key/disabled) returns a clean disabled hint and never raises. The single
+    call is routed through retry+fallback so a transient 529 self-recovers.
     """
     if provider is None or not getattr(provider, "available", False):
         return {
@@ -99,12 +115,16 @@ def synthesize_sidebar(
             "provider": None,
         }
     try:
-        text = provider.complete(
-            build_sidebar_prompt(oversold, overbought, master), max_tokens=max_tokens
+        text, used = complete_with_fallback(
+            provider,
+            build_sidebar_prompt(oversold, overbought, master),
+            fallback_providers=fallback_providers or [],
+            section="sidebar",
+            max_tokens=max_tokens,
         )
         _log_usage(provider, "sidebar", ok=True)
         return {"enabled": True, "markdown": text or "", "error": "",
-                "provider": getattr(provider, "name", "")}
+                "provider": used or getattr(provider, "name", "")}
     except Exception as e:  # noqa: BLE001
         _log_usage(provider, "sidebar", ok=False, note=str(e)[:200])
         return {
@@ -121,8 +141,19 @@ def analyze_rows(
     overbought: List[Dict],
     per_name: bool = True,
     max_names: int = 6,
+    max_workers: int = 4,
+    fallback_providers: Optional[List[LLMProvider]] = None,
 ) -> Dict[str, Any]:
-    """Run analysis. Returns dict with 'enabled', 'error', 'per_name', 'portfolio'."""
+    """Run analysis. Returns dict with 'enabled', 'error', 'per_name', 'portfolio'.
+
+    Per-name calls and the portfolio call are dispatched through a bounded
+    ThreadPoolExecutor (``max_workers``). Each call goes through
+    complete_with_fallback so a transient 529 retries (and falls back to another
+    configured provider if the primary stays overloaded). With no
+    ``fallback_providers`` the behavior is retry-only (single-provider, but
+    resilient). Per-name result ordering stays stable (oversold then overbought)
+    by collecting results by index and re-sorting.
+    """
     if provider is None or not getattr(provider, "available", False):
         return {
             "enabled": False,
@@ -130,36 +161,91 @@ def analyze_rows(
             "per_name": [],
             "portfolio": "",
         }
-    notes: List[Dict[str, str]] = []
-    errors: List[str] = []
+    fallback_providers = fallback_providers or []
+    # name -> provider object, so a worker can snapshot the answering provider's
+    # usage in its own thread (avoids racing shared last_usage across threads).
+    by_name = {getattr(provider, "name", ""): provider}
+    for fb in fallback_providers:
+        by_name.setdefault(getattr(fb, "name", ""), fb)
+
+    def _capture_usage(used: str) -> Dict[str, Any]:
+        p = by_name.get(used, provider)
+        return {"name": used or getattr(provider, "name", ""),
+                "model": getattr(p, "model", "") or "",
+                "usage": getattr(p, "last_usage", None)}
+
+    # Build the per-name task list, preserving order (oversold first).
+    tasks: List[Dict[str, Any]] = []
     if per_name:
-        for r in (oversold[:max_names]):
-            try:
-                notes.append({"ticker": r.get("ticker"), "playbook": "Oversold-Reversion (long)",
-                              "note": provider.complete(build_per_name_prompt(r, "Oversold-Reversion long"), max_tokens=300)})
-                _log_usage(provider, "per_name", ok=True, note=str(r.get("ticker") or ""))
-            except Exception as e:  # noqa: BLE001
-                errors.append(f"{r.get('ticker')}: {e}")
-                _log_usage(provider, "per_name", ok=False, note=str(e)[:200])
-        for r in (overbought[:max_names]):
-            try:
-                notes.append({"ticker": r.get("ticker"), "playbook": "Overbought-Fade (short)",
-                              "note": provider.complete(build_per_name_prompt(r, "Overbought-Fade short"), max_tokens=300)})
-                _log_usage(provider, "per_name", ok=True, note=str(r.get("ticker") or ""))
-            except Exception as e:  # noqa: BLE001
-                errors.append(f"{r.get('ticker')}: {e}")
-                _log_usage(provider, "per_name", ok=False, note=str(e)[:200])
+        for r in oversold[:max_names]:
+            tasks.append({"row": r, "playbook": "Oversold-Reversion (long)",
+                          "prompt_label": "Oversold-Reversion long"})
+        for r in overbought[:max_names]:
+            tasks.append({"row": r, "playbook": "Overbought-Fade (short)",
+                          "prompt_label": "Overbought-Fade short"})
+
+    def _run_per_name(task: Dict[str, Any]) -> Dict[str, Any]:
+        r = task["row"]
+        text, used = complete_with_fallback(
+            provider,
+            build_per_name_prompt(r, task["prompt_label"]),
+            fallback_providers=fallback_providers,
+            section="per_name",
+            max_tokens=300,
+        )
+        cap = _capture_usage(used)
+        note = text or ""
+        # Transparency: annotate when a fallback (non-primary) provider answered.
+        if used and used != getattr(provider, "name", ""):
+            note = f"{note} [via {used}]"
+        return {"ticker": r.get("ticker"), "playbook": task["playbook"],
+                "note": note, "provider": used, "_usage": cap}
+
+    def _run_portfolio() -> Dict[str, Any]:
+        text, used = complete_with_fallback(
+            provider,
+            build_portfolio_prompt(oversold, overbought),
+            fallback_providers=fallback_providers,
+            section="portfolio",
+            max_tokens=900,
+        )
+        return {"text": text or "", "provider": used, "_usage": _capture_usage(used)}
+
+    notes: List[Optional[Dict[str, Any]]] = [None] * len(tasks)
+    errors: List[str] = []
     portfolio = ""
-    try:
-        portfolio = provider.complete(build_portfolio_prompt(oversold, overbought), max_tokens=900)
-        _log_usage(provider, "portfolio", ok=True)
-    except Exception as e:  # noqa: BLE001
-        errors.append(f"portfolio: {e}")
-        _log_usage(provider, "portfolio", ok=False, note=str(e)[:200])
+
+    with ThreadPoolExecutor(max_workers=max(1, int(max_workers))) as ex:
+        future_to_idx = {ex.submit(_run_per_name, t): i for i, t in enumerate(tasks)}
+        portfolio_future = ex.submit(_run_portfolio)
+
+        for fut, idx in future_to_idx.items():
+            r = tasks[idx]["row"]
+            try:
+                res = fut.result()
+                cap = res.pop("_usage", {})
+                notes[idx] = res
+                _log_usage_captured(cap.get("name", ""), cap.get("model", ""), "per_name",
+                                    cap.get("usage"), ok=True, note=str(r.get("ticker") or ""))
+            except Exception as e:  # noqa: BLE001
+                errors.append(f"{r.get('ticker')}: {e}")
+                _log_usage(provider, "per_name", ok=False, note=str(e)[:200])
+
+        try:
+            pres = portfolio_future.result()
+            portfolio = pres["text"]
+            cap = pres.get("_usage", {})
+            _log_usage_captured(cap.get("name", ""), cap.get("model", ""), "portfolio",
+                                cap.get("usage"), ok=True)
+        except Exception as e:  # noqa: BLE001
+            errors.append(f"portfolio: {e}")
+            _log_usage(provider, "portfolio", ok=False, note=str(e)[:200])
+
+    ordered = [n for n in notes if n is not None]
     return {
         "enabled": True,
         "error": "; ".join(errors) if errors else "",
-        "per_name": notes,
+        "per_name": ordered,
         "portfolio": portfolio,
         "provider": provider.name,
     }
