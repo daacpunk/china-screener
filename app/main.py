@@ -23,6 +23,7 @@ from .web.routes_formula import router as formula_router
 from .web.routes_results import router as results_router
 from .web.routes_settings import router as settings_router
 from .web.routes_universe import router as universe_router
+from .web.routes_weekly import router as weekly_router
 
 BASE = Path(__file__).resolve().parent
 
@@ -56,4 +57,5 @@ app.include_router(formula_router)
 app.include_router(data_router)
 app.include_router(results_router)
 app.include_router(analysis_router)
+app.include_router(weekly_router)
 app.include_router(settings_router)

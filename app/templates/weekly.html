@@ -1,0 +1,136 @@
+{% extends "base.html" %}
+{% block title %}Weekly Note — China Reversion/Fade Screener{% endblock %}
+{% block content %}
+<h1>Weekly Quant One-Pager</h1>
+<p class="subtitle">A self-contained weekly workflow for a separate <b>HSI universe</b> (benchmark FactSet id <code>{{ hsi_id }}</code>), independent from the MSCI China screen. Pull raw FactSet series → ingest → compute metrics in-app → draft a one-pager (data + web catalysts + HSI macro).</p>
+
+{% if not any_key %}
+<div class="note info">No enabled provider with a key. Add one in <a href="/settings">Settings</a> for the written note + web catalysts. The computed metric tables work without a key.</div>
+{% endif %}
+
+<!-- ================= (a) Ticker-list upload ================= -->
+<h2>1 · Ticker list <span class="muted">(Symbol + FactSet ticker)</span></h2>
+<div class="card">
+  {% if n_universe %}
+  <div class="note ok" style="margin-bottom:8px">Active universe: <b>{{ n_universe }}</b> names{% if universe and universe.name %} — {{ universe.name }}{% endif %}.</div>
+  {% else %}
+  <div class="empty"><p>No weekly universe yet. Upload a 2-column file: <b>Symbol</b> (display) and <b>FactSet ticker</b> (used in formulas).</p></div>
+  {% endif %}
+  <form action="/weekly/universe/upload" method="post" enctype="multipart/form-data">
+    <div class="row">
+      <div><label>File (CSV / XLSX)</label><input type="file" name="file" accept=".csv,.xlsx,.xls" required></div>
+      <div><label>Symbol column <span class="muted">(optional)</span></label><input type="text" name="symbol_col" placeholder="auto-detect" style="width:140px"></div>
+      <div><label>FactSet ticker column <span class="muted">(optional)</span></label><input type="text" name="factset_col" placeholder="auto-detect" style="width:160px"></div>
+      <button class="btn" type="submit">Upload ticker list</button>
+    </div>
+  </form>
+  {% if universe_rows %}
+  <details style="margin-top:10px"><summary>{{ n_universe }} names</summary>
+    <table class="data-table" style="margin-top:8px"><thead><tr><th>Symbol</th><th>FactSet ticker</th></tr></thead><tbody>
+      {% for r in universe_rows %}<tr><td>{{ r.symbol }}</td><td><code>{{ r.factset_ticker }}</code></td></tr>{% endfor %}
+    </tbody></table>
+  </details>
+  {% endif %}
+  {% if universe_versions and universe_versions|length > 1 %}
+  <details style="margin-top:8px"><summary>Past uploads</summary>
+    {% for v in universe_versions %}
+    <form action="/weekly/universe/activate" method="post" class="flex" style="margin:4px 0">
+      <input type="hidden" name="uid" value="{{ v.id }}">
+      <span class="muted">#{{ v.id }} · {{ v.name }} · {{ v.created_at }}{% if v.is_active %} <b>(active)</b>{% endif %}</span>
+      {% if not v.is_active %}<button class="btn ghost" type="submit">Activate</button>{% endif %}
+    </form>
+    {% endfor %}
+  </details>
+  {% endif %}
+</div>
+
+<!-- ================= (b) Template download ================= -->
+<h2>2 · Download FactSet template</h2>
+<div class="card">
+  <p class="help">A pre-built workbook with one sheet per ticker (<code>=FDS(A2,"P_PRICE(0,-{{ depth }}D,D)")</code> + volume + JULIAN dates) and a dedicated <b>HSI</b> sheet (id <code>{{ hsi_id }}</code>). Depth = <b>{{ depth }}</b> trading days (covers YTD + 60D vol window). Run the one-click <b>ActivateSpills</b> macro in the Instructions sheet, let FactSet refresh, then re-upload below. Batched into a ZIP above {{ batch_size }} names.</p>
+  <form action="/weekly/template" method="post">
+    <label class="flex" style="margin:0"><input type="checkbox" name="as_zip" value="1" style="width:auto"> Force ZIP (one file per {{ batch_size }} names)</label>
+    <button class="btn" type="submit" style="margin-top:8px">Download template</button>
+  </form>
+  {% if not n_universe %}<div class="note info" style="margin-top:8px">No universe yet — the template will contain a single example ticker. Upload your list above for the full set.</div>{% endif %}
+</div>
+
+<!-- ================= (c) Populated-data upload ================= -->
+<h2>3 · Upload populated data</h2>
+<div class="card">
+  {% if snapshot_meta %}
+  <div class="note ok" style="margin-bottom:8px">
+    Active snapshot: <b>{{ snapshot_meta.n_tickers }}</b> tickers,
+    {% if snapshot_meta.hsi_loaded %}HSI loaded{% else %}<span class="muted">no HSI sheet</span>{% endif %},
+    as-of <b>{{ metrics.asof or 'unknown' }}</b>{% if snapshot_meta.n_partial %} · {{ snapshot_meta.n_partial }} partial-history{% endif %}.
+  </div>
+  {% else %}
+  <div class="empty"><p>No data snapshot yet. Upload the populated <code>.xlsx</code> template (the one you ran the macro on).</p></div>
+  {% endif %}
+  <form action="/weekly/data/upload" method="post" enctype="multipart/form-data">
+    <div class="row">
+      <div><label>Populated workbook (.xlsx)</label><input type="file" name="file" accept=".xlsx,.xls" required></div>
+      <button class="btn" type="submit">Ingest data</button>
+    </div>
+  </form>
+  {% if snapshot_versions and snapshot_versions|length > 1 %}
+  <details style="margin-top:8px"><summary>Past snapshots</summary>
+    {% for v in snapshot_versions %}
+    <form action="/weekly/data/activate" method="post" class="flex" style="margin:4px 0">
+      <input type="hidden" name="sid" value="{{ v.id }}">
+      <span class="muted">#{{ v.id }} · {{ v.name }} · {{ v.created_at }}{% if v.is_active %} <b>(active)</b>{% endif %}</span>
+      {% if not v.is_active %}<button class="btn ghost" type="submit">Activate</button>{% endif %}
+    </form>
+    {% endfor %}
+  </details>
+  {% endif %}
+</div>
+
+<!-- ================= (d) Generate note ================= -->
+<h2>4 · Weekly note <span class="muted">(data → web catalysts → HSI macro)</span></h2>
+<div class="card">
+  {% if metrics and metrics.meta.n_tickers %}
+  <p class="help">Computes returns (1W/1M/3M/6M/YTD), HSI-relative, volume trend, volatility &amp; momentum in-app, then drafts a one-pager. Web catalysts cover the top-5 gainers + bottom-5 losers (+ outsized volume spikes) and need a Perplexity provider.</p>
+  <form hx-post="/weekly/note" hx-target="#weekly-note-out" hx-swap="innerHTML" hx-indicator="#weekly-spin">
+    <div class="row">
+      {% if any_key %}
+      <div><label>Provider</label><select name="provider">
+        <option value="">(Analysis default)</option>
+        {% for p in providers %}{% if p.enabled and p.has_key %}<option value="{{ p.provider }}">{{ p.provider }} ({{ p.model }})</option>{% endif %}{% endfor %}
+      </select></div>
+      {% endif %}
+      <label class="flex" style="margin:0"><input type="checkbox" name="with_news" value="1" style="width:auto"{% if note_web_default %} checked{% endif %}> Use live web search for catalysts</label>
+      <button class="btn" type="submit">Generate weekly note</button>
+    </div>
+  </form>
+  <div id="weekly-spin" class="htmx-indicator muted">Computing metrics &amp; drafting…</div>
+  <div id="weekly-note-out"></div>
+  {% if not any_key %}<div class="note info" style="margin-top:8px">The metric tables generate without a key; add a provider in <a href="/settings">Settings</a> for the written note + web catalysts.</div>{% endif %}
+  {% else %}
+  <div class="empty"><p>Upload a populated workbook above to enable the note.</p></div>
+  {% endif %}
+</div>
+
+<!-- ================= (e) Past notes ================= -->
+{% if past_notes %}
+<h2>Past weekly notes</h2>
+<div class="card">
+  <table class="data-table"><thead><tr><th>As-of</th><th>Created</th><th>Provider</th><th>Export</th></tr></thead><tbody>
+    {% for nt in past_notes %}
+    <tr>
+      <td><a href="/weekly/note/{{ nt.id }}">{{ nt.asof or 'unknown' }}</a></td>
+      <td class="muted">{{ nt.created_at }}</td>
+      <td>{{ nt.provider or '—' }}</td>
+      <td>
+        <a class="btn ghost" href="/weekly/note/{{ nt.id }}/export?fmt=md">MD</a>
+        <a class="btn ghost" href="/weekly/note/{{ nt.id }}/export?fmt=html">HTML</a>
+        <a class="btn ghost" href="/weekly/note/{{ nt.id }}/export?fmt=docx">DOCX</a>
+        <a class="btn ghost" href="/weekly/note/{{ nt.id }}/export?fmt=pdf">PDF</a>
+      </td>
+    </tr>
+    {% endfor %}
+  </tbody></table>
+</div>
+{% endif %}
+
+{% endblock %}

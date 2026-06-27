@@ -107,6 +107,33 @@ CREATE TABLE IF NOT EXISTS research_notes (
     markdown TEXT,
     council_json TEXT
 );
+
+-- ===== Phase D — Weekly Quant One-Pager (HSI universe) =====
+-- Fully isolated from the MSCI China screen: its own universe, snapshots, notes.
+CREATE TABLE IF NOT EXISTS weekly_universe (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT,                        -- display name / source filename
+    created_at TEXT,
+    is_active INTEGER DEFAULT 0,
+    rows_json TEXT NOT NULL           -- [{"symbol":..,"factset_ticker":..}, ...]
+);
+
+CREATE TABLE IF NOT EXISTS weekly_snapshots (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT,
+    created_at TEXT,
+    is_active INTEGER DEFAULT 0,
+    data_json TEXT NOT NULL           -- dated weekly snapshot (tidy per-ticker + HSI)
+);
+
+CREATE TABLE IF NOT EXISTS weekly_notes (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    created_at TEXT,
+    asof TEXT,
+    provider TEXT,
+    metrics_json TEXT,
+    markdown TEXT
+);
 """
 
 

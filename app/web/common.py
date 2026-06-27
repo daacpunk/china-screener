@@ -21,7 +21,8 @@ TABS = [
     {"id": "data", "label": "Data & Indicators", "href": "/data", "n": 3},
     {"id": "results", "label": "Results Data", "href": "/results", "n": 4},
     {"id": "analysis", "label": "Analysis", "href": "/analysis", "n": 5},
-    {"id": "settings", "label": "Settings", "href": "/settings", "n": 6},
+    {"id": "weekly", "label": "Weekly Note", "href": "/weekly", "n": 6},
+    {"id": "settings", "label": "Settings", "href": "/settings", "n": 7},
 ]
 
 

@@ -88,10 +88,21 @@ _CAND_HEADERS = ["Ticker", "Name", "Side", "Sector", "Rank z", "Peer-rel z",
                  "RSI", "Score", "Type", "Triage"]
 
 
+def _title(note: Dict[str, Any]) -> str:
+    """Document title. Defaults to 'Research Note' so existing notes are
+    unchanged; a weekly note passes title='Weekly Quant One-Pager'."""
+    return str(note.get("title") or "Research Note")
+
+
+def _file_stem(note: Dict[str, Any]) -> str:
+    """Filename stem. Weekly notes (kind=='weekly') get a 'weekly_note' stem."""
+    return "weekly_note" if note.get("kind") == "weekly" else "research_note"
+
+
 def filename(note: Dict[str, Any], ext: str) -> str:
     asof = str(note.get("asof") or "unknown")
     safe = asof.replace(" ", "_").replace(":", "").replace("/", "-")
-    return f"research_note_{safe}.{ext}"
+    return f"{_file_stem(note)}_{safe}.{ext}"
 
 
 # ---------------------------------------------------------------------------
@@ -99,7 +110,13 @@ def filename(note: Dict[str, Any], ext: str) -> str:
 # ---------------------------------------------------------------------------
 def to_markdown(note: Dict[str, Any]) -> str:
     asof = note.get("asof") or "unknown"
-    parts: List[str] = [f"# Research Note", f"_As of {asof}_", ""]
+    weekly = note.get("kind") == "weekly"
+    # Weekly notes carry the full one-pager (tables + prose) in the markdown
+    # body already, so emit it directly without the research-note scaffolding.
+    if weekly:
+        body = (note.get("markdown") or "").strip()
+        return (body + "\n") if body else (f"# {_title(note)}\n_As of {asof}_\n")
+    parts: List[str] = [f"# {_title(note)}", f"_As of {asof}_", ""]
     cands = note.get("candidates") or []
     if cands:
         parts.append("## Selected candidates")
@@ -147,8 +164,22 @@ def _candidate_table_html(candidates: List[Dict[str, Any]]) -> str:
 
 def to_html(note: Dict[str, Any]) -> str:
     asof = escape(str(note.get("asof") or "unknown"))
+    title = escape(_title(note))
+    weekly = note.get("kind") == "weekly"
     cands = note.get("candidates") or []
     body_md = (note.get("markdown") or "").strip()
+    # Weekly: the markdown body already starts with its own H1 + tables; strip a
+    # leading duplicate H1 so the page title isn't repeated, then render it whole.
+    if weekly:
+        body_html = _md.markdown(body_md, extensions=["tables"]) if body_md else ""
+        return (
+            "<!DOCTYPE html><html><head><meta charset='utf-8'>"
+            f"<title>{title}</title>"
+            f"<style>{_CSS}</style></head><body>"
+            f'<div class="note-body">{body_html}</div>'
+            '<div class="meta">Educational tool, not investment advice.</div>'
+            "</body></html>"
+        )
     body_html = _md.markdown(body_md, extensions=["tables"]) if body_md else ""
     sections = [
         "<h2>Selected candidates</h2>",
@@ -167,9 +198,9 @@ def to_html(note: Dict[str, Any]) -> str:
             "not investment advice.</div>")
     return (
         "<!DOCTYPE html><html><head><meta charset='utf-8'>"
-        "<title>Research Note</title>"
+        f"<title>{title}</title>"
         f"<style>{_CSS}</style></head><body>"
-        "<h1>Research Note</h1>"
+        f"<h1>{title}</h1>"
         f'<div class="asof">As of {asof}</div>'
         + "".join(sections)
         + meta
@@ -185,12 +216,22 @@ def to_docx_bytes(note: Dict[str, Any]) -> bytes:
     from docx.shared import Pt, RGBColor
 
     doc = Document()
-    title = doc.add_heading("Research Note", level=0)
+    weekly = note.get("kind") == "weekly"
+    doc.add_heading(_title(note), level=0)
     asof = str(note.get("asof") or "unknown")
     sub = doc.add_paragraph()
     run = sub.add_run(f"As of {asof}")
     run.italic = True
     run.font.color.rgb = RGBColor(0x55, 0x55, 0x55)
+
+    # Weekly notes render the full markdown body (tables + prose) directly.
+    if weekly:
+        body_md = (note.get("markdown") or "").strip()
+        if body_md:
+            _docx_render_markdown(doc, body_md)
+        bio = io.BytesIO()
+        doc.save(bio)
+        return bio.getvalue()
 
     cands = note.get("candidates") or []
     doc.add_heading("Selected candidates", level=1)

@@ -1,0 +1,29 @@
+<div class="note {{ 'error' if note.notice else 'info' }}">
+  <b>Weekly one-pager · as of {{ note.asof or 'unknown' }}</b>{% if note.provider %} · via {{ note.provider }}{% endif %}.
+</div>
+
+{% if note.error and not body_html %}
+<div class="note info">{{ note.error }} {% if not note.provider %}<a href="/settings">Settings →</a>{% endif %}</div>
+{% elif note.error %}
+<div class="note error">Some calls failed: {{ note.error }}</div>
+{% endif %}
+
+{% if note.notice %}
+<div class="note info" style="font-size:12px">{{ note.notice }}</div>
+{% endif %}
+
+<div class="card md">{{ body_html|safe }}</div>
+
+{% if note.provider %}<div class="muted" style="margin-top:8px;font-size:12px">via {{ note.provider }} · returns/vol/momentum computed in-app — catalysts web-cited or flagged unknown</div>{% endif %}
+
+{% if note_id %}
+<div class="flex" style="margin-top:10px">
+  <span class="muted" style="align-self:center">Download:</span>
+  <a class="btn ghost" href="/weekly/note/{{ note_id }}/export?fmt=md">MD</a>
+  <a class="btn ghost" href="/weekly/note/{{ note_id }}/export?fmt=html">HTML</a>
+  <a class="btn ghost" href="/weekly/note/{{ note_id }}/export?fmt=docx">DOCX</a>
+  <a class="btn ghost" href="/weekly/note/{{ note_id }}/export?fmt=pdf">PDF</a>
+</div>
+{% else %}
+<div class="muted" style="margin-top:8px;font-size:12px">Saved to history — export options under <b>Past weekly notes</b>.</div>
+{% endif %}
