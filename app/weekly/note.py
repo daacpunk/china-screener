@@ -6,8 +6,10 @@ Assembles a single-page weekly note from the PURE metrics produced by
   (a) DATA OBSERVATIONS — prose grounded ONLY in the computed movers /
       opportunities tables (no fabrication).
   (b) WEB CATALYSTS — for the top5 gainers + bottom5 losers (+ any outsized
-      intra-week volume spike), look up the likely reason for the move. Only
-      fires with a web-capable provider (Perplexity); otherwise a soft notice.
+      intra-week volume spike), look up the likely reason for the move. Routes
+      to a dedicated ``web_provider`` (Perplexity) when supplied, independent of
+      the synthesis provider; falls back to ``provider`` only if it is itself
+      web-capable; otherwise skipped with a soft notice.
   (c) HSI MACRO VIEW — the index's own weekly + YTD move (computed) plus a
       top-down commentary, web-augmented for macro/policy/flow context.
 
@@ -287,19 +289,34 @@ def _assemble(
     return "\n".join(parts)
 
 
+
 def generate_weekly_note(
     provider: Optional[LLMProvider],
     metrics: Dict[str, Any],
     asof: Any = None,
-    with_news: bool = False,
+    with_news: Optional[bool] = False,
     fallback_providers: Optional[List[LLMProvider]] = None,
+    web_provider: Optional[LLMProvider] = None,
 ) -> Dict[str, Any]:
-    """Assemble the weekly one-pager. NEVER raises.
+    """Assemble the weekly one-pager with a SPLIT provider model. NEVER raises.
 
-    With provider=None / unavailable: returns the raw metric tables as markdown
-    plus a "set a key" hint (still a usable note). With a non-web-capable
-    provider and ``with_news`` requested: the catalyst section is skipped with a
-    soft notice. Usage is logged best-effort.
+    Two distinct duties:
+      * SYNTHESIS (data-driven observations prose + HSI macro narrative) runs on
+        ``provider`` -- the user's chosen model (Claude / DeepSeek / Perplexity).
+      * WEB lookups (per-mover catalysts + HSI macro web/context) route to
+        ``web_provider`` when it is supplied AND web-capable; otherwise they
+        fall back to ``provider`` IF that is itself web-capable; otherwise web
+        is skipped and a soft notice is set.
+
+    ``with_news`` gating: False -> skip web entirely. None -> default to True
+    when EITHER ``provider`` or ``web_provider`` is web-capable. True -> attempt
+    web (subject to a web-capable provider existing).
+
+    Degradation: with both ``provider`` and ``web_provider`` None/unavailable
+    the note is the raw metric tables + a "set a key" hint. With only
+    ``web_provider`` available (no synthesis key) the quant tables + web
+    catalysts are still produced. Usage is logged best-effort for whichever
+    provider actually answered each section.
     """
     metrics = metrics or {}
     if asof is None:
@@ -312,7 +329,14 @@ def generate_weekly_note(
         "kind": "weekly",
     }
 
-    if provider is None or not getattr(provider, "available", False):
+    def _avail(p: Optional[LLMProvider]) -> bool:
+        return p is not None and bool(getattr(p, "available", False))
+
+    synth_ok = _avail(provider)
+    web_prov_ok = _avail(web_provider)
+
+    # No usable provider at all -> degrade to the deterministic tables + hint.
+    if not synth_ok and not web_prov_ok:
         return {
             **base,
             "markdown": _no_key_markdown(metrics),
@@ -322,65 +346,91 @@ def generate_weekly_note(
         }
 
     fallback_providers = fallback_providers or []
-    web_capable = is_web_capable(provider)
+    synth_web_capable = synth_ok and is_web_capable(provider)
+    web_capable_web_provider = web_prov_ok and is_web_capable(web_provider)
+
+    # Resolve which provider (if any) services the WEB sections.
+    if web_capable_web_provider:
+        web_runner: Optional[LLMProvider] = web_provider
+    elif synth_web_capable:
+        web_runner = provider
+    else:
+        web_runner = None
+
+    # with_news gating.
+    if with_news is None:
+        with_news = synth_web_capable or web_capable_web_provider
+    do_web = bool(with_news) and web_runner is not None
+
     notice = ""
-    if with_news and not web_capable:
-        notice = ("Live catalyst lookup needs a Perplexity provider; current "
-                  "provider has no web access — showing the quant note without "
-                  "web catalysts.")
+    if with_news and web_runner is None:
+        synth_name = getattr(provider, "name", "") or "the chosen model"
+        notice = (
+            "Live web catalysts need a Perplexity key; synthesis ran on "
+            f"{synth_name}."
+        )
 
     errors: List[str] = []
 
-    # (a) Data observations — always run (grounded in computed metrics).
+    # (a) Data observations [SYNTHESIS] -- run on the chosen provider.
     observations = ""
-    try:
-        text, _used = complete_with_fallback(
-            provider, build_observations_prompt(metrics),
-            fallback_providers=fallback_providers,
-            section="weekly_obs", max_tokens=900,
-        )
-        observations = (text or "").strip()
-        _log_usage(provider, "sidebar", ok=True, note="weekly observations")
-    except Exception as e:  # noqa: BLE001
-        errors.append(f"observations: {e}")
-        _log_usage(provider, "sidebar", ok=False, note=str(e)[:200])
-
-    # (b) Web catalysts — only when web-capable AND requested.
-    catalysts = ""
-    if with_news and web_capable and (metrics.get("catalyst_names") or []):
+    if synth_ok:
         try:
             text, _used = complete_with_fallback(
-                provider, build_catalyst_prompt(metrics),
+                provider, build_observations_prompt(metrics),
                 fallback_providers=fallback_providers,
+                section="weekly_obs", max_tokens=900,
+            )
+            observations = (text or "").strip()
+            _log_usage(provider, "sidebar", ok=True, note="weekly observations")
+        except Exception as e:  # noqa: BLE001
+            errors.append(f"observations: {e}")
+            _log_usage(provider, "sidebar", ok=False, note=str(e)[:200])
+
+    # (b) Web catalysts [WEB] -- route to the resolved web runner.
+    catalysts = ""
+    if do_web and (metrics.get("catalyst_names") or []):
+        try:
+            text, _used = complete_with_fallback(
+                web_runner, build_catalyst_prompt(metrics),
+                fallback_providers=[],
                 section="weekly_catalysts", max_tokens=800,
             )
             catalysts = (text or "").strip()
-            _log_usage(provider, "sidebar", ok=True, note="weekly catalysts")
+            _log_usage(web_runner, "sidebar", ok=True, note="weekly catalysts")
         except Exception as e:  # noqa: BLE001
             errors.append(f"catalysts: {e}")
-            _log_usage(provider, "sidebar", ok=False, note=str(e)[:200])
+            _log_usage(web_runner, "sidebar", ok=False, note=str(e)[:200])
 
-    # (c) HSI macro view — run when HSI series is present.
+    # (c) HSI macro view -- NARRATIVE is synthesis; web/context is the web step.
+    # When a synthesis provider exists, the prose is authored by it (web-aware
+    # only if it is itself the web runner). When only a web provider exists, the
+    # web runner authors it so we still get a macro read.
     hsi_commentary = ""
-    if (metrics.get("hsi") or {}).get("loaded"):
+    hsi_runner = provider if synth_ok else web_runner
+    if hsi_runner is not None and (metrics.get("hsi") or {}).get("loaded"):
         try:
             text, _used = complete_with_fallback(
-                provider, build_hsi_prompt(metrics),
-                fallback_providers=fallback_providers,
+                hsi_runner, build_hsi_prompt(metrics),
+                fallback_providers=(fallback_providers if hsi_runner is provider else []),
                 section="weekly_hsi", max_tokens=600,
             )
             hsi_commentary = (text or "").strip()
-            _log_usage(provider, "sidebar", ok=True, note="weekly hsi")
+            _log_usage(hsi_runner, "sidebar", ok=True, note="weekly hsi")
         except Exception as e:  # noqa: BLE001
             errors.append(f"hsi: {e}")
-            _log_usage(provider, "sidebar", ok=False, note=str(e)[:200])
+            _log_usage(hsi_runner, "sidebar", ok=False, note=str(e)[:200])
 
     markdown = _assemble(metrics, observations, catalysts, hsi_commentary, notice)
+
+    # Report the synthesis provider name when present, else the web provider.
+    prov_name = (getattr(provider, "name", "") if synth_ok
+                 else getattr(web_provider, "name", ""))
 
     return {
         **base,
         "markdown": markdown,
-        "provider": getattr(provider, "name", ""),
+        "provider": prov_name,
         "error": "; ".join(errors) if errors else "",
         "notice": notice,
     }

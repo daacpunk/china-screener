@@ -75,15 +75,29 @@
       <button class="btn" type="submit">Ingest data</button>
     </div>
   </form>
-  {% if snapshot_versions and snapshot_versions|length > 1 %}
-  <details style="margin-top:8px"><summary>Past snapshots</summary>
+  {% if snapshot_versions %}
+  <details style="margin-top:8px"{% if snapshot_versions|length > 1 %} open{% endif %}><summary>Uploaded data snapshots ({{ snapshot_versions|length }})</summary>
     {% for v in snapshot_versions %}
-    <form action="/weekly/data/activate" method="post" class="flex" style="margin:4px 0">
-      <input type="hidden" name="sid" value="{{ v.id }}">
-      <span class="muted">#{{ v.id }} · {{ v.name }} · {{ v.created_at }}{% if v.is_active %} <b>(active)</b>{% endif %}</span>
-      {% if not v.is_active %}<button class="btn ghost" type="submit">Activate</button>{% endif %}
-    </form>
+    <div class="flex" style="margin:4px 0;gap:6px;align-items:center">
+      <span class="muted" style="flex:1">#{{ v.id }} · {{ v.name }} · {{ v.created_at }}{% if v.is_active %} <b>(active)</b>{% endif %}</span>
+      {% if not v.is_active %}
+      <form action="/weekly/data/activate" method="post" style="margin:0">
+        <input type="hidden" name="sid" value="{{ v.id }}">
+        <button class="btn ghost" type="submit">Activate</button>
+      </form>
+      {% endif %}
+      <form action="/weekly/data/delete" method="post" style="margin:0"
+            onsubmit="return confirm('Delete data snapshot #{{ v.id }}? This frees its stored data but keeps your ticker list and notes.');">
+        <input type="hidden" name="sid" value="{{ v.id }}">
+        <button class="btn ghost danger" type="submit" title="Delete this data snapshot">Delete</button>
+      </form>
+    </div>
     {% endfor %}
+    <form action="/weekly/data/clear" method="post" style="margin:8px 0 0"
+          onsubmit="return confirm('Clear ALL uploaded weekly data snapshots? This frees stored data blobs; your ticker list and saved notes are untouched.');">
+      <button class="btn ghost danger" type="submit" title="Remove every uploaded data snapshot to free storage">Clear all weekly data</button>
+      <span class="help" style="margin-left:8px">Frees uploaded-data storage. Ticker list &amp; saved notes are kept.</span>
+    </form>
   </details>
   {% endif %}
 </div>
@@ -92,19 +106,20 @@
 <h2>4 · Weekly note <span class="muted">(data → web catalysts → HSI macro)</span></h2>
 <div class="card">
   {% if metrics and metrics.meta.n_tickers %}
-  <p class="help">Computes returns (1W/1M/3M/6M/YTD), HSI-relative, volume trend, volatility &amp; momentum in-app, then drafts a one-pager. Web catalysts cover the top-5 gainers + bottom-5 losers (+ outsized volume spikes) and need a Perplexity provider.</p>
+  <p class="help">Computes returns (1W/1M/3M/6M/YTD), HSI-relative, volume trend, volatility &amp; momentum in-app, then drafts a one-pager. The <b>synthesis model</b> writes the data observations &amp; HSI narrative; live web catalysts (top-5 gainers + bottom-5 losers + outsized volume spikes) always run on Perplexity when a Perplexity key is set.</p>
   <form hx-post="/weekly/note" hx-target="#weekly-note-out" hx-swap="innerHTML" hx-indicator="#weekly-spin">
     <div class="row">
       {% if any_key %}
-      <div><label>Provider</label><select name="provider">
+      <div><label>Synthesis model</label><select name="provider">
         <option value="">(Analysis default)</option>
-        {% for p in providers %}{% if p.enabled and p.has_key %}<option value="{{ p.provider }}">{{ p.provider }} ({{ p.model }})</option>{% endif %}{% endfor %}
+        {% for p in providers %}{% if p.enabled and p.has_key %}<option value="{{ p.provider }}"{% if p.provider == note_synth_provider %} selected{% endif %}>{{ p.provider }} ({{ p.model }})</option>{% endif %}{% endfor %}
       </select></div>
       {% endif %}
-      <label class="flex" style="margin:0"><input type="checkbox" name="with_news" value="1" style="width:auto"{% if note_web_default %} checked{% endif %}> Use live web search for catalysts</label>
+      <label class="flex" style="margin:0"><input type="checkbox" name="with_news" value="1" style="width:auto"{% if note_web_default %} checked{% endif %}> Run the live web-catalyst step</label>
       <button class="btn" type="submit">Generate weekly note</button>
     </div>
   </form>
+  <p class="help" style="margin-top:6px">Live web catalysts always use Perplexity when a Perplexity key is set{% if not perplexity_web_ready %} <span class="muted">(no Perplexity key detected — add one in <a href="/settings">Settings</a> for catalysts)</span>{% endif %}. The synthesis model above writes the prose.</p>
   <div id="weekly-spin" class="htmx-indicator muted">Computing metrics &amp; drafting…</div>
   <div id="weekly-note-out"></div>
   {% if not any_key %}<div class="note info" style="margin-top:8px">The metric tables generate without a key; add a provider in <a href="/settings">Settings</a> for the written note + web catalysts.</div>{% endif %}

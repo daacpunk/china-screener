@@ -117,3 +117,44 @@ def set_active(sid: int, db_path: Optional[str] = None) -> None:
         conn.commit()
     finally:
         conn.close()
+
+
+def delete_snapshot(sid: int, db_path: Optional[str] = None) -> bool:
+    """Delete one snapshot row by id. Returns True if a row was removed.
+
+    Idempotent and crash-proof: a missing id (or any error) yields False, never
+    raises. If the deleted row was the active one no special handling is needed —
+    ``get_active`` already falls back to the newest remaining row.
+    """
+    try:
+        init(db_path)
+        conn = get_conn(db_path)
+        try:
+            cur = conn.execute(
+                "DELETE FROM weekly_snapshots WHERE id=?", (int(sid),)
+            )
+            conn.commit()
+            return bool(cur.rowcount)
+        finally:
+            conn.close()
+    except Exception:  # noqa: BLE001 — never raise
+        return False
+
+
+def clear_all_snapshots(db_path: Optional[str] = None) -> int:
+    """Delete ALL rows in weekly_snapshots; return the count removed.
+
+    Frees the (potentially large) data_json blobs. Idempotent and crash-proof:
+    on an empty table returns 0, on any error returns 0, never raises.
+    """
+    try:
+        init(db_path)
+        conn = get_conn(db_path)
+        try:
+            cur = conn.execute("DELETE FROM weekly_snapshots")
+            conn.commit()
+            return int(cur.rowcount or 0)
+        finally:
+            conn.close()
+    except Exception:  # noqa: BLE001 — never raise
+        return 0

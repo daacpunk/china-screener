@@ -61,6 +61,8 @@ input[type=file]{padding:7px}
 .btn.secondary{background:#1e293b}
 .btn.ghost{background:transparent;border:1px solid var(--border);color:var(--text)}
 .btn.danger{background:var(--red)}
+.btn.ghost.danger{background:transparent;border:1px solid var(--red);color:var(--red)}
+.btn.ghost.danger:hover{background:var(--red);color:#fff}
 
 table{width:100%;border-collapse:collapse;font-size:13px}
 th,td{text-align:left;padding:8px 9px;border-bottom:1px solid var(--border);white-space:nowrap}

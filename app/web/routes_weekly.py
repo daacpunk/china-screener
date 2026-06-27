@@ -32,6 +32,8 @@ from ..weekly import template_gen as wtpl
 from ..weekly import universe_store as wuni
 from .common import base_ctx, templates
 from .routes_analysis import _resolve_note_provider, build_fallback_providers
+from ..llm.base import LLMProvider
+from ..llm.registry import build_provider
 from ..llm.research_notes import is_web_capable
 
 router = APIRouter()
@@ -41,6 +43,29 @@ _XLSX_CT = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 
 def _truthy(v: Any) -> bool:
     return str(v).strip().lower() in ("1", "true", "yes", "on")
+
+
+def resolve_web_provider() -> Optional[LLMProvider]:
+    """Build a PERPLEXITY provider for the web (catalyst) lookups, independent
+    of the chosen synthesis provider.
+
+    Returns a built Perplexity provider when a Perplexity API key exists AND the
+    Perplexity provider config is enabled; otherwise None. The returned provider
+    is sanity-checked with ``is_web_capable``. Never raises.
+    """
+    try:
+        key = ss.get_api_key("perplexity")
+        if not key:
+            return None
+        cfg = ss.get_provider_config("perplexity")
+        if not cfg.get("enabled"):
+            return None
+        prov = build_provider("perplexity", key, cfg.get("model") or "")
+        if prov is None or not is_web_capable(prov):
+            return None
+        return prov
+    except Exception:  # noqa: BLE001 — web provider resolution must never crash
+        return None
 
 
 # ---------------------------------------------------------------------------
@@ -122,7 +147,19 @@ def _weekly_ctx(request: Request, **extra) -> Dict[str, Any]:
     providers = ss.list_provider_configs()
     any_key = any(p["has_key"] and p["enabled"] for p in providers)
     note_provider = ss.get_section_provider("sidebar")
-    note_web_default = (str(note_provider).lower() == "perplexity")
+    # The dedicated Perplexity web provider is ready independently of the
+    # synthesis pick; the catalyst step defaults on when EITHER the synthesis
+    # provider or that web provider can ground answers in live web search.
+    web_provider = resolve_web_provider()
+    perplexity_web_ready = web_provider is not None
+    note_web_default = (str(note_provider).lower() == "perplexity") or perplexity_web_ready
+    # Default the section-4 "Synthesis model" dropdown to the resolved sidebar /
+    # default provider (only when it is configured + enabled + keyed).
+    note_synth_provider = next(
+        (p["provider"] for p in providers
+         if p["provider"] == note_provider and p["enabled"] and p["has_key"]),
+        "",
+    )
     ctx = base_ctx(
         request, "weekly",
         universe=uni, universe_rows=uni_rows, n_universe=len(uni_rows),
@@ -132,6 +169,8 @@ def _weekly_ctx(request: Request, **extra) -> Dict[str, Any]:
         metrics=metrics,
         providers=providers, any_key=any_key,
         note_web_default=note_web_default,
+        note_synth_provider=note_synth_provider,
+        perplexity_web_ready=perplexity_web_ready,
         past_notes=wnotes.list_notes(limit=25),
         depth=wtpl.DEPTH, batch_size=wtpl.BATCH_SIZE,
         hsi_id=wtpl.HSI_FACTSET_ID,
@@ -266,6 +305,35 @@ def weekly_data_activate(sid: int = Form(...)):
     return RedirectResponse("/weekly", status_code=303)
 
 
+@router.post("/weekly/data/delete")
+def weekly_data_delete(sid: int = Form(...)):
+    """Delete one uploaded data snapshot (frees its data_json blob). Never 500s;
+    if the id is already gone, still redirect with a friendly message. Leaves the
+    ticker-list universe and weekly notes untouched."""
+    removed = False
+    try:
+        removed = wsnap.delete_snapshot(sid)
+    except Exception:  # noqa: BLE001 — must never crash
+        removed = False
+    msg = (f"Deleted weekly data snapshot #{sid}." if removed
+           else f"Snapshot #{sid} was already removed.")
+    return RedirectResponse(f"/weekly?msg={quote(msg[:200])}", status_code=303)
+
+
+@router.post("/weekly/data/clear")
+def weekly_data_clear():
+    """Clear ALL uploaded data snapshots (frees all data_json blobs). Never 500s;
+    with nothing to clear, still redirect with a friendly message. The ticker
+    universe and weekly notes are NOT affected."""
+    try:
+        n = wsnap.clear_all_snapshots()
+    except Exception:  # noqa: BLE001 — must never crash
+        n = 0
+    msg = (f"Cleared {n} weekly data snapshot(s)." if n
+           else "No weekly data snapshots to clear.")
+    return RedirectResponse(f"/weekly?msg={quote(msg[:200])}", status_code=303)
+
+
 # ---------------------------------------------------------------------------
 # (d) Generate note + view / export
 # ---------------------------------------------------------------------------
@@ -277,11 +345,15 @@ def _build_note(provider_name: str = "", with_news: Optional[bool] = None) -> Di
     metrics = wmetrics.compute_weekly_metrics(data or {})
     provider = _resolve_note_provider(provider_name)
     fallbacks = build_fallback_providers(getattr(provider, "name", "")) if provider else []
+    web_provider = resolve_web_provider()
+    # Default with_news to True when EITHER the synthesis provider or the
+    # dedicated Perplexity web provider can ground catalysts in live web search.
     if with_news is None:
-        with_news = is_web_capable(provider)
+        with_news = is_web_capable(provider) or is_web_capable(web_provider)
     note = wnote.generate_weekly_note(
         provider, metrics, asof=metrics.get("asof"),
-        with_news=bool(with_news), fallback_providers=fallbacks,
+        with_news=with_news, fallback_providers=fallbacks,
+        web_provider=web_provider,
     )
     note["_metrics"] = metrics
     return note
