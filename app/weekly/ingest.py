@@ -178,3 +178,152 @@ def parse_weekly_workbook(content: bytes, filename: str = "") -> Dict[str, Any]:
         out["error"] = ("No ticker or HSI series were read. Make sure you ran the "
                         "ActivateSpills macro so the formulas filled in.")
     return out
+
+
+# ---------------------------------------------------------------------------
+# Multi-file merge (Phase D: split-template re-upload)
+# ---------------------------------------------------------------------------
+def _last_date(records: List[Dict[str, Any]]) -> Optional[pd.Timestamp]:
+    """Latest non-null ``date`` across a list of {date,...} records."""
+    ds = []
+    for r in records or []:
+        d = r.get("date")
+        if d:
+            ts = pd.Timestamp(d)
+            if pd.notna(ts):
+                ds.append(ts)
+    return max(ds) if ds else None
+
+
+def _n_valid(records: List[Dict[str, Any]], field: str = "close") -> int:
+    """Count records with a non-null value in ``field`` (richness measure)."""
+    n = 0
+    for r in records or []:
+        if r.get(field) is not None:
+            n += 1
+    return n
+
+
+def _dedupe_by_date(
+    records: List[Dict[str, Any]], fields: List[str]
+) -> List[Dict[str, Any]]:
+    """Union of records keyed by ISO date; prefer the first non-null value per
+    field, then sort chronological. Records without a date are kept as-is at the
+    end (order-preserving)."""
+    by_date: Dict[str, Dict[str, Any]] = {}
+    undated: List[Dict[str, Any]] = []
+    for r in records or []:
+        d = r.get("date")
+        if not d:
+            undated.append(dict(r))
+            continue
+        key = str(d)
+        cur = by_date.get(key)
+        if cur is None:
+            by_date[key] = {"date": d, **{f: r.get(f) for f in fields}}
+        else:
+            for f in fields:
+                if cur.get(f) is None and r.get(f) is not None:
+                    cur[f] = r.get(f)
+    merged = [by_date[k] for k in sorted(by_date.keys())]
+    return merged + undated
+
+
+def merge_weekly_parsed(parsed_list: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """Merge several ``parse_weekly_workbook`` dicts (one per uploaded split
+    file) into a single combined snapshot dict, BEFORE persistence.
+
+    Reconciliation rules:
+      * ``tickers``: union across files. On a duplicate ticker, keep the series
+        with more valid closes (ties -> existing); never lose data.
+      * ``hsi``: every split file carries the same HSI sheet -- take the union of
+        dates, dedupe by date (prefer the first non-null close), sort chrono.
+      * ``asof``: recompute as the latest COMMON date across all merged ticker
+        series (+ HSI if present) -- the MIN of each series' last date.
+      * ``partial``: union of per-file partial flags.
+      * errors: aggregated into a combined ``error`` string. Only a hard error
+        (no tickers AND no HSI anywhere) blocks the caller.
+      * ``sources``: list of source filenames; ``meta`` aggregates counts.
+
+    Pure / never raises. A 1-element list merges to an equivalent single dict.
+    """
+    items = [p for p in (parsed_list or []) if isinstance(p, dict)]
+    tickers: Dict[str, List[Dict[str, Any]]] = {}
+    hsi_all: List[Dict[str, Any]] = []
+    partial_set: set = set()
+    sources: List[str] = []
+    file_errors: List[str] = []
+    n_files = 0
+
+    for p in items:
+        n_files += 1
+        src = (p.get("meta") or {}).get("source") or ""
+        sources.append(str(src) if src else f"file_{n_files}")
+        err = p.get("error")
+        if err:
+            file_errors.append(str(err))
+        # Merge tickers (keep the richer series on collision).
+        for tkr, recs in (p.get("tickers") or {}).items():
+            if not tkr:
+                continue
+            if tkr not in tickers:
+                tickers[tkr] = list(recs or [])
+            else:
+                if _n_valid(recs) > _n_valid(tickers[tkr]):
+                    tickers[tkr] = list(recs or [])
+        # Accumulate HSI for cross-file dedupe.
+        hsi_all.extend(p.get("hsi") or [])
+        for t in (p.get("partial") or []):
+            partial_set.add(t)
+
+    hsi_records = _dedupe_by_date(hsi_all, ["close"])
+
+    # as-of = latest COMMON date: MIN over each series' last date (+ HSI).
+    last_dates: List[pd.Timestamp] = []
+    for recs in tickers.values():
+        ld = _last_date(recs)
+        if ld is not None:
+            last_dates.append(ld)
+    hsi_last = _last_date(hsi_records)
+    common = list(last_dates)
+    if hsi_last is not None:
+        common.append(hsi_last)
+    asof: Optional[str] = None
+    if common:
+        asof = min(common).date().isoformat()
+
+    n_stale = se.days_stale(asof) if asof else None
+    stale = (n_stale is not None) and (n_stale > 3)
+
+    combined_error: Optional[str] = None
+    if not tickers and not hsi_records:
+        combined_error = ("No ticker or HSI series were read from any file. Make "
+                          "sure you ran the ActivateSpills macro so the formulas "
+                          "filled in.")
+    elif file_errors:
+        # Soft warning -- surfaced but non-blocking.
+        combined_error = "; ".join(dict.fromkeys(file_errors))
+
+    meta = {
+        "n_tickers": len(tickers),
+        "hsi_loaded": bool(hsi_records),
+        "n_partial": len(partial_set),
+        "n_files": n_files,
+        "sources": sources,
+        "latest_per_ticker": (max(last_dates).date().isoformat() if last_dates else None),
+        "hsi_last": (hsi_last.date().isoformat() if hsi_last is not None else None),
+        "source": ", ".join(sources),
+    }
+    out: Dict[str, Any] = {
+        "asof": asof,
+        "n_stale": n_stale,
+        "stale": bool(stale),
+        "tickers": tickers,
+        "hsi": hsi_records,
+        "partial": sorted(partial_set),
+        "sources": sources,
+        "meta": meta,
+    }
+    if combined_error:
+        out["error"] = combined_error
+    return out

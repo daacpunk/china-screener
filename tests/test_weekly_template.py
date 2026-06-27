@@ -91,3 +91,37 @@ def test_total_ticker_sheets_across_batches():
         wb = _load(data)
         total += len([s for s in wb.sheetnames if s not in ("Instructions", "HSI", "Manifest")])
     assert total == 170
+
+
+def test_all_in_one_includes_every_ticker_above_batch_size():
+    # all_in_one must NOT cap/split: > BATCH_SIZE tickers -> ONE workbook with
+    # every ticker sheet + the single HSI + Instructions + Manifest sheets.
+    n = wtpl.BATCH_SIZE + 30  # comfortably above the batch threshold
+    tickers = [f"T{i:03d}-HK" for i in range(n)]
+    wb = _load(wtpl.build_weekly_template(tickers))
+    names = set(wb.sheetnames)
+    assert {"Instructions", "HSI", "Manifest"} <= names
+    ticker_sheets = [s for s in wb.sheetnames if s not in ("Instructions", "HSI", "Manifest")]
+    assert len(ticker_sheets) == n
+    for t in tickers:
+        assert t in names
+    # Exactly one HSI sheet in the single file.
+    assert sum(1 for s in wb.sheetnames if s == "HSI") == 1
+
+
+def test_split_zip_each_file_has_hsi_and_instructions():
+    # Split mode -> ZIP of multiple workbooks; EACH must independently carry the
+    # HSI sheet + Instructions so it can be refreshed/uploaded standalone.
+    tickers = [f"T{i:03d}-HK" for i in range(160)]
+    files = wtpl.build_weekly_templates_batched(tickers, batch_size=50)
+    zb = wtpl.zip_templates(files)
+    zf = zipfile.ZipFile(io.BytesIO(zb))
+    members = zf.namelist()
+    assert len(members) >= 2  # multiple workbooks
+    for member in members:
+        wb = _load(zf.read(member))
+        names = set(wb.sheetnames)
+        assert "HSI" in names, f"{member} missing HSI sheet"
+        assert "Instructions" in names, f"{member} missing Instructions"
+        # HSI uses the literal benchmark id.
+        assert str(wb["HSI"]["A2"].value) == HSI_FACTSET_ID

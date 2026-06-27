@@ -181,21 +181,39 @@ def weekly_universe_activate(uid: int = Form(...)):
 # ---------------------------------------------------------------------------
 # (b) Template download
 # ---------------------------------------------------------------------------
+def _clamp_batch_size(raw: str) -> int:
+    """Parse + clamp the split batch size to a sane 10..200 range."""
+    try:
+        bs = int(str(raw).strip())
+    except (TypeError, ValueError):
+        bs = wtpl.BATCH_SIZE
+    return max(10, min(200, bs))
+
+
 @router.post("/weekly/template")
-def weekly_template(as_zip: str = Form("")):
+def weekly_template(layout: str = Form(""), batch_size: str = Form(""),
+                    as_zip: str = Form("")):
     uni = wuni.get_active()
     rows = uni.get("rows", []) if uni else []
     tickers = [r.get("factset_ticker") for r in rows if r.get("factset_ticker")]
     if not tickers:
         # Still produce a usable single-ticker example so the download never 500s.
         tickers = ["0001-HK"]
-    want_zip = _truthy(as_zip) or (len(tickers) > wtpl.BATCH_SIZE)
-    if want_zip and len(tickers) > wtpl.BATCH_SIZE:
-        files = wtpl.build_weekly_templates_batched(tickers)
+
+    # Resolve the layout choice. Explicit `layout` wins; otherwise fall back to
+    # the legacy `as_zip` checkbox (as_zip=1 -> split). Default: all_in_one.
+    choice = str(layout or "").strip().lower()
+    if choice not in ("all_in_one", "split"):
+        choice = "split" if _truthy(as_zip) else "all_in_one"
+
+    if choice == "split":
+        bs = _clamp_batch_size(batch_size)
+        files = wtpl.build_weekly_templates_batched(tickers, batch_size=bs)
         data = wtpl.zip_templates(files)
         return Response(content=data, media_type="application/zip",
                         headers={"Content-Disposition":
                                  "attachment; filename=weekly_templates.zip"})
+    # all_in_one: EVERY ticker in a single workbook, no implicit cap.
     data = wtpl.build_weekly_template(tickers)
     return Response(content=data, media_type=_XLSX_CT,
                     headers={"Content-Disposition":
@@ -206,18 +224,39 @@ def weekly_template(as_zip: str = Form("")):
 # (c) Populated-data upload
 # ---------------------------------------------------------------------------
 @router.post("/weekly/data/upload")
-async def weekly_data_upload(file: UploadFile = File(...)):
-    content = await file.read()
-    parsed = wing.parse_weekly_workbook(content, file.filename or "")
-    if parsed.get("error") and not parsed.get("tickers") and not parsed.get("hsi"):
-        return RedirectResponse(f"/weekly?err={quote(str(parsed['error'])[:300])}",
+async def weekly_data_upload(
+    files: List[UploadFile] = File(default=None),
+    file: UploadFile = File(default=None),
+):
+    # Accept the new multi-file field `files` AND the legacy single `file`
+    # field for backward-compat. Normalise to one list of UploadFiles.
+    uploads: List[UploadFile] = []
+    if files:
+        uploads.extend([f for f in files if f is not None])
+    if file is not None:
+        uploads.append(file)
+    if not uploads:
+        return RedirectResponse("/weekly?err=No+file+uploaded.", status_code=303)
+
+    # Parse each file independently, then merge into one snapshot.
+    parsed_list: List[Dict[str, Any]] = []
+    for up in uploads:
+        content = await up.read()
+        parsed_list.append(wing.parse_weekly_workbook(content, up.filename or ""))
+    merged = wing.merge_weekly_parsed(parsed_list)
+
+    if merged.get("error") and not merged.get("tickers") and not merged.get("hsi"):
+        return RedirectResponse(f"/weekly?err={quote(str(merged['error'])[:300])}",
                                 status_code=303)
-    wsnap.save_snapshot(parsed, name=(file.filename or "weekly data"), make_active=True)
-    n = len((parsed.get("tickers") or {}))
-    hsi = "HSI loaded" if parsed.get("hsi") else "no HSI sheet"
-    asof = parsed.get("asof") or "unknown"
-    warn = f" {parsed['error']}" if parsed.get("error") else ""
-    msg = f"Ingested {n} tickers ({hsi}); as-of {asof}.{warn}"
+
+    k = len(uploads)
+    name = (uploads[0].filename or "weekly data") if k == 1 else f"{k} files"
+    wsnap.save_snapshot(merged, name=name, make_active=True)
+    n = len((merged.get("tickers") or {}))
+    hsi = "HSI loaded" if merged.get("hsi") else "no HSI sheet"
+    asof = merged.get("asof") or "unknown"
+    warn = f" Note: {merged['error']}" if merged.get("error") else ""
+    msg = f"Ingested {n} tickers from {k} file{'s' if k != 1 else ''}; {hsi}; as-of {asof}.{warn}"
     return RedirectResponse(f"/weekly?msg={quote(msg[:400])}", status_code=303)
 
 
