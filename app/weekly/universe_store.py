@@ -53,7 +53,12 @@ def save_universe(
         sym = str(r.get("symbol") or "").strip()
         if not fs:
             continue
-        clean.append({"symbol": sym or fs, "factset_ticker": fs})
+        rec: Dict[str, str] = {"symbol": sym or fs, "factset_ticker": fs}
+        # Optional per-row sector (used as a GICS fallback downstream).
+        sec = str(r.get("sector") or "").strip()
+        if sec and sec.lower() != "nan":
+            rec["sector"] = sec
+        clean.append(rec)
     conn = get_conn(db_path)
     try:
         if make_active:

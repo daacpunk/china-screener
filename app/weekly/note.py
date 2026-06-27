@@ -95,6 +95,69 @@ def _md_table(headers: List[str], rows: List[List[str]]) -> str:
 # ---------------------------------------------------------------------------
 # Deterministic metric -> markdown tables (the data backbone; always rendered)
 # ---------------------------------------------------------------------------
+def _attr_phrase(attr: Dict[str, Any]) -> str:
+    """One-line attribution descriptor: tag + peer median + residual (pp)."""
+    attr = attr or {}
+    tag = attr.get("attribution")
+    if not tag:
+        return "—"
+    pm = attr.get("peer_median_1w")
+    res = attr.get("residual_1w")
+    grp = attr.get("peer_group_used")
+    n = attr.get("peer_count")
+    bits = [str(tag)]
+    if pm is not None:
+        bits.append(f"peer med {_pct(pm)}")
+    if res is not None:
+        bits.append(f"resid {_pct(res)}")
+    if grp and n:
+        bits.append(f"{grp} n={n}")
+    return "; ".join(bits)
+
+
+def render_fundamentals_table(metrics: Dict[str, Any]) -> str:
+    """Compact 'Fundamentals & attribution' table for the notable movers.
+
+    Rendered ONLY when at least one notable mover carries fundamentals or an
+    attribution tag; otherwise returns ''. Strictly reflects computed values,
+    n/a (—) where missing. Never raises."""
+    metrics = metrics or {}
+    per = metrics.get("per_ticker") or {}
+    names = metrics.get("catalyst_names") or []
+    rows: List[List[str]] = []
+    any_data = False
+    for sym in names:
+        m = per.get(sym, {}) or {}
+        mom = m.get("momentum") or {}
+        attr = m.get("attribution") or {}
+        if m.get("has_fundamentals") or attr.get("attribution"):
+            any_data = True
+        rev_dir = mom.get("revision_dir") or "—"
+        rows.append([
+            str(sym),
+            _pct(m.get("ret_1w")),
+            _ratio(m.get("fwd_pe")),
+            (f"{rev_dir} {_pct(mom.get('revision_pct'))}"
+             if mom.get("revision_pct") is not None else rev_dir),
+            _pct(mom.get("dispersion")),
+            (str(m.get("sector")) if m.get("sector") else "—"),
+            _attr_phrase(attr),
+        ])
+    if not any_data:
+        return ""
+    return (
+        "\n### Fundamentals & attribution (notable movers)\n"
+        + _md_table(
+            ["Symbol", "1W", "Fwd P/E", "EPS rev (4wk)", "Disp",
+             "Sector", "Attribution"],
+            rows,
+        )
+        + "_Fwd P/E = latest close / FY1 EPS mean (— when EPS≤0/missing). "
+        "EPS rev = 4-week change in FY1 EPS mean. Disp = stddev/|FY1 EPS|. "
+        "Attribution nets the 1W move vs a leave-one-out peer median._\n"
+    )
+
+
 def render_metric_tables(metrics: Dict[str, Any]) -> str:
     """The pure, deterministic D4 view as markdown. Used both as grounding for
     the LLM and as the no-key fallback body. Never raises."""
@@ -172,6 +235,11 @@ def render_metric_tables(metrics: Dict[str, Any]) -> str:
          ["20D vol (ann.)", _vol(hsi.get("vol_20d"))],
          ["Short trend", str(hsi.get("trend") or "n/a")]],
     ))
+
+    # Fundamentals & attribution (only when present for notable movers).
+    fund_tbl = render_fundamentals_table(metrics)
+    if fund_tbl:
+        parts.append(fund_tbl)
     return "\n".join(parts)
 
 
@@ -198,9 +266,14 @@ def build_observations_prompt(metrics: Dict[str, Any]) -> str:
         "volatility is annualized stdev of daily returns; momentum is trailing "
         "return and 3M-return/20D-vol). Write 2-4 tight paragraphs of prose that "
         "summarize the week's movers & shakers and the most interesting "
-        "opportunities/gaps. Ground EVERYTHING strictly in these numbers — do NOT "
-        "invent tickers, prices, news, or catalysts (a separate section covers "
-        "catalysts). Be concise and specific; cite the figures. Use plain prose, "
+        "opportunities/gaps. Where the Fundamentals & attribution table is "
+        "present, weave in the relevant forward P/E, 4-week EPS revision "
+        "direction/magnitude, estimate dispersion, and — critically — whether each "
+        "notable move was Stock-specific, Sector-driven, or Mixed (per the "
+        "leave-one-out peer-median attribution). Ground EVERYTHING strictly in "
+        "these numbers — do NOT invent tickers, prices, news, or catalysts (a "
+        "separate section covers catalysts), and write n/a where a fundamental is "
+        "missing. Be concise and specific; cite the figures. Use plain prose, "
         "no headers.\n\n"
         f"{tables}\n"
     )
@@ -213,16 +286,56 @@ def build_catalyst_prompt(metrics: Dict[str, Any]) -> str:
     lines: List[str] = []
     for sym in names:
         m = per.get(sym, {})
+        mom = m.get("momentum") or {}
+        attr = m.get("attribution") or {}
+        extra = ""
+        # Fundamentals context (only when present).
+        fparts: List[str] = []
+        if m.get("fwd_pe") is not None:
+            fparts.append(f"fwd P/E {_ratio(m.get('fwd_pe'))}")
+        if mom.get("revision_dir"):
+            fparts.append(
+                f"FY1 EPS revised {mom.get('revision_dir')} "
+                f"{_pct(mom.get('revision_pct'))} over 4wks"
+            )
+        if fparts:
+            extra += " Fundamentals: " + ", ".join(fparts) + "."
+        # Attribution-steered guidance for the web lookup.
+        tag = attr.get("attribution")
+        if tag == "Stock-specific":
+            extra += (
+                " Attribution: STOCK-SPECIFIC (residual "
+                f"{_pct(attr.get('residual_1w'))} vs peer median "
+                f"{_pct(attr.get('peer_median_1w'))}) — prioritize NAME-LEVEL "
+                "catalysts (this company's earnings/guidance, M&A, contracts, "
+                "management, single-stock news)."
+            )
+        elif tag == "Sector-driven":
+            extra += (
+                " Attribution: SECTOR-DRIVEN (peer median "
+                f"{_pct(attr.get('peer_median_1w'))}, small residual "
+                f"{_pct(attr.get('residual_1w'))}) — prioritize the SECTOR / MACRO "
+                "driver (policy, commodity/rate moves, sector rotation/flows) "
+                "rather than name-specific news."
+            )
+        elif tag == "Mixed":
+            extra += (
+                " Attribution: MIXED — check BOTH a sector/macro driver and any "
+                "name-specific catalyst."
+            )
         lines.append(
             f"- {sym}: 1W {_pct(m.get('ret_1w'))}, vs HSI {_pct(m.get('rel_1w'))}, "
             f"volume {_ratio(m.get('vol_ratio'))} of 20D ADV, "
-            f"max single-day spike {_ratio(m.get('max_spike_ratio'))}."
+            f"max single-day spike {_ratio(m.get('max_spike_ratio'))}.{extra}"
         )
     namelist = "\n".join(lines) or "(none)"
     return (
         "You are an equity strategist. Use LIVE WEB / RECENT-NEWS search to find "
         "the LIKELY catalyst behind each notable move below in a Hang Seng (HSI) "
-        f"universe over the week ending {asof}. For each name, look for: earnings "
+        f"universe over the week ending {asof}. Let the ATTRIBUTION tag on each "
+        "name STEER your search: Stock-specific → hunt company-level catalysts; "
+        "Sector-driven → identify the sector/macro driver; Mixed → cover both. "
+        "For each name, look for: earnings "
         "or guidance, M&A, regulatory/policy news, sector flows, index "
         "inclusion/exclusion or rebalance, ex-dividend/forced flow. Write ONE "
         "short bullet per name: the symbol, the 1W move, and the cited catalyst "

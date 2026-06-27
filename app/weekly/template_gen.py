@@ -45,6 +45,12 @@ from . import HSI_FACTSET_ID
 DEPTH = 300
 BATCH_SIZE = 75
 
+# Fundamentals block layout: single-cell point-in-time formulas placed in the
+# columns F (label) / G (=FDS(...) as TEXT) so they never collide with the
+# spilling B/C/D price/volume series. One row per field, starting at row 2.
+FUND_LABEL_COL = 6   # F
+FUND_FORMULA_COL = 7  # G
+
 
 def _price_expr(depth: int) -> str:
     return f"P_PRICE(0,-{depth}D,D)"
@@ -52,6 +58,43 @@ def _price_expr(depth: int) -> str:
 
 def _vol_expr(depth: int) -> str:
     return f"P_VOLUME_DAY(0,-{depth}D,D)"
+
+
+# ---------------------------------------------------------------------------
+# Fundamentals — point-in-time single-cell FE_ESTIMATE FQL + GICS formulas.
+# These are the EXACT, user-tested Excel-FQL forms (see FE_ESTIMATE_SYNTAX).
+# Each value is a single cell (NOT a spill). Forward P/E is NOT a native field —
+# it is computed in-app downstream as latest_close / FY1 EPS mean.
+# ---------------------------------------------------------------------------
+# key -> (human label, FQL expression inside =FDS(A2,"..."))
+FUNDAMENTAL_FIELDS: List[Tuple[str, str, str]] = [
+    ("fy1_eps_mean", "FY1 EPS mean", "FE_ESTIMATE(EPS,MEAN,ANN_ROLL,+1,NOW,,,'')"),
+    ("fy2_eps_mean", "FY2 EPS mean", "FE_ESTIMATE(EPS,MEAN,ANN_ROLL,+2,NOW,,,'')"),
+    ("fy1_eps_mean_4wk_ago", "FY1 EPS mean (-20D, ~4wks ago)",
+     "FE_ESTIMATE(EPS,MEAN,ANN_ROLL,+1,-20D,,,'')"),
+    ("fy1_eps_stddev", "FY1 EPS stddev", "FE_ESTIMATE(EPS,STDDEV,ANN_ROLL,+1,NOW,,,'')"),
+    ("fy1_eps_num_est", "FY1 EPS num_est", "FE_ESTIMATE(EPS,NUM_EST,ANN_ROLL,+1,NOW,,,'')"),
+    ("gics_sector", "GICS sector", "FG_GICS_SECTOR"),
+    ("gics_sub_industry", "GICS sub-industry", "FG_GICS_SUB_IND"),
+]
+
+
+# label text -> canonical key (used by ingest to map the populated label column).
+FUNDAMENTAL_LABEL_TO_KEY: Dict[str, str] = {
+    label: key for key, label, _expr in FUNDAMENTAL_FIELDS
+}
+FUNDAMENTAL_KEYS: List[str] = [key for key, _label, _expr in FUNDAMENTAL_FIELDS]
+# string-valued (non-numeric) fundamental fields.
+FUNDAMENTAL_TEXT_KEYS = {"gics_sector", "gics_sub_industry"}
+
+
+def fundamental_formulas(ticker_cell: str = "A2") -> Dict[str, str]:
+    """Per-ticker point-in-time fundamental formulas referencing the ticker CELL.
+
+    Returns {key: '=FDS(A2,"<FQL>")'} using the EXACT FE_ESTIMATE / FG_GICS
+    forms. These are single cells (point-in-time), not spills.
+    """
+    return {key: f'=FDS({ticker_cell},"{expr}")' for key, _label, expr in FUNDAMENTAL_FIELDS}
 
 
 def ticker_formulas(ticker_cell: str = "A2", depth: int = DEPTH) -> Dict[str, str]:
@@ -76,9 +119,12 @@ def hsi_formulas(depth: int = DEPTH) -> Dict[str, str]:
 _INSTRUCTIONS_HEADER = "Weekly Quant One-Pager — FactSet Template (Phase D)"
 
 
-def _instructions_rows(depth: int, n_tickers: int, batch_note: str = "") -> List[List[str]]:
+def _instructions_rows(depth: int, n_tickers: int, batch_note: str = "",
+                       include_fundamentals: bool = True) -> List[List[str]]:
     tf = ticker_formulas("A2", depth)
     hf = hsi_formulas(depth)
+    fund_col = get_column_letter(FUND_FORMULA_COL)
+    n_fund = len(FUNDAMENTAL_FIELDS)
     rows: List[List[str]] = [
         [_INSTRUCTIONS_HEADER],
         [""],
@@ -107,6 +153,7 @@ def _instructions_rows(depth: int, n_tickers: int, batch_note: str = "") -> List
         ["---------- COPY THIS MACRO ----------"],
         ["Sub ActivateSpills()"],
         ["  Dim ws As Worksheet, c As Range, cols As Variant, i As Integer"],
+        ["  Dim fr As Integer"],
         ["  cols = Array(2, 3, 4)   ' B=date, C=close, D=volume"],
         ["  For Each ws In ThisWorkbook.Worksheets"],
         ['    If ws.Name <> "Instructions" And ws.Name <> "Manifest" Then'],
@@ -118,6 +165,15 @@ def _instructions_rows(depth: int, n_tickers: int, batch_note: str = "") -> List
         ["          c.Formula2 = f          " + "' enter as dynamic array (spills)"],
         ["        End If"],
         ["      Next i"],
+        [f"      ' fundamentals: single cells in column {fund_col} (rows 2..{1 + n_fund})"],
+        [f"      For fr = 2 To {1 + n_fund}"],
+        [f"        Set c = ws.Cells(fr, {FUND_FORMULA_COL})  ' column {fund_col}"],
+        ['        If Left(c.Text, 1) = "=" Then'],
+        ["          Dim ff As String: ff = c.Text"],
+        ['          c.Value = """"'],
+        ["          c.Formula2 = ff"],
+        ["        End If"],
+        ["      Next fr"],
         ["    End If"],
         ["  Next ws"],
         ["End Sub"],
@@ -138,10 +194,28 @@ def _instructions_rows(depth: int, n_tickers: int, batch_note: str = "") -> List
         ["No macros? Manual fallback: click C2, press F2 then Enter to re-enter"],
         ["the formula (it will spill); repeat for B2/D2 on each sheet."],
     ]
+    if include_fundamentals:
+        ff = fundamental_formulas("A2")
+        rows += [
+            [""],
+            [f"FUNDAMENTALS (point-in-time single cells, column {fund_col}, one per row):"],
+            ["  Estimates use the FE_ESTIMATE FQL function (EPS consensus); GICS"],
+            ["  classification via FG_GICS_*. Availability depends on your FactSet"],
+            ["  entitlement — NA shows as blank and is treated n/a downstream."],
+        ]
+        for i, (key, label, _expr) in enumerate(FUNDAMENTAL_FIELDS):
+            rows.append([f"  {fund_col}{2 + i} ({label}): {ff[key]}"])
+        rows += [
+            ["  Forward P/E is NOT a native field — computed in-app as"],
+            ["  latest_close / FY1 EPS mean (n/a when EPS<=0 or missing). EPS"],
+            ["  revision direction/magnitude is computed in-app from the current"],
+            ["  FY1 mean vs the -20D (~4 weeks ago) FY1 mean."],
+        ]
     return rows
 
 
-def _manifest_rows(tickers: List[str], depth: int) -> List[List[str]]:
+def _manifest_rows(tickers: List[str], depth: int,
+                   include_fundamentals: bool = True) -> List[List[str]]:
     tf = ticker_formulas("A2", depth)
     hf = hsi_formulas(depth)
     rows = [
@@ -153,6 +227,24 @@ def _manifest_rows(tickers: List[str], depth: int) -> List[List[str]]:
         ["HSI", "A", "identifier", HSI_FACTSET_ID, depth],
         ["HSI", "B", "date (JULIAN)", hf["date"], depth],
         ["HSI", "C", "close", hf["close"], depth],
+    ]
+    if include_fundamentals:
+        ff = fundamental_formulas("A2")
+        cell = get_column_letter(FUND_FORMULA_COL)
+        rows += [
+            ["", "", "", "", ""],
+            ["FUNDAMENTALS (point-in-time single cells; col G per ticker sheet).",
+             "", "", "", ""],
+            ["Availability of estimate/GICS fields depends on your FactSet "
+             "entitlement; NA shows as blank and is treated n/a downstream.",
+             "", "", "", ""],
+        ]
+        for i, (key, label, _expr) in enumerate(FUNDAMENTAL_FIELDS):
+            rows.append(["<each ticker>", f"{cell}{2 + i}",
+                         f"{label} (point-in-time)", ff[key], ""])
+        rows.append(["<computed in-app>", "", "forward P/E",
+                     "latest_close / FY1 EPS mean (n/a if EPS<=0/missing)", ""])
+    rows += [
         ["", "", "", "", ""],
         ["Tickers in this file:", "", "", "", len(tickers)],
     ]
@@ -161,21 +253,43 @@ def _manifest_rows(tickers: List[str], depth: int) -> List[List[str]]:
     return rows
 
 
+def _write_fundamentals_block(ws) -> None:
+    """Write the point-in-time fundamentals block (label in F, =FDS(...) TEXT in G)
+    on a ticker sheet, one field per row starting at row 2. Stored as TEXT so
+    Excel doesn't inject '@' on open; the ActivateSpills macro re-enters them."""
+    ff = fundamental_formulas("A2")
+    ws.cell(row=1, column=FUND_LABEL_COL, value="fundamental")
+    ws.cell(row=1, column=FUND_FORMULA_COL, value="value (point-in-time)")
+    for i, (key, label, _expr) in enumerate(FUNDAMENTAL_FIELDS):
+        r = 2 + i
+        ws.cell(row=r, column=FUND_LABEL_COL, value=label)
+        c = ws.cell(row=r, column=FUND_FORMULA_COL, value=ff[key])
+        c.data_type = "s"
+    ws.column_dimensions[get_column_letter(FUND_LABEL_COL)].width = 30
+    ws.column_dimensions[get_column_letter(FUND_FORMULA_COL)].width = 46
+
+
 def build_weekly_template(
     tickers: List[str],
     depth: int = DEPTH,
     batch_note: str = "",
+    include_fundamentals: bool = True,
 ) -> bytes:
     """Build a single weekly-template workbook (Instructions + Manifest + HSI +
     one sheet per ticker) as xlsx bytes. Formulas stored as TEXT; spill metadata
-    added via the shared _strip_empty_formula_values pass."""
+    added via the shared _strip_empty_formula_values pass.
+
+    ``include_fundamentals`` (default True) adds a point-in-time fundamentals
+    block (FE_ESTIMATE EPS consensus + GICS) to each ticker sheet. When False,
+    the lean price/volume-only layout (the original Phase D behavior) is built.
+    """
     depth = max(int(depth or DEPTH), DEPTH)
     wb = Workbook()
 
     # Instructions sheet (first).
     info = wb.active
     info.title = "Instructions"
-    for r in _instructions_rows(depth, len(tickers), batch_note):
+    for r in _instructions_rows(depth, len(tickers), batch_note, include_fundamentals):
         info.append(r)
     info["A1"].font = Font(bold=True, size=14)
 
@@ -212,10 +326,12 @@ def build_weekly_template(
             c.data_type = "s"
         for col, w in ((1, 14), (2, 16), (3, 30), (4, 32)):
             ws.column_dimensions[get_column_letter(col)].width = w
+        if include_fundamentals:
+            _write_fundamentals_block(ws)
 
     # Manifest sheet (auditable).
     man = wb.create_sheet("Manifest")
-    for r in _manifest_rows(tickers, depth):
+    for r in _manifest_rows(tickers, depth, include_fundamentals):
         man.append(r)
     fg._style_header(man, 5)
     for col, w in ((1, 22), (2, 8), (3, 16), (4, 44), (5, 10)):
@@ -232,9 +348,11 @@ def build_weekly_templates_batched(
     tickers: List[str],
     depth: int = DEPTH,
     batch_size: int = BATCH_SIZE,
+    include_fundamentals: bool = True,
 ) -> List[Tuple[str, bytes]]:
     """Split into chunks of ``batch_size`` and build one standalone workbook per
-    chunk (each carries its own HSI sheet). Returns [(filename, bytes), ...]."""
+    chunk (each carries its own HSI sheet AND, when enabled, its own per-ticker
+    fundamentals block). Returns [(filename, bytes), ...]."""
     chunks = fg._chunk(list(tickers), batch_size)
     total = len(chunks)
     width = max(2, len(str(total)))
@@ -242,7 +360,8 @@ def build_weekly_templates_batched(
     for idx, chunk in enumerate(chunks, start=1):
         first, last = chunk[0], chunk[-1]
         note = f"Batch {idx} of {total} — tickers {first}..{last} ({len(chunk)} names)"
-        data = build_weekly_template(chunk, depth=depth, batch_note=note)
+        data = build_weekly_template(chunk, depth=depth, batch_note=note,
+                                     include_fundamentals=include_fundamentals)
         fname = f"weekly_template_batch_{idx:0{width}d}_of_{total:0{width}d}.xlsx"
         out.append((fname, data))
     return out

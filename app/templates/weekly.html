@@ -14,20 +14,22 @@
   {% if n_universe %}
   <div class="note ok" style="margin-bottom:8px">Active universe: <b>{{ n_universe }}</b> names{% if universe and universe.name %} — {{ universe.name }}{% endif %}.</div>
   {% else %}
-  <div class="empty"><p>No weekly universe yet. Upload a 2-column file: <b>Symbol</b> (display) and <b>FactSet ticker</b> (used in formulas).</p></div>
+  <div class="empty"><p>No weekly universe yet. Upload a file with <b>Symbol</b> (display) and <b>FactSet ticker</b> (used in formulas), plus an optional 3rd <b>Sector</b> column (GICS fallback).</p></div>
   {% endif %}
   <form action="/weekly/universe/upload" method="post" enctype="multipart/form-data">
     <div class="row">
       <div><label>File (CSV / XLSX)</label><input type="file" name="file" accept=".csv,.xlsx,.xls" required></div>
       <div><label>Symbol column <span class="muted">(optional)</span></label><input type="text" name="symbol_col" placeholder="auto-detect" style="width:140px"></div>
       <div><label>FactSet ticker column <span class="muted">(optional)</span></label><input type="text" name="factset_col" placeholder="auto-detect" style="width:160px"></div>
+      <div><label>Sector column <span class="muted">(optional)</span></label><input type="text" name="sector_col" placeholder="auto-detect" style="width:140px"></div>
       <button class="btn" type="submit">Upload ticker list</button>
     </div>
+    <p class="help" style="margin-top:6px">2-column uploads still work. If a <b>Sector</b> column is present it's stored per row and used as a fallback when the template's GICS pull is missing.</p>
   </form>
   {% if universe_rows %}
   <details style="margin-top:10px"><summary>{{ n_universe }} names</summary>
-    <table class="data-table" style="margin-top:8px"><thead><tr><th>Symbol</th><th>FactSet ticker</th></tr></thead><tbody>
-      {% for r in universe_rows %}<tr><td>{{ r.symbol }}</td><td><code>{{ r.factset_ticker }}</code></td></tr>{% endfor %}
+    <table class="data-table" style="margin-top:8px"><thead><tr><th>Symbol</th><th>FactSet ticker</th><th>Sector</th></tr></thead><tbody>
+      {% for r in universe_rows %}<tr><td>{{ r.symbol }}</td><td><code>{{ r.factset_ticker }}</code></td><td>{{ r.sector or '—' }}</td></tr>{% endfor %}
     </tbody></table>
   </details>
   {% endif %}
@@ -47,11 +49,13 @@
 <!-- ================= (b) Template download ================= -->
 <h2>2 · Download FactSet template</h2>
 <div class="card">
-  <p class="help">A pre-built workbook with one sheet per ticker (<code>=FDS(A2,"P_PRICE(0,-{{ depth }}D,D)")</code> + volume + JULIAN dates) and a dedicated <b>HSI</b> sheet (id <code>{{ hsi_id }}</code>). Depth = <b>{{ depth }}</b> trading days (covers YTD + 60D vol window). Run the one-click <b>ActivateSpills</b> macro in the Instructions sheet, let FactSet refresh, then re-upload below. Batched into a ZIP above {{ batch_size }} names.</p>
+  <p class="help">A pre-built workbook with one sheet per ticker (<code>=FDS(A2,"P_PRICE(0,-{{ depth }}D,D)")</code> + volume + JULIAN dates), a per-ticker <b>fundamentals</b> block (FE_ESTIMATE EPS consensus + GICS), and a dedicated <b>HSI</b> sheet (id <code>{{ hsi_id }}</code>). Depth = <b>{{ depth }}</b> trading days (covers YTD + 60D vol window). Run the one-click <b>ActivateSpills</b> macro in the Instructions sheet, let FactSet refresh, then re-upload below. Batched into a ZIP above {{ batch_size }} names.</p>
   <form action="/weekly/template" method="post">
     <label class="flex" style="margin:0"><input type="radio" name="layout" value="all_in_one" checked style="width:auto"> <b>All in one</b> — every ticker in a single <code>.xlsx</code> (default)</label>
     <label class="flex" style="margin:4px 0"><input type="radio" name="layout" value="split" style="width:auto"> <b>Split</b> — one workbook per batch, delivered as a ZIP (each file is self-sufficient with its own HSI sheet)</label>
     <label class="flex" style="margin:4px 0">Batch size (split mode): <input type="number" name="batch_size" value="{{ batch_size }}" min="10" max="200" style="width:6em;margin-left:6px"></label>
+    <input type="hidden" name="include_fundamentals" value="0">
+    <label class="flex" style="margin:4px 0"><input type="checkbox" name="include_fundamentals" value="1" checked style="width:auto"> <b>Include fundamentals</b> — add the EPS-consensus + GICS block (uncheck for a lean price/volume-only template)</label>
     <button class="btn" type="submit" style="margin-top:8px">Download template</button>
   </form>
   {% if not n_universe %}<div class="note info" style="margin-top:8px">No universe yet — the template will contain a single example ticker. Upload your list above for the full set.</div>{% endif %}

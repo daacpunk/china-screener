@@ -31,6 +31,7 @@ import pandas as pd
 from .. import data_ingest as di
 from .. import screen_engine as se
 from . import HSI_FACTSET_ID
+from . import template_gen as wtpl
 
 # Minimum contiguous bars before a ticker is treated as full-history (else it is
 # flagged partial). 63 td ~= one quarter; enough for the 1M/3M momentum windows.
@@ -83,6 +84,77 @@ def _series_from_sheet(sdf: pd.DataFrame) -> Optional[Tuple[str, pd.DataFrame]]:
     return tkr_val, out[["date", "close", "volume"]]
 
 
+_FUND_LABEL_HEADERS = {"fundamental", "fundamentals", "field", "metric"}
+_FUND_VALUE_HEADERS = {"value (point-in-time)", "value", "point-in-time", "pit"}
+# FactSet NA/error markers that must coerce to None (case-insensitive).
+_FUND_NA = {s.lower() for s in di.FACTSET_ERRORS} | {"", "none", "nat"}
+
+
+def _clean_fund_value(raw: Any, key: str) -> Any:
+    """Coerce one populated fundamental cell into a stored value: None for blanks /
+    FactSet NA markers; float for numeric fields; trimmed str for GICS text."""
+    if raw is None:
+        return None
+    try:
+        if isinstance(raw, float) and pd.isna(raw):
+            return None
+    except Exception:  # noqa: BLE001
+        pass
+    s = str(raw).strip()
+    if s == "" or s.lower() in _FUND_NA:
+        return None
+    if key in wtpl.FUNDAMENTAL_TEXT_KEYS:
+        return s
+    # numeric field
+    try:
+        v = float(s.replace(",", ""))
+    except (TypeError, ValueError):
+        return None
+    return v if np.isfinite(v) else None
+
+
+def _fundamentals_from_sheet(sdf: pd.DataFrame) -> Dict[str, Any]:
+    """Parse the per-ticker point-in-time fundamentals block (label column +
+    value column) into {key: value|None}. Maps the populated label cells back to
+    canonical keys via the template's label map. Tolerates blanks / NA / a
+    missing block (returns {} when no recognizable labels are present). Never
+    raises."""
+    out: Dict[str, Any] = {}
+    if sdf is None or sdf.empty:
+        return out
+    try:
+        df = di._norm_cols(sdf)
+        cols = list(df.columns)
+        # Locate the label + value columns by header name first.
+        label_col = next((c for c in cols if str(c).strip().lower() in _FUND_LABEL_HEADERS), None)
+        value_col = next((c for c in cols if str(c).strip().lower() in _FUND_VALUE_HEADERS), None)
+        # Fallback: scan every column for one whose cells match known labels.
+        if label_col is None:
+            norm_labels = {lbl.strip().lower(): key
+                           for lbl, key in wtpl.FUNDAMENTAL_LABEL_TO_KEY.items()}
+            for c in cols:
+                series = df[c].astype(str).str.strip().str.lower()
+                if series.isin(norm_labels.keys()).sum() >= 2:
+                    label_col = c
+                    # value column = the next column to the right if any.
+                    ci = cols.index(c)
+                    value_col = cols[ci + 1] if ci + 1 < len(cols) else None
+                    break
+        if label_col is None or value_col is None:
+            return out
+        norm_map = {lbl.strip().lower(): key
+                    for lbl, key in wtpl.FUNDAMENTAL_LABEL_TO_KEY.items()}
+        for _, row in df.iterrows():
+            lbl = str(row.get(label_col) or "").strip().lower()
+            key = norm_map.get(lbl)
+            if not key:
+                continue
+            out[key] = _clean_fund_value(row.get(value_col), key)
+    except Exception:  # noqa: BLE001 — fundamentals are best-effort
+        return out
+    return out
+
+
 def _frame_records(df: pd.DataFrame, cols: List[str]) -> List[Dict[str, Any]]:
     recs = []
     for _, row in df.iterrows():
@@ -114,6 +186,7 @@ def parse_weekly_workbook(content: bytes, filename: str = "") -> Dict[str, Any]:
                 "tickers": {}, "hsi": [], "asof": None, "partial": []}
 
     tickers: Dict[str, List[Dict[str, Any]]] = {}
+    fundamentals: Dict[str, Dict[str, Any]] = {}
     hsi_records: List[Dict[str, Any]] = []
     partial: List[str] = []
     last_dates: List[pd.Timestamp] = []
@@ -137,6 +210,10 @@ def parse_weekly_workbook(content: bytes, filename: str = "") -> Dict[str, Any]:
         if not tkr or tkr.lower() == "nan":
             continue
         tickers[tkr] = _frame_records(frame, ["date", "close", "volume"])
+        # Point-in-time fundamentals block (best-effort; absent -> {}).
+        fnd = _fundamentals_from_sheet(sdf)
+        if fnd:
+            fundamentals[tkr] = fnd
         n = int(frame["close"].notna().sum())
         if n < MIN_BARS:
             partial.append(tkr)
@@ -157,10 +234,13 @@ def parse_weekly_workbook(content: bytes, filename: str = "") -> Dict[str, Any]:
     n_stale = se.days_stale(asof) if asof else None
     stale = (n_stale is not None) and (n_stale > 3)
 
+    n_fund = sum(1 for v in fundamentals.values()
+                 if any(x is not None for x in v.values()))
     meta = {
         "n_tickers": len(tickers),
         "hsi_loaded": bool(hsi_records),
         "n_partial": len(partial),
+        "n_fundamentals": n_fund,
         "latest_per_ticker": (max(last_dates).date().isoformat() if last_dates else None),
         "hsi_last": (hsi_last.date().isoformat() if hsi_last is not None else None),
         "source": filename or "",
@@ -170,6 +250,7 @@ def parse_weekly_workbook(content: bytes, filename: str = "") -> Dict[str, Any]:
         "n_stale": n_stale,
         "stale": bool(stale),
         "tickers": tickers,
+        "fundamentals": fundamentals,
         "hsi": hsi_records,
         "partial": sorted(partial),
         "meta": meta,
@@ -249,6 +330,7 @@ def merge_weekly_parsed(parsed_list: List[Dict[str, Any]]) -> Dict[str, Any]:
     """
     items = [p for p in (parsed_list or []) if isinstance(p, dict)]
     tickers: Dict[str, List[Dict[str, Any]]] = {}
+    fundamentals: Dict[str, Dict[str, Any]] = {}
     hsi_all: List[Dict[str, Any]] = []
     partial_set: set = set()
     sources: List[str] = []
@@ -271,6 +353,18 @@ def merge_weekly_parsed(parsed_list: List[Dict[str, Any]]) -> Dict[str, Any]:
             else:
                 if _n_valid(recs) > _n_valid(tickers[tkr]):
                     tickers[tkr] = list(recs or [])
+        # Merge fundamentals (prefer a record with more non-null fields).
+        for tkr, fnd in (p.get("fundamentals") or {}).items():
+            if not tkr or not isinstance(fnd, dict):
+                continue
+            cur = fundamentals.get(tkr)
+            if cur is None:
+                fundamentals[tkr] = dict(fnd)
+            else:
+                cur_n = sum(1 for v in cur.values() if v is not None)
+                new_n = sum(1 for v in fnd.values() if v is not None)
+                if new_n > cur_n:
+                    fundamentals[tkr] = dict(fnd)
         # Accumulate HSI for cross-file dedupe.
         hsi_all.extend(p.get("hsi") or [])
         for t in (p.get("partial") or []):
@@ -319,6 +413,7 @@ def merge_weekly_parsed(parsed_list: List[Dict[str, Any]]) -> Dict[str, Any]:
         "n_stale": n_stale,
         "stale": bool(stale),
         "tickers": tickers,
+        "fundamentals": fundamentals,
         "hsi": hsi_records,
         "partial": sorted(partial_set),
         "sources": sources,

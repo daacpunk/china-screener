@@ -74,17 +74,20 @@ def resolve_web_provider() -> Optional[LLMProvider]:
 _SYMBOL_ALIASES = ["symbol", "name", "ticker", "display", "stock", "company", "security"]
 _FACTSET_ALIASES = ["factset ticker", "fs ticker", "factset", "fsym", "fsym_id",
                     "identifier", "fds", "factset_ticker", "id", "ticker"]
+_SECTOR_ALIASES = ["sector", "gics sector", "gics_sector", "industry", "sector_name"]
 
 
 def parse_weekly_universe(
     content: bytes, filename: str = "",
-    symbol_col: str = "", factset_col: str = "",
+    symbol_col: str = "", factset_col: str = "", sector_col: str = "",
 ) -> Dict[str, Any]:
-    """Parse a 2-column ticker list into {rows, mapping, columns_seen, n}.
+    """Parse a ticker list into {rows, mapping, columns_seen, n}.
 
-    ``rows`` is a list of {"symbol","factset_ticker"}. Auto-detects the two
-    columns (Symbol = display label; FactSet ticker = used in formulas) with
-    optional explicit overrides. Never raises — returns {error} on a bad file.
+    ``rows`` is a list of {"symbol","factset_ticker"[,"sector"]}. Auto-detects the
+    Symbol (display label) and FactSet ticker (used in formulas) columns, plus an
+    OPTIONAL 3rd "Sector" column used downstream as a fallback when the template
+    GICS pull is missing. 2-column uploads keep working unchanged. Explicit
+    overrides are honored. Never raises — returns {error} on a bad file.
     """
     try:
         raw = di._read_any(content, filename)
@@ -95,6 +98,7 @@ def parse_weekly_universe(
     cols = list(df.columns)
     sym = symbol_col.strip().lower() if symbol_col.strip() else di._find_col(cols, _SYMBOL_ALIASES)
     fs = factset_col.strip().lower() if factset_col.strip() else di._find_col(cols, _FACTSET_ALIASES)
+    sec = sector_col.strip().lower() if sector_col.strip() else di._find_col(cols, _SECTOR_ALIASES)
 
     # If both resolved to the same single column, treat it as the FactSet ticker
     # and mirror it into the symbol.
@@ -108,6 +112,9 @@ def parse_weekly_universe(
         fs = cols[0]
     if not sym:
         sym = fs
+    # Never let the sector resolve onto the symbol/factset columns themselves.
+    if sec and sec in (sym, fs):
+        sec = ""
 
     rows: List[Dict[str, str]] = []
     if fs and fs in df.columns:
@@ -116,10 +123,15 @@ def parse_weekly_universe(
             sval = str(r.get(sym) or "").strip() if sym in df.columns else ""
             if not fval or fval.lower() == "nan":
                 continue
-            rows.append({"symbol": sval or fval, "factset_ticker": fval})
+            row: Dict[str, str] = {"symbol": sval or fval, "factset_ticker": fval}
+            if sec and sec in df.columns:
+                secval = str(r.get(sec) or "").strip()
+                if secval and secval.lower() != "nan":
+                    row["sector"] = secval
+            rows.append(row)
     return {
         "rows": rows,
-        "mapping": {"symbol": sym, "factset_ticker": fs},
+        "mapping": {"symbol": sym, "factset_ticker": fs, "sector": sec or ""},
         "columns_seen": cols,
         "n": len(rows),
     }
@@ -128,12 +140,29 @@ def parse_weekly_universe(
 # ---------------------------------------------------------------------------
 # Page context assembly
 # ---------------------------------------------------------------------------
+def _universe_sectors() -> Dict[str, str]:
+    """Map FactSet ticker -> sector from the active universe's optional Sector
+    column. Used as a GICS fallback when the template's FG_GICS pull is missing.
+    Never raises."""
+    try:
+        uni = wuni.get_active()
+        out: Dict[str, str] = {}
+        for r in (uni.get("rows", []) if uni else []):
+            fs = str(r.get("factset_ticker") or "").strip()
+            sec = str(r.get("sector") or "").strip()
+            if fs and sec:
+                out[fs] = sec
+        return out
+    except Exception:  # noqa: BLE001
+        return {}
+
+
 def _active_metrics() -> Optional[Dict[str, Any]]:
     snap = wsnap.get_active()
     if not snap or not snap.get("data"):
         return None
     try:
-        return wmetrics.compute_weekly_metrics(snap["data"])
+        return wmetrics.compute_weekly_metrics(snap["data"], _universe_sectors())
     except Exception:  # noqa: BLE001 — never break the page
         return None
 
@@ -192,10 +221,12 @@ async def weekly_universe_upload(
     file: UploadFile = File(...),
     symbol_col: str = Form(""),
     factset_col: str = Form(""),
+    sector_col: str = Form(""),
     note: str = Form(""),
 ):
     content = await file.read()
-    parsed = parse_weekly_universe(content, file.filename or "", symbol_col, factset_col)
+    parsed = parse_weekly_universe(content, file.filename or "", symbol_col,
+                                   factset_col, sector_col)
     if parsed.get("error"):
         return RedirectResponse(f"/weekly?err={quote(parsed['error'][:300])}", status_code=303)
     if parsed["n"] == 0:
@@ -206,8 +237,10 @@ async def weekly_universe_upload(
     wuni.save_universe(parsed["rows"], name=(note or file.filename or "weekly universe"),
                        make_active=True)
     m = parsed["mapping"]
+    sec_note = f", sector←{m.get('sector')}" if m.get("sector") else ""
     msg = (f"Imported {parsed['n']} names from {file.filename}. "
-           f"Mapped: symbol←{m.get('symbol')}, factset_ticker←{m.get('factset_ticker')}.")
+           f"Mapped: symbol←{m.get('symbol')}, factset_ticker←{m.get('factset_ticker')}"
+           f"{sec_note}.")
     return RedirectResponse(f"/weekly?msg={quote(msg[:400])}", status_code=303)
 
 
@@ -231,13 +264,19 @@ def _clamp_batch_size(raw: str) -> int:
 
 @router.post("/weekly/template")
 def weekly_template(layout: str = Form(""), batch_size: str = Form(""),
-                    as_zip: str = Form("")):
+                    as_zip: str = Form(""),
+                    include_fundamentals: str = Form("full")):
     uni = wuni.get_active()
     rows = uni.get("rows", []) if uni else []
     tickers = [r.get("factset_ticker") for r in rows if r.get("factset_ticker")]
     if not tickers:
         # Still produce a usable single-ticker example so the download never 500s.
         tickers = ["0001-HK"]
+
+    # Fundamentals default ON ("full"/missing/truthy). Only an explicit falsey
+    # value (the unchecked-checkbox hidden "0") yields the lean price/vol layout.
+    inc_fund = str(include_fundamentals).strip().lower()
+    want_fund = inc_fund in ("full", "") or _truthy(inc_fund)
 
     # Resolve the layout choice. Explicit `layout` wins; otherwise fall back to
     # the legacy `as_zip` checkbox (as_zip=1 -> split). Default: all_in_one.
@@ -247,13 +286,14 @@ def weekly_template(layout: str = Form(""), batch_size: str = Form(""),
 
     if choice == "split":
         bs = _clamp_batch_size(batch_size)
-        files = wtpl.build_weekly_templates_batched(tickers, batch_size=bs)
+        files = wtpl.build_weekly_templates_batched(
+            tickers, batch_size=bs, include_fundamentals=want_fund)
         data = wtpl.zip_templates(files)
         return Response(content=data, media_type="application/zip",
                         headers={"Content-Disposition":
                                  "attachment; filename=weekly_templates.zip"})
     # all_in_one: EVERY ticker in a single workbook, no implicit cap.
-    data = wtpl.build_weekly_template(tickers)
+    data = wtpl.build_weekly_template(tickers, include_fundamentals=want_fund)
     return Response(content=data, media_type=_XLSX_CT,
                     headers={"Content-Disposition":
                              "attachment; filename=weekly_template.xlsx"})
@@ -342,7 +382,7 @@ def _build_note(provider_name: str = "", with_news: Optional[bool] = None) -> Di
     note. Never raises. Returns the note dict (exporter-shaped)."""
     snap = wsnap.get_active()
     data = snap.get("data", {}) if snap else {}
-    metrics = wmetrics.compute_weekly_metrics(data or {})
+    metrics = wmetrics.compute_weekly_metrics(data or {}, _universe_sectors())
     provider = _resolve_note_provider(provider_name)
     fallbacks = build_fallback_providers(getattr(provider, "name", "")) if provider else []
     web_provider = resolve_web_provider()

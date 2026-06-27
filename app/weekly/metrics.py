@@ -50,6 +50,8 @@ from typing import Any, Dict, List, Optional
 import numpy as np
 import pandas as pd
 
+from . import attribution as attrib
+
 # Window lengths in trading days.
 W_1W = 5
 W_1M = 21
@@ -233,10 +235,80 @@ def _trend_descriptor(r1w: Optional[float], r1m: Optional[float]) -> str:
     return "range-bound"
 
 
+# ---------------------------------------------------------------------------
+# Fundamentals: valuation + earnings momentum (PURE, NaN-safe). Inputs are the
+# point-in-time fundamental cells parsed by ingest (FE_ESTIMATE EPS consensus +
+# GICS). Missing / n/a -> None; never raises.
+# ---------------------------------------------------------------------------
+def valuation_metrics(latest_close: Any, fundamentals: Dict[str, Any]
+                      ) -> Dict[str, Any]:
+    """Forward valuation: fwd_pe = latest_close / FY1 EPS mean.
+
+    Returns {fwd_pe, fy1_eps_mean}. fwd_pe is None when the latest close or FY1
+    EPS is missing OR the FY1 EPS is <= 0 (a negative/zero forward multiple is
+    not meaningful, so we suppress it).
+    """
+    fnd = fundamentals or {}
+    eps = _f(fnd.get("fy1_eps_mean"))
+    px = _f(latest_close)
+    fwd_pe = None
+    if px is not None and eps is not None and eps > 0:
+        fwd_pe = _f(px / eps)
+    return {"fwd_pe": fwd_pe, "fy1_eps_mean": eps}
+
+
+def earnings_momentum(fundamentals: Dict[str, Any]) -> Dict[str, Any]:
+    """EPS estimate momentum / revisions, computed in-app from the FE_ESTIMATE
+    snapshots (this is BOTH the 4-week revision look-back AND the EPS up/down
+    backup):
+
+      revision_abs = fy1 - fy1_4wk_ago
+      revision_pct = revision_abs / |fy1_4wk_ago|   (None when base is 0/missing)
+      revision_dir = sign -> "up" / "down" / "flat"
+      dispersion   = stddev / |fy1|  (coefficient of variation) when both present
+      num_est      = analyst coverage count
+    """
+    fnd = fundamentals or {}
+    fy1 = _f(fnd.get("fy1_eps_mean"))
+    fy2 = _f(fnd.get("fy2_eps_mean"))
+    fy1_prev = _f(fnd.get("fy1_eps_mean_4wk_ago"))
+    stddev = _f(fnd.get("fy1_eps_stddev"))
+    num_est = _f(fnd.get("fy1_eps_num_est"))
+
+    revision_abs = None
+    revision_pct = None
+    revision_dir = None
+    if fy1 is not None and fy1_prev is not None:
+        revision_abs = _f(fy1 - fy1_prev)
+        if revision_abs is not None:
+            if fy1_prev != 0:
+                revision_pct = _f(revision_abs / abs(fy1_prev))
+            # direction with a tiny dead-band to avoid float noise -> "flat".
+            if abs(revision_abs) < 1e-9:
+                revision_dir = "flat"
+            elif revision_abs > 0:
+                revision_dir = "up"
+            else:
+                revision_dir = "down"
+
+    dispersion = None
+    if stddev is not None and fy1 is not None and fy1 != 0:
+        dispersion = _f(stddev / abs(fy1))
+
+    return {
+        "eps_fy1": fy1, "eps_fy2": fy2, "eps_fy1_4wk_ago": fy1_prev,
+        "revision_abs": revision_abs, "revision_pct": revision_pct,
+        "revision_dir": revision_dir, "dispersion": dispersion,
+        "num_est": (int(num_est) if num_est is not None else None),
+    }
+
+
 def _ticker_metrics(
     records: List[Dict[str, Any]],
     symbol: str,
     hsi: Dict[str, Any],
+    fundamentals: Optional[Dict[str, Any]] = None,
+    sector_fallback: Optional[str] = None,
 ) -> Dict[str, Any]:
     close = _series(records, "close")
     volume = _series(records, "volume")
@@ -269,6 +341,17 @@ def _ticker_metrics(
 
     z_1w = _return_z(close, r1w)
 
+    # ----- Fundamentals (point-in-time; absent old template -> all None) -----
+    fnd = fundamentals or {}
+    cc = close.dropna()
+    latest_close = _f(cc.iloc[-1]) if cc.shape[0] else None
+    valuation = valuation_metrics(latest_close, fnd)
+    momentum = earnings_momentum(fnd)
+    # GICS: prefer the template pull, fall back to the universe Sector column.
+    sector = fnd.get("gics_sector") or sector_fallback or None
+    sub_industry = fnd.get("gics_sub_industry") or None
+    has_fundamentals = any(v is not None for v in fnd.values()) if fnd else False
+
     return {
         "symbol": symbol,
         "n_bars": n,
@@ -281,6 +364,15 @@ def _ticker_metrics(
         "max_day_vol": vt["max_day_vol"], "max_spike_ratio": vt["max_spike_ratio"],
         "mom_1m": r1m, "mom_3m": r3m, "risk_adj_mom": risk_adj_mom,
         "z_1w": z_1w,
+        "latest_close": latest_close,
+        "sector": sector, "sub_industry": sub_industry,
+        "has_fundamentals": has_fundamentals,
+        "fundamentals": (dict(fnd) if fnd else {}),
+        "valuation": valuation,
+        "momentum": momentum,
+        "fwd_pe": valuation.get("fwd_pe"),
+        "eps_revision_dir": momentum.get("revision_dir"),
+        "eps_revision_pct": momentum.get("revision_pct"),
     }
 
 
@@ -302,11 +394,27 @@ def _slim(r: Dict[str, Any], *keys: str) -> Dict[str, Any]:
     return base
 
 
-def compute_weekly_metrics(snapshot: Dict[str, Any]) -> Dict[str, Any]:
-    """Compute all Phase D weekly metrics from a snapshot dict. Never raises."""
+def compute_weekly_metrics(
+    snapshot: Dict[str, Any],
+    universe_sectors: Optional[Dict[str, str]] = None,
+    attribution_params: Optional[Dict[str, float]] = None,
+) -> Dict[str, Any]:
+    """Compute all Phase D weekly metrics from a snapshot dict. Never raises.
+
+    ``universe_sectors`` (optional) maps ticker -> sector from the universe's
+    optional 3rd Sector column; used as a GICS fallback when the template's
+    FG_GICS_SECTOR pull is missing. ``attribution_params`` overrides the
+    sector-vs-stock-specific bands (see ``attribution.PARAMS``).
+
+    Backward compatible: an old price/volume-only snapshot has no
+    ``fundamentals`` key, so valuation/momentum come back None and the rest of
+    the report is unchanged.
+    """
     snapshot = snapshot or {}
     tickers: Dict[str, List[Dict[str, Any]]] = snapshot.get("tickers") or {}
     hsi_records: List[Dict[str, Any]] = snapshot.get("hsi") or []
+    fundamentals_all: Dict[str, Dict[str, Any]] = snapshot.get("fundamentals") or {}
+    universe_sectors = universe_sectors or {}
 
     hsi = _hsi_metrics(hsi_records)
 
@@ -314,7 +422,11 @@ def compute_weekly_metrics(snapshot: Dict[str, Any]) -> Dict[str, Any]:
     rows: List[Dict[str, Any]] = []
     for tkr, recs in tickers.items():
         try:
-            m = _ticker_metrics(recs, str(tkr), hsi)
+            m = _ticker_metrics(
+                recs, str(tkr), hsi,
+                fundamentals=fundamentals_all.get(str(tkr)),
+                sector_fallback=universe_sectors.get(str(tkr)),
+            )
         except Exception:  # noqa: BLE001 — pure module must never raise
             m = {"symbol": str(tkr), "n_bars": 0}
         per_ticker[str(tkr)] = m
@@ -395,12 +507,34 @@ def compute_weekly_metrics(snapshot: Dict[str, Any]) -> Dict[str, Any]:
         if sym and sym not in catalyst and spike is not None and spike >= OUTSIZED_SPIKE:
             catalyst.append(sym)
 
+    # ----- Sector-vs-stock-specific attribution for the notable movers -----
+    # Peer groups are formed from the WHOLE universe (leave-one-out), then
+    # attribution is computed for every notable mover (top5 gainers/bottom5
+    # losers + the vol-shift and volatility movers). Reuses the screen-engine
+    # leave-one-out peer-median logic via the weekly ``attribution`` helper.
+    mover_syms: List[str] = []
+    for group in (gainers_1w, losers_1w, vol_shift, vola_shift):
+        for r in group:
+            sym = r.get("symbol")
+            if sym and sym not in mover_syms:
+                mover_syms.append(sym)
+    attribution = attrib.attribute_movers(rows, mover_syms, attribution_params)
+    # Surface the tag on each per_ticker record for easy downstream rendering.
+    for sym, attr in attribution.items():
+        if sym in per_ticker and isinstance(per_ticker[sym], dict):
+            per_ticker[sym]["attribution"] = attr
+
     n_full = sum(1 for r in rows if (r.get("n_bars") or 0) >= W_3M)
+    n_fund = sum(1 for r in rows if r.get("has_fundamentals"))
+    n_fwd_pe = sum(1 for r in rows if r.get("fwd_pe") is not None)
     meta = {
         "n_tickers": len(rows),
         "n_full_history": n_full,
         "n_partial": len(snapshot.get("partial") or []),
         "hsi_loaded": hsi.get("loaded", False),
+        "n_fundamentals": n_fund,
+        "n_fwd_pe": n_fwd_pe,
+        "fundamentals_loaded": n_fund > 0,
     }
 
     return {
@@ -413,6 +547,7 @@ def compute_weekly_metrics(snapshot: Dict[str, Any]) -> Dict[str, Any]:
         "rows": rows,
         "movers": movers,
         "opportunities": opportunities,
+        "attribution": attribution,
         "catalyst_names": catalyst,
         "meta": meta,
     }
