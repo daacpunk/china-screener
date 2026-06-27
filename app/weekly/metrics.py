@@ -347,9 +347,10 @@ def _ticker_metrics(
     latest_close = _f(cc.iloc[-1]) if cc.shape[0] else None
     valuation = valuation_metrics(latest_close, fnd)
     momentum = earnings_momentum(fnd)
-    # GICS: prefer the template pull, fall back to the universe Sector column.
-    sector = fnd.get("gics_sector") or sector_fallback or None
-    sub_industry = fnd.get("gics_sub_industry") or None
+    # FactSet classification: prefer the template pull, fall back to the
+    # universe Sector column.
+    sector = fnd.get("factset_sector") or sector_fallback or None
+    sub_industry = fnd.get("factset_industry") or None
     has_fundamentals = any(v is not None for v in fnd.values()) if fnd else False
 
     return {
@@ -402,8 +403,8 @@ def compute_weekly_metrics(
     """Compute all Phase D weekly metrics from a snapshot dict. Never raises.
 
     ``universe_sectors`` (optional) maps ticker -> sector from the universe's
-    optional 3rd Sector column; used as a GICS fallback when the template's
-    FG_GICS_SECTOR pull is missing. ``attribution_params`` overrides the
+    optional 3rd Sector column; used as a fallback when the template's
+    FG_FACTSET_SECTOR pull is missing. ``attribution_params`` overrides the
     sector-vs-stock-specific bands (see ``attribution.PARAMS``).
 
     Backward compatible: an old price/volume-only snapshot has no

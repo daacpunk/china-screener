@@ -104,6 +104,12 @@ Backs the app's **Phase C data generator** (forward EPS, revisions, consensus).
 - **Consensus values:** `FE_MEAN`, `FE_MEDIAN`, `FE_HIGH`, `FE_LOW`,
   `FE_STD_DEV` (dispersion), `FE_NUM_EST` (coverage), with `FE_MEAN_DATE` to
   date the series.
+- **NEST vs NUM_EST (verified):** inside `FE_ESTIMATE(EPS,<stat>,ANN_ROLL,...)`
+  the Excel-verified statistic for number-of-estimates is **`NEST`** (the form
+  `FE_ESTIMATE(EPS,NUM_EST,...)` was wrong). The standalone coverage field
+  `FE_NUM_EST` above is a separate, valid field and is unaffected. For
+  classification, the verified fields are **`FG_FACTSET_SECTOR`** /
+  **`FG_FACTSET_IND`** — the GICS variants return no data in this entitlement.
 - **Revisions:** compare current `FE_ESTIMATE` against the prior
   `FE_EST_REV_VAL`; `FE_EST_REV_VAL_ARROW` gives the direction
   (−1 down / 0 flat / +1 up) and `FE_EST_REV_VAL_DATE` the prior date.

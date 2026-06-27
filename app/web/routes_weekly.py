@@ -142,8 +142,8 @@ def parse_weekly_universe(
 # ---------------------------------------------------------------------------
 def _universe_sectors() -> Dict[str, str]:
     """Map FactSet ticker -> sector from the active universe's optional Sector
-    column. Used as a GICS fallback when the template's FG_GICS pull is missing.
-    Never raises."""
+    column. Used as a fallback when the template's FG_FACTSET_SECTOR pull is
+    missing. Never raises."""
     try:
         uni = wuni.get_active()
         out: Dict[str, str] = {}

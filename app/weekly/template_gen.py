@@ -61,7 +61,7 @@ def _vol_expr(depth: int) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Fundamentals — point-in-time single-cell FE_ESTIMATE FQL + GICS formulas.
+# Fundamentals — point-in-time single-cell FE_ESTIMATE FQL + FactSet sector formulas.
 # These are the EXACT, user-tested Excel-FQL forms (see FE_ESTIMATE_SYNTAX).
 # Each value is a single cell (NOT a spill). Forward P/E is NOT a native field —
 # it is computed in-app downstream as latest_close / FY1 EPS mean.
@@ -73,9 +73,9 @@ FUNDAMENTAL_FIELDS: List[Tuple[str, str, str]] = [
     ("fy1_eps_mean_4wk_ago", "FY1 EPS mean (-20D, ~4wks ago)",
      "FE_ESTIMATE(EPS,MEAN,ANN_ROLL,+1,-20D,,,'')"),
     ("fy1_eps_stddev", "FY1 EPS stddev", "FE_ESTIMATE(EPS,STDDEV,ANN_ROLL,+1,NOW,,,'')"),
-    ("fy1_eps_num_est", "FY1 EPS num_est", "FE_ESTIMATE(EPS,NUM_EST,ANN_ROLL,+1,NOW,,,'')"),
-    ("gics_sector", "GICS sector", "FG_GICS_SECTOR"),
-    ("gics_sub_industry", "GICS sub-industry", "FG_GICS_SUB_IND"),
+    ("fy1_eps_num_est", "FY1 EPS num_est", "FE_ESTIMATE(EPS,NEST,ANN_ROLL,+1,NOW,,,'')"),
+    ("factset_sector", "FactSet sector", "FG_FACTSET_SECTOR"),
+    ("factset_industry", "FactSet industry", "FG_FACTSET_IND"),
 ]
 
 
@@ -85,14 +85,15 @@ FUNDAMENTAL_LABEL_TO_KEY: Dict[str, str] = {
 }
 FUNDAMENTAL_KEYS: List[str] = [key for key, _label, _expr in FUNDAMENTAL_FIELDS]
 # string-valued (non-numeric) fundamental fields.
-FUNDAMENTAL_TEXT_KEYS = {"gics_sector", "gics_sub_industry"}
+FUNDAMENTAL_TEXT_KEYS = {"factset_sector", "factset_industry"}
 
 
 def fundamental_formulas(ticker_cell: str = "A2") -> Dict[str, str]:
     """Per-ticker point-in-time fundamental formulas referencing the ticker CELL.
 
-    Returns {key: '=FDS(A2,"<FQL>")'} using the EXACT FE_ESTIMATE / FG_GICS
-    forms. These are single cells (point-in-time), not spills.
+    Returns {key: '=FDS(A2,"<FQL>")'} using the EXACT FE_ESTIMATE / FG_FACTSET
+    forms (NEST statistic; FG_FACTSET_SECTOR/FG_FACTSET_IND — GICS pulls no data
+    in this entitlement). These are single cells (point-in-time), not spills.
     """
     return {key: f'=FDS({ticker_cell},"{expr}")' for key, _label, expr in FUNDAMENTAL_FIELDS}
 
@@ -199,9 +200,10 @@ def _instructions_rows(depth: int, n_tickers: int, batch_note: str = "",
         rows += [
             [""],
             [f"FUNDAMENTALS (point-in-time single cells, column {fund_col}, one per row):"],
-            ["  Estimates use the FE_ESTIMATE FQL function (EPS consensus); GICS"],
-            ["  classification via FG_GICS_*. Availability depends on your FactSet"],
-            ["  entitlement — NA shows as blank and is treated n/a downstream."],
+            ["  Estimates use the FE_ESTIMATE FQL function (EPS consensus); sector/"],
+            ["  industry classification via FG_FACTSET_SECTOR / FG_FACTSET_IND."],
+            ["  Availability depends on your FactSet entitlement — NA shows as"],
+            ["  blank and is treated n/a downstream."],
         ]
         for i, (key, label, _expr) in enumerate(FUNDAMENTAL_FIELDS):
             rows.append([f"  {fund_col}{2 + i} ({label}): {ff[key]}"])
@@ -235,8 +237,8 @@ def _manifest_rows(tickers: List[str], depth: int,
             ["", "", "", "", ""],
             ["FUNDAMENTALS (point-in-time single cells; col G per ticker sheet).",
              "", "", "", ""],
-            ["Availability of estimate/GICS fields depends on your FactSet "
-             "entitlement; NA shows as blank and is treated n/a downstream.",
+            ["Availability of estimate / FactSet classification fields depends on "
+             "your FactSet entitlement; NA shows as blank and is treated n/a downstream.",
              "", "", "", ""],
         ]
         for i, (key, label, _expr) in enumerate(FUNDAMENTAL_FIELDS):

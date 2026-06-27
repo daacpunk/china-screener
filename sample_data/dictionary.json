@@ -34,14 +34,14 @@
       "notes": "OPTIONAL. There is no P_ADV_USD field. This valid FQL expression is the trailing 20-obs average of traded value (price*volume). The app computes 20D ADV (USD) itself in-app (Tab 3), so pulling this is optional."
     },
     "sector": {
-      "label": "GICS sector (point-in-time)",
-      "fql_template": "FG_GICS_SECTOR",
-      "notes": "Point-in-time GICS sector classification. No date arg required; can also accept (0D)."
+      "label": "FactSet sector (point-in-time)",
+      "fql_template": "FG_FACTSET_SECTOR",
+      "notes": "Point-in-time FactSet sector classification (correct field, Excel-verified). No date arg required; can also accept (0D). The GICS sector variant returned no data in this entitlement, so the FactSet field is used instead."
     },
     "sub_industry": {
-      "label": "GICS sub-industry (point-in-time)",
-      "fql_template": "FG_GICS_SUB_IND",
-      "notes": "Point-in-time GICS sub-industry classification. Correct field name is FG_GICS_SUB_IND (FG_GICS_SUB was wrong)."
+      "label": "FactSet industry (point-in-time)",
+      "fql_template": "FG_FACTSET_IND",
+      "notes": "Point-in-time FactSet industry classification (correct field, Excel-verified). The GICS sub-industry variant returned no data in this entitlement, so the FactSet field is used instead."
     },
     "index_weight": {
       "label": "Index weight in benchmark (OPTIONAL)",

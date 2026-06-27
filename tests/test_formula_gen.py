@@ -167,9 +167,9 @@ def test_sample_dictionary_corrected_templates():
     # no fake P_ADV_USD field in any fql_template (notes may mention it)
     all_templates = " ".join(v["fql_template"] for v in formulas.values())
     assert "P_ADV_USD" not in all_templates
-    # corrected GICS field names
-    assert formulas["sector"]["fql_template"].startswith("FG_GICS_SECTOR")
-    assert "FG_GICS_SUB_IND" in formulas["sub_industry"]["fql_template"]
+    # corrected FactSet classification field names (GICS pulls no data here)
+    assert formulas["sector"]["fql_template"].startswith("FG_FACTSET_SECTOR")
+    assert "FG_FACTSET_IND" in formulas["sub_industry"]["fql_template"]
 
 
 def test_sample_dictionary_generates_corrected_price():

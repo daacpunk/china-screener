@@ -121,7 +121,7 @@
       "fql_template": "FE_NUM_EST",
       "family": "estimates",
       "fds_compatible": true,
-      "notes": "Manual: 'Consensus - Number of Estimates.' Count of contributing brokers - coverage breadth."
+      "notes": "Manual: 'Consensus - Number of Estimates.' Count of contributing brokers - coverage breadth. NOTE: this is the standalone FE_NUM_EST field. Inside the FE_ESTIMATE(EPS,<stat>,...) form the Excel-verified statistic for number-of-estimates is NEST (NOT NUM_EST). Likewise the verified classification fields are FG_FACTSET_SECTOR / FG_FACTSET_IND, not the GICS variants which return no data in this entitlement."
     },
     "fe_est_rev_val": {
       "label": "Previous estimate value (for revisions)",

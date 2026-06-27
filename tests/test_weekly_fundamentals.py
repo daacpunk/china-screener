@@ -3,7 +3,7 @@ sector-vs-stock-specific attribution.
 
 Covers: template emits the exact LOCKED FE_ESTIMATE / FG strings (and a lean
 template omits them); ingest round-trips fundamental cells incl. blanks/#N/A ->
-None and GICS text capture, and a 2-column (price/volume-only) template still
+None and FactSet classification text capture, and a 2-column (price/volume-only) template still
 parses; valuation fwd_pe = price / FY1 EPS (None when EPS<=0/missing); EPS
 momentum (revision abs/pct/dir, zero-base guard, dispersion); attribution
 (stock-specific / sector-driven / idiosyncratic-solo) with leave-one-out that
@@ -25,7 +25,7 @@ from app.weekly import template_gen as wtpl
 
 
 # ---------------------------------------------------------------------------
-# Task 1 — template emits the exact locked FE_ESTIMATE / FG formulas
+# Task 1 — template emits the exact locked FE_ESTIMATE / FG_FACTSET formulas
 # ---------------------------------------------------------------------------
 def test_fundamental_formulas_exact_locked_strings():
     ff = wtpl.fundamental_formulas("A2")
@@ -33,9 +33,9 @@ def test_fundamental_formulas_exact_locked_strings():
     assert ff["fy2_eps_mean"] == '=FDS(A2,"FE_ESTIMATE(EPS,MEAN,ANN_ROLL,+2,NOW,,,\'\')")'
     assert ff["fy1_eps_mean_4wk_ago"] == '=FDS(A2,"FE_ESTIMATE(EPS,MEAN,ANN_ROLL,+1,-20D,,,\'\')")'
     assert ff["fy1_eps_stddev"] == '=FDS(A2,"FE_ESTIMATE(EPS,STDDEV,ANN_ROLL,+1,NOW,,,\'\')")'
-    assert ff["fy1_eps_num_est"] == '=FDS(A2,"FE_ESTIMATE(EPS,NUM_EST,ANN_ROLL,+1,NOW,,,\'\')")'
-    assert ff["gics_sector"] == '=FDS(A2,"FG_GICS_SECTOR")'
-    assert ff["gics_sub_industry"] == '=FDS(A2,"FG_GICS_SUB_IND")'
+    assert ff["fy1_eps_num_est"] == '=FDS(A2,"FE_ESTIMATE(EPS,NEST,ANN_ROLL,+1,NOW,,,\'\')")'
+    assert ff["factset_sector"] == '=FDS(A2,"FG_FACTSET_SECTOR")'
+    assert ff["factset_industry"] == '=FDS(A2,"FG_FACTSET_IND")'
     # No recommendation mark / FE_UP / FE_DOWN anywhere.
     blob = " ".join(ff.values())
     assert "FE_UP" not in blob and "FE_DOWN" not in blob and "RECOMM" not in blob.upper()
@@ -48,8 +48,8 @@ def test_template_with_fundamentals_writes_block_as_text():
     assert ws.cell(row=2, column=wtpl.FUND_FORMULA_COL).value == \
         '=FDS(A2,"FE_ESTIMATE(EPS,MEAN,ANN_ROLL,+1,NOW,,,\'\')")'
     assert ws.cell(row=2, column=wtpl.FUND_FORMULA_COL).data_type == "s"
-    assert ws.cell(row=7, column=wtpl.FUND_FORMULA_COL).value == '=FDS(A2,"FG_GICS_SECTOR")'
-    assert ws.cell(row=8, column=wtpl.FUND_FORMULA_COL).value == '=FDS(A2,"FG_GICS_SUB_IND")'
+    assert ws.cell(row=7, column=wtpl.FUND_FORMULA_COL).value == '=FDS(A2,"FG_FACTSET_SECTOR")'
+    assert ws.cell(row=8, column=wtpl.FUND_FORMULA_COL).value == '=FDS(A2,"FG_FACTSET_IND")'
     assert ws.cell(row=2, column=wtpl.FUND_LABEL_COL).value == "FY1 EPS mean"
 
 
@@ -62,7 +62,7 @@ def test_lean_template_omits_fundamentals_block():
 
 
 # ---------------------------------------------------------------------------
-# Task 3 — ingest round-trip: populate fundamentals, blanks/#N/A -> None, GICS
+# Task 3 — ingest round-trip: populate fundamentals, blanks/#N/A -> None, FactSet
 # ---------------------------------------------------------------------------
 def _julian(dates):
     origin = pd.Timestamp("1899-12-30")
@@ -107,13 +107,13 @@ def _populate(tickers, fundamentals=None, include_fundamentals=True,
     return bio.getvalue()
 
 
-def test_ingest_round_trips_fundamentals_and_gics():
+def test_ingest_round_trips_fundamentals_and_factset():
     fnd = {
         "0700-HK": {
             "fy1_eps_mean": 20.0, "fy2_eps_mean": 24.0,
             "fy1_eps_mean_4wk_ago": 19.0, "fy1_eps_stddev": 1.0,
-            "fy1_eps_num_est": 30, "gics_sector": "Communication Services",
-            "gics_sub_industry": "Interactive Media & Services",
+            "fy1_eps_num_est": 30, "factset_sector": "Communication Services",
+            "factset_industry": "Interactive Media & Services",
         }
     }
     data = _populate(["0700-HK"], fundamentals=fnd)
@@ -121,8 +121,8 @@ def test_ingest_round_trips_fundamentals_and_gics():
     f = out["fundamentals"]["0700-HK"]
     assert f["fy1_eps_mean"] == 20.0 and f["fy2_eps_mean"] == 24.0
     assert f["fy1_eps_mean_4wk_ago"] == 19.0 and f["fy1_eps_stddev"] == 1.0
-    assert f["gics_sector"] == "Communication Services"
-    assert f["gics_sub_industry"] == "Interactive Media & Services"
+    assert f["factset_sector"] == "Communication Services"
+    assert f["factset_industry"] == "Interactive Media & Services"
     assert out["meta"].get("n_fundamentals") == 1
 
 
@@ -130,7 +130,7 @@ def test_ingest_blank_and_na_fundamentals_become_none():
     fnd = {
         "9988-HK": {
             "fy1_eps_mean": "#N/A", "fy2_eps_mean": "",
-            "fy1_eps_stddev": "NA", "gics_sector": "Consumer Discretionary",
+            "fy1_eps_stddev": "NA", "factset_sector": "Consumer Discretionary",
         }
     }
     data = _populate(["9988-HK"], fundamentals=fnd)
@@ -139,7 +139,7 @@ def test_ingest_blank_and_na_fundamentals_become_none():
     assert f.get("fy1_eps_mean") is None
     assert f.get("fy2_eps_mean") is None
     assert f.get("fy1_eps_stddev") is None
-    assert f["gics_sector"] == "Consumer Discretionary"
+    assert f["factset_sector"] == "Consumer Discretionary"
 
 
 def test_two_column_only_template_still_parses_without_fundamentals():

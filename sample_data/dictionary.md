@@ -36,8 +36,8 @@ Canonical Excel add-in form:
 | `volume_point` | Volume (single date / spot) | `P_VOLUME_DAY({asof})` |
 | `date_point` | Trading date (best-effort) | `P_DATE({asof})` |
 | `adv_usd_20d` | 20-day avg daily value traded (USD) — **optional, computed in-app** | `AVG(P_PRICE(0D,-19D,D)*P_VOLUME_DAY(0D,-19D,D))` |
-| `sector` | GICS sector (point-in-time) | `FG_GICS_SECTOR` |
-| `sub_industry` | GICS sub-industry (point-in-time) | `FG_GICS_SUB_IND` |
+| `sector` | FactSet sector (point-in-time) | `FG_FACTSET_SECTOR` |
+| `sub_industry` | FactSet industry (point-in-time) | `FG_FACTSET_IND` |
 | `index_weight` | Index weight in benchmark (**optional**) | `FG_INDEX_WEIGHT("MSCI CHINA",0D)` |
 | `next_earnings` | Next earnings/report date (**optional**) | `FE_REP_DT_NEXT(0D)` |
 
