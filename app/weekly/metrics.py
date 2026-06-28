@@ -75,6 +75,16 @@ ANOMALY_PRICE = 0.03        # |1W return| under 3%
 OUTSIZED_SPIKE = 3.0
 N_SIDE = 5                  # top5 gainers + bottom5 losers
 
+# Valuation-vs-sector descriptor thresholds (forward P/E vs BROAD-SECTOR median):
+#   cheap  if fwd_pe <  CHEAP_MULT * sector_median
+#   rich   if fwd_pe >  RICH_MULT  * sector_median
+#   in line otherwise.
+VAL_CHEAP_MULT = 0.85
+VAL_RICH_MULT = 1.15
+# A sector needs at least this many valid (positive) forward P/Es for its median
+# to be a meaningful anchor.
+MIN_SECTOR_PE = 2
+
 
 def _f(x: Any) -> Optional[float]:
     """Coerce to a finite float, else None (JSON-safe)."""
@@ -303,6 +313,46 @@ def earnings_momentum(fundamentals: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
+def _sector_median_fwd_pe(rows: List[Dict[str, Any]]) -> Dict[str, Optional[float]]:
+    """Median forward P/E per BROAD FactSet sector (the full ``sector`` field, NOT
+    the attribution peer group). Ignores None / non-positive P/Es. A sector with
+    fewer than ``MIN_SECTOR_PE`` valid P/Es yields None (no reliable anchor).
+
+    Returns {sector_label: median_fwd_pe | None}. NaN-safe; never raises."""
+    by_sector: Dict[str, List[float]] = {}
+    for r in rows:
+        sec = r.get("sector")
+        pe = _f(r.get("fwd_pe"))
+        if not sec or pe is None or pe <= 0:
+            continue
+        by_sector.setdefault(str(sec).strip(), []).append(pe)
+    out: Dict[str, Optional[float]] = {}
+    for sec, pes in by_sector.items():
+        if len(pes) >= MIN_SECTOR_PE:
+            try:
+                out[sec] = _f(float(np.median(pes)))
+            except Exception:  # noqa: BLE001
+                out[sec] = None
+        else:
+            out[sec] = None
+    return out
+
+
+def _valuation_vs_sector(fwd_pe: Optional[float],
+                         sector_median: Optional[float]) -> Optional[str]:
+    """"cheap" / "in line" / "rich" classification of a name's forward P/E vs its
+    broad-sector median. None when either input is missing / non-positive."""
+    pe = _f(fwd_pe)
+    med = _f(sector_median)
+    if pe is None or med is None or pe <= 0 or med <= 0:
+        return None
+    if pe < VAL_CHEAP_MULT * med:
+        return "cheap"
+    if pe > VAL_RICH_MULT * med:
+        return "rich"
+    return "in line"
+
+
 def _ticker_metrics(
     records: List[Dict[str, Any]],
     symbol: str,
@@ -351,6 +401,8 @@ def _ticker_metrics(
     # universe Sector column.
     sector = fnd.get("factset_sector") or sector_fallback or None
     sub_industry = fnd.get("factset_industry") or None
+    company_name = fnd.get("company_name") or None
+    business_desc = fnd.get("business_desc") or None
     has_fundamentals = any(v is not None for v in fnd.values()) if fnd else False
 
     return {
@@ -367,13 +419,23 @@ def _ticker_metrics(
         "z_1w": z_1w,
         "latest_close": latest_close,
         "sector": sector, "sub_industry": sub_industry,
+        "industry": sub_industry,
+        "company_name": company_name, "business_desc": business_desc,
         "has_fundamentals": has_fundamentals,
         "fundamentals": (dict(fnd) if fnd else {}),
         "valuation": valuation,
         "momentum": momentum,
         "fwd_pe": valuation.get("fwd_pe"),
+        # sector-anchor fields filled in a second pass once every name's P/E is
+        # known (see compute_weekly_metrics).
+        "sector_median_fwd_pe": None,
+        "valuation_vs_sector": None,
         "eps_revision_dir": momentum.get("revision_dir"),
         "eps_revision_pct": momentum.get("revision_pct"),
+        # 1W-return z vs the name's OWN trailing weekly-return distribution.
+        # Exposed under both names so the note's "stretched to extremes"
+        # watchlist can read ret_sigma directly.
+        "ret_sigma": z_1w,
     }
 
 
@@ -392,6 +454,31 @@ def _slim(r: Dict[str, Any], *keys: str) -> Dict[str, Any]:
     base = {"symbol": r.get("symbol")}
     for k in keys:
         base[k] = r.get(k)
+    return base
+
+
+# Fields the note's grouped, plain-English movers section consumes for each
+# entry. Attribution is attached later (post-attribution pass).
+_MOVER_KEYS = (
+    "company_name", "business_desc", "sector", "industry", "sub_industry",
+    "ret_1w", "rel_1w", "vol_ratio", "max_spike_ratio",
+    "fwd_pe", "sector_median_fwd_pe", "valuation_vs_sector",
+    "eps_revision_dir", "eps_revision_pct",
+    "ret_sigma", "z_1w",
+)
+
+
+def _mover_entry(r: Dict[str, Any]) -> Dict[str, Any]:
+    """A richer mover record carrying everything the note needs to write a
+    plain-English, grouped line: name, sector tag, attribution, valuation-vs-
+    sector anchor, EPS revision, dispersion, num_est, and the own-history
+    return sigma. Attribution + dispersion/num_est are filled here from the
+    full per-ticker record."""
+    base = _slim(r, *_MOVER_KEYS)
+    mom = r.get("momentum") or {}
+    base["dispersion"] = mom.get("dispersion")
+    base["num_est"] = mom.get("num_est")
+    base["attribution"] = r.get("attribution")  # may be None until attrib pass
     return base
 
 
@@ -433,6 +520,17 @@ def compute_weekly_metrics(
         per_ticker[str(tkr)] = m
         rows.append(m)
 
+    # ----- Valuation anchor: broad-sector median forward P/E -----
+    # Group every name by its broad FactSet sector, compute the median fwd P/E
+    # per sector, then attach the anchor + a cheap/in line/rich descriptor to
+    # each name. NaN-safe; None when the sector lacks >=2 valid P/Es.
+    sector_medians = _sector_median_fwd_pe(rows)
+    for r in rows:
+        sec = r.get("sector")
+        med = sector_medians.get(str(sec).strip()) if sec else None
+        r["sector_median_fwd_pe"] = med
+        r["valuation_vs_sector"] = _valuation_vs_sector(r.get("fwd_pe"), med)
+
     # ----- Movers & shakers -----
     gainers_1w = _rank(rows, "ret_1w", reverse=True)
     losers_1w = _rank(rows, "ret_1w", reverse=False)
@@ -440,16 +538,9 @@ def compute_weekly_metrics(
     vola_shift = _rank(rows, "vol_20d", reverse=True)             # highest 20D vol
     rel_leaders = _rank(rows, "rel_1w", reverse=True)             # vs HSI, 1W
     rel_laggards = _rank(rows, "rel_1w", reverse=False)
-
-    movers = {
-        "gainers_1w": [_slim(r, "ret_1w", "rel_1w", "vol_ratio") for r in gainers_1w],
-        "losers_1w": [_slim(r, "ret_1w", "rel_1w", "vol_ratio") for r in losers_1w],
-        "vol_shift": [_slim(r, "vol_ratio", "ret_1w", "max_spike_ratio")
-                      for r in vol_shift],
-        "vola_shift": [_slim(r, "vol_20d", "vol_60d", "vol_elevated") for r in vola_shift],
-        "rel_leaders": [_slim(r, "rel_1w", "ret_1w") for r in rel_leaders],
-        "rel_laggards": [_slim(r, "rel_1w", "ret_1w") for r in rel_laggards],
-    }
+    # "Stretched to extremes": largest |1W-return sigma| vs each name's OWN
+    # trailing weekly-return history -> mean-reversion watchlist.
+    extremes = _rank(rows, "ret_sigma", reverse=True, abs_val=True)
 
     # ----- Opportunities / gaps -----
     dislocations: List[Dict[str, Any]] = []
@@ -511,19 +602,35 @@ def compute_weekly_metrics(
     # ----- Sector-vs-stock-specific attribution for the notable movers -----
     # Peer groups are formed from the WHOLE universe (leave-one-out), then
     # attribution is computed for every notable mover (top5 gainers/bottom5
-    # losers + the vol-shift and volatility movers). Reuses the screen-engine
-    # leave-one-out peer-median logic via the weekly ``attribution`` helper.
+    # losers + the vol-shift, volatility and extremes movers). Reuses the
+    # screen-engine leave-one-out peer-median logic via the weekly helper.
     mover_syms: List[str] = []
-    for group in (gainers_1w, losers_1w, vol_shift, vola_shift):
+    for group in (gainers_1w, losers_1w, vol_shift, vola_shift, extremes):
         for r in group:
             sym = r.get("symbol")
             if sym and sym not in mover_syms:
                 mover_syms.append(sym)
     attribution = attrib.attribute_movers(rows, mover_syms, attribution_params)
     # Surface the tag on each per_ticker record for easy downstream rendering.
+    # Because ``rows`` and ``per_ticker`` share the SAME dict objects, this also
+    # makes attribution visible to the rich mover entries built below.
     for sym, attr in attribution.items():
         if sym in per_ticker and isinstance(per_ticker[sym], dict):
             per_ticker[sym]["attribution"] = attr
+
+    # Build the rich, note-ready movers AFTER attribution so each entry carries
+    # its tag/peer-median/residual alongside name, sector, valuation anchor and
+    # the own-history sigma.
+    movers = {
+        "gainers_1w": [_mover_entry(r) for r in gainers_1w],
+        "losers_1w": [_mover_entry(r) for r in losers_1w],
+        "vol_shift": [_mover_entry(r) for r in vol_shift],
+        "vola_shift": [_slim(r, "vol_20d", "vol_60d", "vol_elevated",
+                             "company_name", "sector") for r in vola_shift],
+        "rel_leaders": [_mover_entry(r) for r in rel_leaders],
+        "rel_laggards": [_mover_entry(r) for r in rel_laggards],
+        "extremes": [_mover_entry(r) for r in extremes],
+    }
 
     n_full = sum(1 for r in rows if (r.get("n_bars") or 0) >= W_3M)
     n_fund = sum(1 for r in rows if r.get("has_fundamentals"))

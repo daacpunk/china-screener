@@ -14,10 +14,26 @@ lib already in requirements.
 from __future__ import annotations
 
 import io
+import re as _re
 from html import escape
 from typing import Any, Dict, List, Optional
 
 import markdown as _md
+
+# FactSet text-pull rendering artifacts (■, replacement char, BOM, control
+# chars). The note layer already strips these where it composes labels, but we
+# defensively strip them again here so NO exported format (md/html/docx/pdf)
+# can ever surface a ■ or stray control byte in a company name / description.
+_ARTIFACT_RE = _re.compile("[\u25a0\ufffd\ufeff\u0000-\u0008\u000b\u000c"
+                           "\u000e-\u001f\u007f-\u009f]")
+
+
+def _strip_artifacts(text: str) -> str:
+    """Remove ■/replacement/control artifacts from a markdown body, preserving
+    newlines and tabs. Never raises."""
+    if not text:
+        return text
+    return _ARTIFACT_RE.sub("", text)
 
 # Institutional, print-friendly CSS embedded into the standalone HTML/PDF.
 _CSS = """
@@ -114,7 +130,7 @@ def to_markdown(note: Dict[str, Any]) -> str:
     # Weekly notes carry the full one-pager (tables + prose) in the markdown
     # body already, so emit it directly without the research-note scaffolding.
     if weekly:
-        body = (note.get("markdown") or "").strip()
+        body = _strip_artifacts((note.get("markdown") or "").strip())
         return (body + "\n") if body else (f"# {_title(note)}\n_As of {asof}_\n")
     parts: List[str] = [f"# {_title(note)}", f"_As of {asof}_", ""]
     cands = note.get("candidates") or []
@@ -167,7 +183,7 @@ def to_html(note: Dict[str, Any]) -> str:
     title = escape(_title(note))
     weekly = note.get("kind") == "weekly"
     cands = note.get("candidates") or []
-    body_md = (note.get("markdown") or "").strip()
+    body_md = _strip_artifacts((note.get("markdown") or "").strip())
     # Weekly: the markdown body already starts with its own H1 + tables; strip a
     # leading duplicate H1 so the page title isn't repeated, then render it whole.
     if weekly:
@@ -226,7 +242,7 @@ def to_docx_bytes(note: Dict[str, Any]) -> bytes:
 
     # Weekly notes render the full markdown body (tables + prose) directly.
     if weekly:
-        body_md = (note.get("markdown") or "").strip()
+        body_md = _strip_artifacts((note.get("markdown") or "").strip())
         if body_md:
             _docx_render_markdown(doc, body_md)
         bio = io.BytesIO()

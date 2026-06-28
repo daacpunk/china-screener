@@ -76,6 +76,10 @@ FUNDAMENTAL_FIELDS: List[Tuple[str, str, str]] = [
     ("fy1_eps_num_est", "FY1 EPS num_est", "FE_ESTIMATE(EPS,NEST,ANN_ROLL,+1,NOW,,,'')"),
     ("factset_sector", "FactSet sector", "FG_FACTSET_SECTOR"),
     ("factset_industry", "FactSet industry", "FG_FACTSET_IND"),
+    # Point-in-time descriptors used to label each name in the note (company
+    # name + a short business description). EXACT user-tested Excel-FQL forms.
+    ("company_name", "Company name", "FG_COMPANY_NAME"),
+    ("business_desc", "Business description", "FNI_BUS_DESC_CO(ALL,1)"),
 ]
 
 
@@ -85,7 +89,9 @@ FUNDAMENTAL_LABEL_TO_KEY: Dict[str, str] = {
 }
 FUNDAMENTAL_KEYS: List[str] = [key for key, _label, _expr in FUNDAMENTAL_FIELDS]
 # string-valued (non-numeric) fundamental fields.
-FUNDAMENTAL_TEXT_KEYS = {"factset_sector", "factset_industry"}
+FUNDAMENTAL_TEXT_KEYS = {
+    "factset_sector", "factset_industry", "company_name", "business_desc",
+}
 
 
 def fundamental_formulas(ticker_cell: str = "A2") -> Dict[str, str]:
@@ -201,9 +207,12 @@ def _instructions_rows(depth: int, n_tickers: int, batch_note: str = "",
             [""],
             [f"FUNDAMENTALS (point-in-time single cells, column {fund_col}, one per row):"],
             ["  Estimates use the FE_ESTIMATE FQL function (EPS consensus); sector/"],
-            ["  industry classification via FG_FACTSET_SECTOR / FG_FACTSET_IND."],
+            ["  industry classification via FG_FACTSET_SECTOR / FG_FACTSET_IND;"],
+            ["  company name + business description via FG_COMPANY_NAME /"],
+            ["  FNI_BUS_DESC_CO(ALL,1) (used to label each name in the note)."],
             ["  Availability depends on your FactSet entitlement — NA shows as"],
-            ["  blank and is treated n/a downstream."],
+            ["  blank and is treated n/a downstream (the note falls back to the"],
+            ["  bare ticker when a name is missing)."],
         ]
         for i, (key, label, _expr) in enumerate(FUNDAMENTAL_FIELDS):
             rows.append([f"  {fund_col}{2 + i} ({label}): {ff[key]}"])
@@ -244,6 +253,10 @@ def _manifest_rows(tickers: List[str], depth: int,
         for i, (key, label, _expr) in enumerate(FUNDAMENTAL_FIELDS):
             rows.append(["<each ticker>", f"{cell}{2 + i}",
                          f"{label} (point-in-time)", ff[key], ""])
+        rows.append(["Company name / business description (FG_COMPANY_NAME / "
+                     "FNI_BUS_DESC_CO) require the FactSet Fundamentals/Company "
+                     "entitlement; NA shows as blank and the name falls back to "
+                     "the bare ticker downstream.", "", "", "", ""])
         rows.append(["<computed in-app>", "", "forward P/E",
                      "latest_close / FY1 EPS mean (n/a if EPS<=0/missing)", ""])
     rows += [

@@ -23,6 +23,8 @@ Pure-ish: takes raw bytes in, returns a JSON-serializable dict. No web/DB deps.
 from __future__ import annotations
 
 import io
+import re
+import unicodedata
 from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
@@ -84,6 +86,32 @@ def _series_from_sheet(sdf: pd.DataFrame) -> Optional[Tuple[str, pd.DataFrame]]:
     return tkr_val, out[["date", "close", "volume"]]
 
 
+# Characters that show up as rendering artifacts in FactSet text pulls (the
+# black-square ■ = U+25A0 / replacement char, control chars, BOM, etc.). We keep
+# only printable text + common typographic punctuation, then collapse whitespace.
+_ARTIFACT_RE = re.compile("[\u25a0\ufffd\ufeff\u0000-\u001f\u007f-\u009f]")
+_WS_RE = re.compile(r"\s+")
+
+
+def clean_text_artifacts(s: Any) -> Optional[str]:
+    """Strip ■/non-printable/control artifacts from a FactSet text value and
+    collapse runs of whitespace. Returns a clean str, or None when nothing
+    printable remains. Never raises."""
+    if s is None:
+        return None
+    try:
+        txt = str(s)
+    except Exception:  # noqa: BLE001
+        return None
+    # Normalize unicode, drop explicit artifact chars, then drop any remaining
+    # non-printable codepoints (keep normal printable incl. unicode letters).
+    txt = unicodedata.normalize("NFKC", txt)
+    txt = _ARTIFACT_RE.sub(" ", txt)
+    txt = "".join(ch for ch in txt if ch.isprintable() or ch.isspace())
+    txt = _WS_RE.sub(" ", txt).strip()
+    return txt or None
+
+
 _FUND_LABEL_HEADERS = {"fundamental", "fundamentals", "field", "metric"}
 _FUND_VALUE_HEADERS = {"value (point-in-time)", "value", "point-in-time", "pit"}
 # FactSet NA/error markers that must coerce to None (case-insensitive).
@@ -104,7 +132,15 @@ def _clean_fund_value(raw: Any, key: str) -> Any:
     if s == "" or s.lower() in _FUND_NA:
         return None
     if key in wtpl.FUNDAMENTAL_TEXT_KEYS:
-        return s
+        # Strip ■/non-printable artifacts and collapse whitespace so names and
+        # descriptions render cleanly everywhere (md/html/docx/pdf).
+        cleaned = clean_text_artifacts(s)
+        if cleaned is None:
+            return None
+        # A value that was nothing but artifacts/NA after cleaning -> None.
+        if cleaned.lower() in _FUND_NA:
+            return None
+        return cleaned
     # numeric field
     try:
         v = float(s.replace(",", ""))

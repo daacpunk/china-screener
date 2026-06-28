@@ -33,13 +33,27 @@ The returned dict is shaped to feed exporters.export directly:
 """
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional
+import re
+from typing import Any, Dict, List, Optional, Tuple
 
 from ..llm.base import LLMProvider
 from ..llm.research_notes import _log_usage, is_web_capable
 from ..llm.resilience import complete_with_fallback
 
 TITLE = "Weekly Quant One-Pager"
+
+# Characters that show up as FactSet text-pull rendering artifacts (■ etc.).
+# We defensively strip them here too so a name never carries them into the note.
+_ARTIFACT_RE = re.compile("[\u25a0\ufffd\ufeff\u0000-\u001f\u007f-\u009f]")
+
+
+def _clean(s: Any) -> str:
+    """Strip ■/non-printable artifacts and collapse whitespace from a label."""
+    if s is None:
+        return ""
+    txt = _ARTIFACT_RE.sub(" ", str(s))
+    txt = "".join(ch for ch in txt if ch.isprintable() or ch.isspace())
+    return re.sub(r"\s+", " ", txt).strip()
 
 
 # ---------------------------------------------------------------------------
@@ -113,6 +127,109 @@ def _attr_phrase(attr: Dict[str, Any]) -> str:
     if grp and n:
         bits.append(f"{grp} n={n}")
     return "; ".join(bits)
+
+
+# ---------------------------------------------------------------------------
+# Readability helpers: company labels, sector tags, valuation anchors, plain
+# English attribution + sigma. All pure / None-safe.
+# ---------------------------------------------------------------------------
+def _short_sector(rec: Dict[str, Any]) -> str:
+    """A short sector tag for the descriptor (prefer the broad FactSet sector,
+    fall back to the industry). '' when neither is present."""
+    sec = _clean(rec.get("sector"))
+    if sec:
+        return sec
+    return _clean(rec.get("industry") or rec.get("sub_industry"))
+
+
+def _descriptor(rec: Dict[str, Any]) -> str:
+    """Label a name as "9636-HK (Company Name, Finance)" using the cleaned
+    company name + short sector tag. Degrades to "9636-HK (Finance)" or just the
+    bare symbol when name/sector are missing."""
+    sym = _clean(rec.get("symbol")) or "?"
+    name = _clean(rec.get("company_name"))
+    sec = _short_sector(rec)
+    inside = ", ".join([p for p in (name, sec) if p])
+    return f"{sym} ({inside})" if inside else sym
+
+
+def _val_anchor(rec: Dict[str, Any]) -> str:
+    """Valuation anchor string: "11.8x vs sector ~9x (cheap)". '' when no fwd P/E.
+    Shows the sector median + cheap/in line/rich descriptor when available."""
+    pe = rec.get("fwd_pe")
+    if pe is None:
+        return ""
+    try:
+        base = f"{float(pe):.1f}x"
+    except (TypeError, ValueError):
+        return ""
+    med = rec.get("sector_median_fwd_pe")
+    vs = rec.get("valuation_vs_sector")
+    if med is not None:
+        try:
+            base += f" vs sector ~{float(med):.0f}x"
+        except (TypeError, ValueError):
+            pass
+    if vs:
+        base += f" ({vs})"
+    return base
+
+
+def _sigma_str(rec: Dict[str, Any]) -> str:
+    """The 1W-return sigma vs own history, e.g. '-5.7σ'. '' when unavailable."""
+    z = rec.get("ret_sigma")
+    if z is None:
+        z = rec.get("z_1w")
+    if z is None:
+        return ""
+    try:
+        return f"{float(z):+.1f}σ"
+    except (TypeError, ValueError):
+        return ""
+
+
+def _plain_attr(rec: Dict[str, Any]) -> str:
+    """Translate the attribution dict into plain English: how much of the move
+    was company-specific vs how the peers moved. '' when no attribution."""
+    attr = rec.get("attribution") or {}
+    tag = attr.get("attribution")
+    if not tag:
+        return ""
+    pm = attr.get("peer_median_1w")
+    if attr.get("peer_group_used") == "idiosyncratic-solo" or pm is None:
+        if tag == "Stock-specific":
+            return "no comparable peers, so treated as company-specific"
+        return ""
+    peer_txt = f"peers were about {_pct(pm)}"
+    if tag == "Stock-specific":
+        return f"{peer_txt}, so almost the entire move was company-specific"
+    if tag == "Sector-driven":
+        return f"moved with its sector ({peer_txt})"
+    return f"a mix of sector ({peer_txt}) and company-specific factors"
+
+
+def _mover_line(rec: Dict[str, Any]) -> str:
+    """A single plain-English mover bullet: descriptor + 1W move + plain-English
+    attribution + valuation anchor (when present). Deterministic; used as the
+    no-key fallback AND as grounding lines fed to the AI."""
+    head = f"{_descriptor(rec)} {_pct(rec.get('ret_1w'))}"
+    parts = [head]
+    pa = _plain_attr(rec)
+    if pa:
+        parts.append(f"— {pa}.")
+    va = _val_anchor(rec)
+    if va:
+        vs = rec.get("valuation_vs_sector")
+        if vs in ("cheap", "rich"):
+            parts.append(f"Trades {vs} at {va.split(' (')[0]}.")
+        else:
+            parts.append(f"Forward P/E {va}.")
+    rev_dir = rec.get("eps_revision_dir")
+    rev_pct = rec.get("eps_revision_pct")
+    if rev_dir in ("up", "down") and rev_pct is not None:
+        verb = "raised" if rev_dir == "up" else "cut"
+        parts.append(f"Analysts {verb} EPS estimates {_pct(rev_pct)} over 4 weeks.")
+    return " ".join(parts)
 
 
 def render_fundamentals_table(metrics: Dict[str, Any]) -> str:
@@ -253,28 +370,392 @@ def _staleness_banner(metrics: Dict[str, Any]) -> str:
 
 
 # ---------------------------------------------------------------------------
+# Grouping: split movers into gainers / losers-stock-specific / losers-sector /
+# stretched-to-extremes for the plain-English "What moved and why" section.
+# ---------------------------------------------------------------------------
+def _is_sector_driven(rec: Dict[str, Any]) -> bool:
+    return (rec.get("attribution") or {}).get("attribution") == "Sector-driven"
+
+
+def _group_movers(metrics: Dict[str, Any]) -> Dict[str, List[Dict[str, Any]]]:
+    """Group the computed movers for the grouped narrative. Returns lists of the
+    rich mover entries: gainers, losers_specific, losers_sector, extremes."""
+    movers = metrics.get("movers") or {}
+    gainers = list(movers.get("gainers_1w") or [])
+    losers = list(movers.get("losers_1w") or [])
+    losers_sector = [r for r in losers if _is_sector_driven(r)]
+    losers_specific = [r for r in losers if not _is_sector_driven(r)]
+    extremes = list(movers.get("extremes") or [])
+    return {
+        "gainers": gainers,
+        "losers_specific": losers_specific,
+        "losers_sector": losers_sector,
+        "extremes": extremes,
+    }
+
+
+def _gainers_mostly_specific(gainers: List[Dict[str, Any]]) -> bool:
+    tagged = [(r.get("attribution") or {}).get("attribution") for r in gainers]
+    tagged = [t for t in tagged if t]
+    if not tagged:
+        return False
+    return sum(1 for t in tagged if t == "Stock-specific") >= len(tagged) / 2.0
+
+
+def _count_specific(metrics: Dict[str, Any]) -> Tuple[int, int]:
+    """(# stock-specific, # total) among the top-10 1W movers (gainers+losers)."""
+    movers = metrics.get("movers") or {}
+    pool = list(movers.get("gainers_1w") or []) + list(movers.get("losers_1w") or [])
+    tagged = [(r.get("attribution") or {}).get("attribution") for r in pool]
+    tagged = [t for t in tagged if t]
+    spec = sum(1 for t in tagged if t == "Stock-specific")
+    return spec, len(tagged)
+
+
+def render_grouped_movers(metrics: Dict[str, Any]) -> str:
+    """Deterministic, plain-English grouped 'What moved and why' body. Used as
+    the no-key fallback AND embedded in the AI prompt as the grounding set.
+    Includes a short lead, then Gainers / Losers (stock-specific) / Losers
+    (sector-driven) / Stretched to extremes blocks. Never raises."""
+    g = _group_movers(metrics)
+    spec, total = _count_specific(metrics)
+    parts: List[str] = []
+    # Short lead (2-3 sentences) leading with the conclusion.
+    if total:
+        if spec >= total - max(1, total // 4):
+            lead = (f"This week's moves were overwhelmingly stock-specific "
+                    f"(moved differently from sector peers) rather than sector "
+                    f"rotation \u2014 {spec} of the {total} biggest movers can't be "
+                    "explained by their peers.")
+        elif spec <= total // 4:
+            lead = ("This week's moves were largely sector-driven (the whole "
+                    "sector moved together) rather than company-specific.")
+        else:
+            lead = (f"This week's moves were mixed: {spec} of the {total} biggest "
+                    "movers were stock-specific, the rest moved with their sector.")
+        parts.append(lead)
+
+    def _block(title: str, recs: List[Dict[str, Any]]) -> None:
+        if not recs:
+            return
+        parts.append(f"\n**{title}**")
+        for r in recs:
+            parts.append(f"- {_mover_line(r)}")
+
+    gtitle = ("Gainers \u2014 almost entirely company-specific"
+              if _gainers_mostly_specific(g["gainers"]) else "Gainers")
+    _block(gtitle, g["gainers"])
+    _block("Losers \u2014 stock-specific (moved differently from sector peers)",
+           g["losers_specific"])
+    _block("Losers \u2014 sector-driven (fell with the whole sector)", g["losers_sector"])
+    # Stretched to extremes watchlist.
+    if g["extremes"]:
+        parts.append("\n**Stretched to extremes** (largest move vs the name's own "
+                     "typical weekly swing \u2014 a mean-reversion watchlist)")
+        ex_bits = []
+        for r in g["extremes"]:
+            sig = _sigma_str(r)
+            ex_bits.append(f"{_descriptor(r)} ({sig})" if sig else _descriptor(r))
+        parts.append("- " + "; ".join(ex_bits))
+    return "\n".join(parts).strip()
+
+
+# ---------------------------------------------------------------------------
+# Key takeaways (AI-generated; deterministic fallback)
+# ---------------------------------------------------------------------------
+def build_takeaways_prompt(metrics: Dict[str, Any]) -> str:
+    """Prompt for the KEY TAKEAWAYS box. Grounded ONLY in computed numbers (the
+    grouped movers + HSI + attribution counts + extremes). Forbids invention."""
+    asof = metrics.get("asof") or "the as-of date"
+    hsi = metrics.get("hsi") or {}
+    grouped = render_grouped_movers(metrics)
+    spec, total = _count_specific(metrics)
+    hsi_line = (f"HSI {_pct(hsi.get('ret_1w'))} on the week, {_pct(hsi.get('ret_ytd'))} "
+                f"YTD, short trend {hsi.get('trend') or 'n/a'}.")
+    return (
+        "You are an equity strategist writing the KEY TAKEAWAYS box at the TOP of "
+        f"a weekly one-pager for a Hang Seng (HSI) universe, as of {asof}.\n\n"
+        "Write 3-4 short, punchy bullets that synthesize the week, GROUNDED ONLY "
+        "in the computed figures below. Cover, where the data supports it: (1) the "
+        "dominant pattern \u2014 stock-specific vs sector rotation (the count is "
+        f"{spec} of {total} biggest movers stock-specific); (2) the single most "
+        "extreme dislocation by sigma (standard deviations vs the name's own "
+        "history); (3) any genuinely sector-driven names; (4) red flags such as "
+        "big EPS-estimate cuts. Use the company NAME + sector tag, not bare codes. "
+        "Reference the HSI figure ONCE. Do NOT invent tickers, prices, news, or "
+        "catalysts \u2014 every number must come from below. Output ONLY the bullets, "
+        "each starting with '- '.\n\n"
+        f"HSI: {hsi_line}\n\n"
+        f"Grouped movers (computed):\n{grouped}\n"
+    )
+
+
+def render_takeaways_deterministic(metrics: Dict[str, Any]) -> str:
+    """Deterministic KEY TAKEAWAYS bullets, assembled from the computed extremes /
+    attribution counts / HSI / EPS cuts. Used when no AI key is available. Never
+    raises; always returns at least one bullet when any data is present."""
+    hsi = metrics.get("hsi") or {}
+    movers = metrics.get("movers") or {}
+    g = _group_movers(metrics)
+    spec, total = _count_specific(metrics)
+    bullets: List[str] = []
+
+    # (1) Market backdrop + dominant pattern.
+    if hsi.get("ret_1w") is not None or total:
+        trend = hsi.get("trend") or "n/a"
+        market = (f"The market moved {_pct(hsi.get('ret_1w'))} on the week "
+                  f"({_pct(hsi.get('ret_ytd'))} YTD, {trend})")
+        if total:
+            if spec >= total - max(1, total // 4):
+                pat = (f", but this week's movers were mostly company-specific, not "
+                       f"sector rotation \u2014 {spec} of the {total} biggest movers "
+                       "can't be explained by their peers.")
+            elif spec <= total // 4:
+                pat = ", and this week's moves were largely sector-driven."
+            else:
+                pat = (f", with a mix this week \u2014 {spec} of {total} biggest movers "
+                       "were company-specific.")
+        else:
+            pat = "."
+        bullets.append(market + pat)
+
+    # (2) Cleanest dislocation by sigma.
+    if g["extremes"]:
+        top = g["extremes"][0]
+        sig = _sigma_str(top)
+        if sig:
+            bullets.append(
+                f"Cleanest dislocation: {_descriptor(top)} {_pct(top.get('ret_1w'))}, "
+                f"{sig} vs its own history \u2014 an extreme that sometimes mean-reverts."
+            )
+
+    # (3) Genuinely sector-driven names.
+    if g["losers_sector"]:
+        names = ", ".join(_descriptor(r) for r in g["losers_sector"][:3])
+        bullets.append(
+            f"Genuinely sector-driven: {names} moved with their sector peers, so "
+            "less likely to bounce alone."
+        )
+
+    # (4) Red flag: biggest EPS-estimate cut among movers.
+    pool = list(movers.get("gainers_1w") or []) + list(movers.get("losers_1w") or [])
+    cuts = [r for r in pool
+            if r.get("eps_revision_dir") == "down" and r.get("eps_revision_pct") is not None]
+    if cuts:
+        worst = min(cuts, key=lambda r: r.get("eps_revision_pct"))
+        bullets.append(
+            f"Red flag: {_descriptor(worst)} saw analysts cut EPS estimates "
+            f"{_pct(worst.get('eps_revision_pct'))} over 4 weeks \u2014 fundamentals "
+            "deteriorating, not just price."
+        )
+
+    if not bullets:
+        bullets.append("Not enough loaded data to synthesize takeaways this week.")
+    return "\n".join(f"- {b}" for b in bullets)
+
+
+# ---------------------------------------------------------------------------
+# Inline glossary block (renders cleanly in md/html/docx/pdf)
+# ---------------------------------------------------------------------------
+GLOSSARY_HEADING = "Glossary & methodology"
+_GLOSSARY_TERMS: List[Tuple[str, str]] = [
+    ("fwd P/E", "forward price-to-earnings: latest price divided by the consensus "
+     "next-fiscal-year EPS estimate (blank when EPS is zero/negative/missing)."),
+    ("vs sector", "the name's forward P/E compared with the MEDIAN forward P/E of "
+     "every loaded name in its broad FactSet sector; cheap < 0.85x that median, "
+     "rich > 1.15x, otherwise in line."),
+    ("stock-specific", "the name moved differently from its sector peers, so the "
+     "move is mostly company-specific rather than a sector-wide move."),
+    ("sector-driven", "the name moved roughly in line with its sector peers, so "
+     "the move looks driven by the sector, not the company."),
+    ("sigma", "how unusual the weekly move is versus the name's OWN typical "
+     "weekly swing; e.g. -5.7 sigma means 5.7 standard deviations below its usual move."),
+    ("vs HSI", "the name's return minus the Hang Seng Index return over the same "
+     "window (relative performance)."),
+    ("EPS revision", "the change in the consensus FY1 EPS estimate over the past "
+     "~4 weeks (up = upgrades, down = cuts)."),
+]
+
+
+def render_glossary() -> str:
+    """A compact glossary rendered as clean markdown PARAGRAPHS (one bold term +
+    definition per line). Deliberately NOT a wide table so it can never overflow
+    / fragment the PDF page. Never raises."""
+    lines = [f"### {GLOSSARY_HEADING}", ""]
+    for term, defn in _GLOSSARY_TERMS:
+        lines.append(f"- **{term}** \u2014 {defn}")
+    lines.append("")
+    lines.append("_Returns are simple % price change. Attribution nets each move "
+                 "against a leave-one-out peer median. Educational tool, not "
+                 "investment advice._")
+    return "\n".join(lines)
+
+
+# ---------------------------------------------------------------------------
+# Catalyst structuring: collapse "no catalyst" noise into a single line.
+# ---------------------------------------------------------------------------
+_NO_CATALYST_RE = re.compile(
+    r"no (?:specific |company[- ]specific )?(?:news )?catalyst|nothing specific|"
+    r"no clear catalyst|no identifiable catalyst|no obvious catalyst",
+    re.IGNORECASE,
+)
+_INFERRED_RE = re.compile(r"inferred|low[- ]confidence|likely (?:fell|rose|moved) with|"
+                          r"sector[- ]driven|broad .*sector", re.IGNORECASE)
+
+
+def _strip_bullet(line: str) -> str:
+    return re.sub(r"^\s*[-*\u2022]\s*", "", line).strip()
+
+
+def _extract_symbol(line: str, names: List[str]) -> Optional[str]:
+    """Find which known symbol (or its bare code) a model line refers to."""
+    low = line.lower()
+    for sym in names:
+        if sym.lower() in low:
+            return sym
+        bare = sym.split("-")[0]
+        if bare and re.search(rf"\b{re.escape(bare.lower())}\b", low):
+            return sym
+    return None
+
+
+def collapse_catalysts(raw: str, metrics: Dict[str, Any]) -> str:
+    """Post-process the model's per-name catalyst output: emit ONE collapsed line
+    for all names with no catalyst, full bullets for names with a real cited
+    catalyst, and a clearly-flagged low-confidence group for inferred sector
+    explanations. Falls back to the raw text if it can't parse anything. Never
+    raises."""
+    names = list(metrics.get("catalyst_names") or [])
+
+    def _bare(sym: str) -> str:
+        return sym.split("-")[0] or sym
+
+    found: List[str] = []          # full bullets (real catalyst)
+    inferred: List[str] = []       # sector-driven / low-confidence lines
+    none_found: List[str] = []     # bare codes for the collapsed line
+    seen: set = set()
+
+    lines = [l for l in (raw or "").splitlines() if l.strip()]
+    parsed_any = False
+    for line in lines:
+        body = _strip_bullet(line)
+        if not body:
+            continue
+        sym = _extract_symbol(body, names)
+        if sym is None:
+            continue
+        parsed_any = True
+        if sym in seen:
+            continue
+        seen.add(sym)
+        if _NO_CATALYST_RE.search(body):
+            none_found.append(_bare(sym))
+        elif _INFERRED_RE.search(body):
+            # Avoid double-prefixing when the model already led with the symbol
+            # (e.g. "BBB: likely moved with Energy ...").
+            stripped = re.sub(rf"^\s*{re.escape(sym)}\s*:\s*", "", body,
+                              flags=re.IGNORECASE)
+            stripped = re.sub(rf"^\s*{re.escape(_bare(sym))}\s*:\s*", "",
+                              stripped, flags=re.IGNORECASE)
+            inferred.append(f"{_bare(sym)}: {stripped}")
+        else:
+            found.append(f"- {body}")
+
+    # Names the model never mentioned -> treat as none-found.
+    for sym in names:
+        if sym not in seen:
+            none_found.append(_bare(sym))
+
+    if not parsed_any and (raw or "").strip():
+        # Couldn't map anything; return the model text unchanged (still useful).
+        return raw.strip()
+
+    out: List[str] = []
+    for b in found:
+        out.append(b)
+    if none_found:
+        uniq = list(dict.fromkeys(none_found))
+        out.append(
+            "No company-specific news catalyst found for: "
+            + ", ".join(uniq)
+            + " \u2014 moves appear driven by flows, momentum, or estimate changes."
+        )
+    if inferred:
+        out.append("")
+        out.append("_Sector-driven (inferred, low confidence):_")
+        for it in inferred:
+            out.append(f"- {it}")
+        out.append("_Inferences from peer behavior, not reported news._")
+    return "\n".join(out).strip()
+
+
+def render_catalysts_deterministic(metrics: Dict[str, Any]) -> str:
+    """No-web fallback for the catalysts section: we have no news, so collapse ALL
+    names into the single 'no catalyst found' line, and flag the sector-driven
+    names as low-confidence inferences from peer behavior."""
+    names = list(metrics.get("catalyst_names") or [])
+    per = metrics.get("per_ticker") or {}
+    if not names:
+        return ""
+    bare = [s.split("-")[0] or s for s in names]
+    out = [
+        "No company-specific news catalyst found (no web access this run) for: "
+        + ", ".join(bare)
+        + " \u2014 moves appear driven by flows, momentum, or estimate changes."
+    ]
+    inferred = [s for s in names
+                if (per.get(s, {}).get("attribution") or {}).get("attribution")
+                == "Sector-driven"]
+    if inferred:
+        out.append("")
+        out.append("_Sector-driven (inferred, low confidence):_")
+        for s in inferred:
+            rec = per.get(s, {})
+            sec = _short_sector(rec) or "its sector"
+            out.append(f"- {s.split('-')[0]} likely moved with broad {sec} pressure.")
+        out.append("_Inferences from peer behavior, not reported news._")
+    return "\n".join(out)
+
+
+# ---------------------------------------------------------------------------
 # Prompt builders (pure)
 # ---------------------------------------------------------------------------
 def build_observations_prompt(metrics: Dict[str, Any]) -> str:
     asof = metrics.get("asof") or "the as-of date"
+    grouped = render_grouped_movers(metrics)
     tables = render_metric_tables(metrics)
+    spec, total = _count_specific(metrics)
     return (
-        "You are an equity strategist writing the DATA-DRIVEN section of a weekly "
-        f"one-pager for a Hang Seng (HSI) universe, as of {asof}.\n\n"
-        "Below are metric tables computed IN-APP from raw FactSet price/volume "
-        "series (returns are simple % price change; relative = stock minus HSI; "
-        "volatility is annualized stdev of daily returns; momentum is trailing "
-        "return and 3M-return/20D-vol). Write 2-4 tight paragraphs of prose that "
-        "summarize the week's movers & shakers and the most interesting "
-        "opportunities/gaps. Where the Fundamentals & attribution table is "
-        "present, weave in the relevant forward P/E, 4-week EPS revision "
-        "direction/magnitude, estimate dispersion, and — critically — whether each "
-        "notable move was Stock-specific, Sector-driven, or Mixed (per the "
-        "leave-one-out peer-median attribution). Ground EVERYTHING strictly in "
-        "these numbers — do NOT invent tickers, prices, news, or catalysts (a "
-        "separate section covers catalysts), and write n/a where a fundamental is "
-        "missing. Be concise and specific; cite the figures. Use plain prose, "
-        "no headers.\n\n"
+        "You are an equity strategist writing the WHAT MOVED AND WHY section of a "
+        f"weekly one-pager for a Hang Seng (HSI) universe, as of {asof}. Write for "
+        "a smart generalist, NOT a quant: PLAIN ENGLISH, no jargon left "
+        "unexplained.\n\n"
+        "STRUCTURE (lead with the conclusion):\n"
+        "1. Open with ONE short sentence stating the dominant pattern of the week "
+        f"-- were the big moves company-specific or sector-wide? (The computed "
+        f"count: {spec} of {total} biggest movers were stock-specific.)\n"
+        "2. Then GROUP the movers under short bold headings -- Gainers; Losers "
+        "(stock-specific); Losers (sector-driven); Stretched to extremes -- one "
+        "tight bullet per name.\n\n"
+        "RULES:\n"
+        "- Refer to each name by its COMPANY NAME and sector tag, e.g. "
+        "'9636-HK (Some Company, Finance)', never a bare code.\n"
+        "- When a valuation anchor is given, state it plainly, e.g. 'trades cheap "
+        "at 11.8x vs the sector's ~9x'. Define forward P/E in plain words on first "
+        "use.\n"
+        "- Translate attribution into plain English: 'stock-specific' means it "
+        "moved differently from its sector peers; 'sector-driven' means it moved "
+        "with them.\n"
+        "- Mention an EPS-estimate cut/raise only when the figure is given.\n"
+        "- Ground EVERYTHING strictly in the computed figures below -- do NOT "
+        "invent tickers, prices, news, or catalysts (a separate section covers "
+        "catalysts). Write n/a where a fundamental is missing.\n"
+        "- Do NOT discuss the HSI index level itself (a separate macro section "
+        "does that).\n\n"
+        "Grouped movers (already computed -- rewrite into flowing prose + bullets, "
+        "do not just copy):\n"
+        f"{grouped}\n\n"
+        "Full computed tables for reference (figures only):\n"
         f"{tables}\n"
     )
 
@@ -335,12 +816,18 @@ def build_catalyst_prompt(metrics: Dict[str, Any]) -> str:
         f"universe over the week ending {asof}. Let the ATTRIBUTION tag on each "
         "name STEER your search: Stock-specific → hunt company-level catalysts; "
         "Sector-driven → identify the sector/macro driver; Mixed → cover both. "
-        "For each name, look for: earnings "
-        "or guidance, M&A, regulatory/policy news, sector flows, index "
-        "inclusion/exclusion or rebalance, ex-dividend/forced flow. Write ONE "
-        "short bullet per name: the symbol, the 1W move, and the cited catalyst "
-        "(one sentence). If web search yields nothing specific for a name, say "
-        "'no specific catalyst found' for it — do NOT fabricate. Keep it tight.\n\n"
+        "For each name, look for: earnings or guidance, M&A, regulatory/policy "
+        "news, sector flows, index inclusion/exclusion or rebalance, "
+        "ex-dividend/forced flow.\n\n"
+        "OUTPUT FORMAT — EXACTLY ONE LINE PER NAME so the app can group them, each "
+        "starting with the bare symbol then a colon:\n"
+        "- If you found a real, citable catalyst: '<SYM>: <one-sentence catalyst>'.\n"
+        "- If web search yields NOTHING specific for the name: write the literal "
+        "phrase '<SYM>: no specific catalyst found'. Do NOT fabricate.\n"
+        "- If the move only plausibly reflects a SECTOR/MACRO driver (not reported "
+        "company news): '<SYM>: likely moved with <sector> on <driver> (inferred, "
+        "low confidence)'.\n"
+        "Keep each line to one sentence. No headers, no preamble.\n\n"
         f"Notable movers (top gainers, top losers, outsized volume):\n{namelist}\n"
     )
 
@@ -355,13 +842,18 @@ def build_hsi_prompt(metrics: Dict[str, Any]) -> str:
         f"{hsi.get('trend') or 'n/a'}."
     )
     return (
-        "You are a macro strategist writing the TOP-DOWN index section of a weekly "
-        f"one-pager on the Hang Seng Index (HSI), as of {asof}. Start from the "
-        f"computed figures below, then add a brief (1-2 paragraph) interpretation "
-        "of the index week. If you have live web context, fold in the macro / "
-        "policy / flow drivers (China data, PBoC/HKMA, Stock Connect flows, "
-        "sector rotation); otherwise interpret strictly from the computed move and "
-        "do not fabricate news. Use plain prose, no headers.\n\n"
+        "You are a macro strategist writing the TOP-DOWN INDEX section of a weekly "
+        f"one-pager on the Hang Seng Index (HSI), as of {asof}. Your job is to "
+        "INTERPRET the index week at the macro level only.\n\n"
+        "State the HSI's weekly figure AT MOST ONCE, then spend the rest on what "
+        "is driving the INDEX: China macro data, PBoC/HKMA policy, Stock Connect "
+        "flows, sector rotation, and the broad risk backdrop. Keep it to 1-2 "
+        "short paragraphs.\n\n"
+        "DO NOT restate or re-list the individual-stock movers — a separate "
+        "'What moved and why' section already covers single names. DO NOT repeat "
+        "the HSI percentage multiple times. If you have live web context, fold in "
+        "the macro/policy/flow drivers; otherwise interpret strictly from the "
+        "computed move and do not fabricate news. Plain prose, no headers.\n\n"
         f"{computed}\n"
     )
 
@@ -370,33 +862,61 @@ def build_hsi_prompt(metrics: Dict[str, Any]) -> str:
 # Orchestration
 # ---------------------------------------------------------------------------
 def _no_key_markdown(metrics: Dict[str, Any]) -> str:
+    """No-AI-key deliverable: deterministic takeaways box + grouped plain-English
+    movers + collapsed (no-web) catalysts + glossary + the always-on metric
+    tables. Must NOT contain the AI-only '## Data observations' heading."""
     banner = _staleness_banner(metrics)
+    takeaways = render_takeaways_deterministic(metrics)
+    grouped = render_grouped_movers(metrics)
+    catalysts = render_catalysts_deterministic(metrics)
+    glossary = render_glossary()
     tables = render_metric_tables(metrics)
-    return (
-        f"# {TITLE}\n\n{banner}\n\n"
-        "> Set an AI key in Settings to generate the written weekly note. The "
-        "computed metrics below are the data backbone and are always available.\n\n"
-        f"{tables}\n"
-    )
+    parts: List[str] = [f"# {TITLE}", "", banner, ""]
+    parts += [
+        "> Set an AI key in Settings for the AI-written synthesis. The takeaways, "
+        "plain-English movers and computed metrics below are generated "
+        "deterministically and are always available.",
+        "",
+    ]
+    if takeaways.strip():
+        parts += ["## Key takeaways", "", takeaways.strip(), ""]
+    if grouped.strip():
+        parts += ["## What moved and why", "", grouped.strip(), ""]
+    if catalysts.strip():
+        parts += ["## Catalysts", "", catalysts.strip(), ""]
+    parts += [glossary, ""]
+    parts += ["## Computed metrics", "", tables]
+    return "\n".join(parts)
 
 
 def _assemble(
     metrics: Dict[str, Any],
+    takeaways: str,
     observations: str,
     catalysts: str,
     hsi_commentary: str,
     notice: str,
 ) -> str:
+    """New reading order: Key takeaways box -> What moved and why (grouped) ->
+    Catalysts (collapsed) -> HSI macro view (deduped) -> Glossary -> Computed
+    metrics. The exact heading strings '## Data observations', '## Catalysts
+    (web)', '## HSI macro view', '## Computed metrics' are preserved (tests +
+    exporter contract)."""
     banner = _staleness_banner(metrics)
     parts: List[str] = [f"# {TITLE}", "", banner, ""]
     if notice:
         parts += [f"> {notice}", ""]
+    if takeaways.strip():
+        parts += ["## Key takeaways", "", takeaways.strip(), ""]
     if observations.strip():
+        # The AI-written 'what moved and why' body. Heading kept verbatim.
         parts += ["## Data observations", "", observations.strip(), ""]
     if catalysts.strip():
         parts += ["## Catalysts (web)", "", catalysts.strip(), ""]
     if hsi_commentary.strip():
         parts += ["## HSI macro view", "", hsi_commentary.strip(), ""]
+    # Inline glossary so every term used above has a plain-English definition.
+    parts += [render_glossary(), ""]
     # Always append the deterministic data tables for auditability.
     parts += ["## Computed metrics", "", render_metric_tables(metrics)]
     return "\n".join(parts)
@@ -485,6 +1005,24 @@ def generate_weekly_note(
 
     errors: List[str] = []
 
+    # (a0) Key takeaways box [SYNTHESIS] -- AI when a synthesis provider exists,
+    # otherwise the deterministic version. Always degrade gracefully.
+    takeaways = ""
+    if synth_ok:
+        try:
+            text, _used = complete_with_fallback(
+                provider, build_takeaways_prompt(metrics),
+                fallback_providers=fallback_providers,
+                section="weekly_takeaways", max_tokens=400,
+            )
+            takeaways = (text or "").strip()
+            _log_usage(provider, "sidebar", ok=True, note="weekly takeaways")
+        except Exception as e:  # noqa: BLE001
+            errors.append(f"takeaways: {e}")
+            _log_usage(provider, "sidebar", ok=False, note=str(e)[:200])
+    if not takeaways:
+        takeaways = render_takeaways_deterministic(metrics)
+
     # (a) Data observations [SYNTHESIS] -- run on the chosen provider.
     observations = ""
     if synth_ok:
@@ -500,7 +1038,10 @@ def generate_weekly_note(
             errors.append(f"observations: {e}")
             _log_usage(provider, "sidebar", ok=False, note=str(e)[:200])
 
-    # (b) Web catalysts [WEB] -- route to the resolved web runner.
+    # (b) Web catalysts [WEB] -- route to the resolved web runner, then COLLAPSE
+    # the per-name output into one 'no catalyst found' line + real-catalyst
+    # bullets + a low-confidence inferred group. When no web ran, use the
+    # deterministic collapsed line so the section is still informative.
     catalysts = ""
     if do_web and (metrics.get("catalyst_names") or []):
         try:
@@ -509,7 +1050,7 @@ def generate_weekly_note(
                 fallback_providers=[],
                 section="weekly_catalysts", max_tokens=800,
             )
-            catalysts = (text or "").strip()
+            catalysts = collapse_catalysts((text or "").strip(), metrics)
             _log_usage(web_runner, "sidebar", ok=True, note="weekly catalysts")
         except Exception as e:  # noqa: BLE001
             errors.append(f"catalysts: {e}")
@@ -534,7 +1075,9 @@ def generate_weekly_note(
             errors.append(f"hsi: {e}")
             _log_usage(hsi_runner, "sidebar", ok=False, note=str(e)[:200])
 
-    markdown = _assemble(metrics, observations, catalysts, hsi_commentary, notice)
+    markdown = _assemble(
+        metrics, takeaways, observations, catalysts, hsi_commentary, notice
+    )
 
     # Report the synthesis provider name when present, else the web provider.
     prov_name = (getattr(provider, "name", "") if synth_ok
