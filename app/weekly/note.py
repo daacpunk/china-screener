@@ -143,14 +143,12 @@ def _short_sector(rec: Dict[str, Any]) -> str:
 
 
 def _descriptor(rec: Dict[str, Any]) -> str:
-    """Label a name as "9636-HK (Company Name, Finance)" using the cleaned
-    company name + short sector tag. Degrades to "9636-HK (Finance)" or just the
-    bare symbol when name/sector are missing."""
+    """Label a name as "Company Name (9636-HK)" using the cleaned company name
+    with the ticker in parentheses. Degrades to the bare symbol when the company
+    name is missing."""
     sym = _clean(rec.get("symbol")) or "?"
     name = _clean(rec.get("company_name"))
-    sec = _short_sector(rec)
-    inside = ", ".join([p for p in (name, sec) if p])
-    return f"{sym} ({inside})" if inside else sym
+    return f"{name} ({sym})" if name else sym
 
 
 def _val_anchor(rec: Dict[str, Any]) -> str:
@@ -481,7 +479,9 @@ def build_takeaways_prompt(metrics: Dict[str, Any]) -> str:
         f"{spec} of {total} biggest movers stock-specific); (2) the single most "
         "extreme dislocation by sigma (standard deviations vs the name's own "
         "history); (3) any genuinely sector-driven names; (4) red flags such as "
-        "big EPS-estimate cuts. Use the company NAME + sector tag, not bare codes. "
+        "big EPS-estimate cuts. Refer to each name by its COMPANY NAME with the "
+        "ticker in parentheses, e.g. 'Some Company (9636-HK)', not bare codes and "
+        "not the sector in the parentheses. "
         "Reference the HSI figure ONCE. Do NOT invent tickers, prices, news, or "
         "catalysts \u2014 every number must come from below. Output ONLY the bullets, "
         "each starting with '- '.\n\n"
@@ -738,8 +738,10 @@ def build_observations_prompt(metrics: Dict[str, Any]) -> str:
         "(stock-specific); Losers (sector-driven); Stretched to extremes -- one "
         "tight bullet per name.\n\n"
         "RULES:\n"
-        "- Refer to each name by its COMPANY NAME and sector tag, e.g. "
-        "'9636-HK (Some Company, Finance)', never a bare code.\n"
+        "- Refer to each name by its COMPANY NAME with the ticker in parentheses, "
+        "e.g. 'Some Company (9636-HK)', never a bare code and never the sector in "
+        "the parentheses. You may still mention the sector in the surrounding "
+        "sentence when relevant.\n"
         "- When a valuation anchor is given, state it plainly, e.g. 'trades cheap "
         "at 11.8x vs the sector's ~9x'. Define forward P/E in plain words on first "
         "use.\n"
