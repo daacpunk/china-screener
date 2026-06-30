@@ -1,0 +1,3516 @@
+{
+  "name": "FactSet =FDS Formula Dictionary",
+  "version": "3.0.0",
+  "description": "Canonical FactSet =FDS Excel formula dictionary. Built from the AUTHORITATIVE, confirmed =FDS formula library (price P_, fundamentals FF_, estimates FE_ incl. FE_ESTIMATE/FE_ACTUAL/FE_VALUATION + prebuilt templates, identifiers FG_) plus the full ~599-keyword FactSet Estimates item library (standard + sector-specific). SUPERSEDES the prior OnDemand-manual dictionary (which carried WRONG field names). This is the canonical reference used by the formula generator, the weekly note, and Phase C prep. Excel form: =FDS(symbol_or_cell,\"FORMULA_CODE(args)\").",
+  "source": [
+    "=FDS Formulas Quick Reference (FactSet, 2014)",
+    "Online Assistant p.16114 - FE_ESTIMATE",
+    "Online Assistant p.20420 - Changing the Report Layout",
+    "FactSet Estimates Items & Keywords (spreadsheet, 20 Apr 2026)"
+  ],
+  "syntax_conventions": {
+    "base_structure": "=FDS(symbol_or_cell, \"FORMULA_CODE(arguments)\")",
+    "placeholders": {
+      "SD": "start date",
+      "ED": "end date",
+      "FRQ": "frequency",
+      "0": "most recent / current period (negative offsets go back in time)",
+      "RF": "Report Filing basis flag (fundamentals)",
+      "ANN": "annual periodicity (substitutable)",
+      "CONTEXT": "estimate context arg (brokers / methodology)"
+    },
+    "quote_escaping": {
+      "price_and_fundamentals": "nested strings use doubled double-quotes, e.g. \"\"DATEJ\"\"",
+      "estimates": "nested strings use single quotes, e.g. 'MM/DD/YYYY' or ''"
+    },
+    "syntax_mode_conversions": {
+      "fql_downloading": "prefix code with ^=",
+      "universal_screening": "drop sdate/edate/frq, use single 'date' arg",
+      "screening_downloading": "prefix universal-screening form with ^%"
+    }
+  },
+  "formulas": {
+    "price": {
+      "label": "Closing price (single date / spot)",
+      "fql_template": "P_PRICE(0)",
+      "notes": "Latest close (point-in-time). Date companion: P_DATE(0,,,\"DATEJ\"). P_PRICE supports split/dividend adjustment args (see FactSet Sidebar).",
+      "family": "price",
+      "fds_compatible": true
+    },
+    "price_range": {
+      "label": "Price over date range",
+      "fql_template": "P_PRICE({SD},{ED},{FRQ})",
+      "notes": "Price time series between {SD} start and {ED} end at {FRQ} frequency (most-recent-first comma args inside the parens). Date companion: P_DATE({SD},{ED},{FRQ},\"DATEJ\").",
+      "family": "price",
+      "fds_compatible": true
+    },
+    "price_range_ccy": {
+      "label": "Price over range with currency",
+      "fql_template": "P_PRICE({SD},{ED},{FRQ},{CURRENCY})",
+      "notes": "Price series in an explicit reporting currency (e.g. USD).",
+      "family": "price",
+      "fds_compatible": true
+    },
+    "price_high_52w": {
+      "label": "52-week high",
+      "fql_template": "P_PRICE_HIGH_52W(0)",
+      "notes": "Trailing 52-week high. Date companion: P_PRICE_HIGH_PR(0,,,,,,\"DATEJ\",\"INTRA\",\"52W\").",
+      "family": "price",
+      "fds_compatible": true
+    },
+    "price_low_52w": {
+      "label": "52-week low",
+      "fql_template": "P_PRICE_LOW_52W(0)",
+      "notes": "Trailing 52-week low. Date companion: P_PRICE_LOW_PR(0,,,,,,\"DATEJ\",\"INTRA\",\"52W\").",
+      "family": "price",
+      "fds_compatible": true
+    },
+    "price_change": {
+      "label": "Price change between dates",
+      "fql_template": "P_PRICE_CHANGE({SD},{ED})",
+      "notes": "Price change over the {SD}->{ED} window.",
+      "family": "price",
+      "fds_compatible": true
+    },
+    "total_return": {
+      "label": "Compounded total return (ExDate reinvest)",
+      "fql_template": "P_TOTAL_RETURNC({SD},{ED})",
+      "notes": "Compounded total return between dates, dividends reinvested at ex-date.",
+      "family": "price",
+      "fds_compatible": true
+    },
+    "volume_cum": {
+      "label": "Cumulative volume between dates",
+      "fql_template": "P_VOLUME({SD},{ED})",
+      "notes": "Cumulative share volume over the {SD}->{ED} window. (Daily-bar volume in the weekly/price-series workflow uses P_VOLUME_DAY.)",
+      "family": "price",
+      "fds_compatible": true
+    },
+    "exch_rate": {
+      "label": "Exchange rate",
+      "fql_template": "P_EXCH_RATE(EUR,USD,0)",
+      "notes": "Spot/period exchange rate between two currencies (example EUR->USD).",
+      "family": "price",
+      "fds_compatible": true
+    },
+    "market_cap": {
+      "label": "Market capitalization (company, current)",
+      "fql_template": "P_MARKET_VAL_CO({CURRENCY},1)",
+      "notes": "Current company market capitalization in {CURRENCY} (e.g. P_MARKET_VAL_CO(USD,1)). The trailing 1 selects the current period.",
+      "family": "price",
+      "fds_compatible": true
+    },
+    "currency": {
+      "label": "Currency (local name)",
+      "fql_template": "P_CURRENCY",
+      "notes": "Local trading/listing currency name. No date arg.",
+      "family": "price",
+      "fds_compatible": true
+    },
+    "date_eu": {
+      "label": "Date (European format)",
+      "fql_template": "P_DATEIC_DAY(0)",
+      "notes": "Most-recent trading date in European day format. No date arg.",
+      "family": "price",
+      "fds_compatible": true
+    },
+    "ff_com_shs_out": {
+      "label": "Shares Outstanding - Company",
+      "fql_template": "FF_COM_SHS_OUT(ANN,0,,,RF)",
+      "notes": "Shares Outstanding - Company. FactSet Fundamentals item. Template form FF_ITEM(ANN,0,,,RF): periodicity options [ANN, QTR, SEMI, LTM, LTM_SEMI, YTD, CAL]; 0 = most recent period (negative offsets go back); RF = Report Filing basis flag. Date companion: FF_FISCAL_DATE(ANN,0,,,RF,\"DATEJ\").",
+      "family": "fundamentals",
+      "fds_compatible": true
+    },
+    "ff_com_shs_out_secs": {
+      "label": "Shares Outstanding - Security",
+      "fql_template": "FF_COM_SHS_OUT_SECS(ANN,0,,,RF)",
+      "notes": "Shares Outstanding - Security. FactSet Fundamentals item. Template form FF_ITEM(ANN,0,,,RF): periodicity options [ANN, QTR, SEMI, LTM, LTM_SEMI, YTD, CAL]; 0 = most recent period (negative offsets go back); RF = Report Filing basis flag. Date companion: FF_FISCAL_DATE(ANN,0,,,RF,\"DATEJ\").",
+      "family": "fundamentals",
+      "fds_compatible": true
+    },
+    "ff_mkt_val": {
+      "label": "Market Value (period-end price)",
+      "fql_template": "FF_MKT_VAL(ANN,0,,,RF)",
+      "notes": "Market Value (period-end price). FactSet Fundamentals item. Template form FF_ITEM(ANN,0,,,RF): periodicity options [ANN, QTR, SEMI, LTM, LTM_SEMI, YTD, CAL]; 0 = most recent period (negative offsets go back); RF = Report Filing basis flag. Date companion: FF_FISCAL_DATE(ANN,0,,,RF,\"DATEJ\").",
+      "family": "fundamentals",
+      "fds_compatible": true
+    },
+    "ff_entrpr_val": {
+      "label": "Enterprise Value (equity value)",
+      "fql_template": "FF_ENTRPR_VAL(ANN,0,,,RF)",
+      "notes": "Enterprise Value (equity value). FactSet Fundamentals item. Template form FF_ITEM(ANN,0,,,RF): periodicity options [ANN, QTR, SEMI, LTM, LTM_SEMI, YTD, CAL]; 0 = most recent period (negative offsets go back); RF = Report Filing basis flag. Date companion: FF_FISCAL_DATE(ANN,0,,,RF,\"DATEJ\").",
+      "family": "fundamentals",
+      "fds_compatible": true
+    },
+    "ff_sales": {
+      "label": "Net Sales",
+      "fql_template": "FF_SALES(ANN,0,,,RF)",
+      "notes": "Net Sales. FactSet Fundamentals item. Template form FF_ITEM(ANN,0,,,RF): periodicity options [ANN, QTR, SEMI, LTM, LTM_SEMI, YTD, CAL]; 0 = most recent period (negative offsets go back); RF = Report Filing basis flag. Date companion: FF_FISCAL_DATE(ANN,0,,,RF,\"DATEJ\").",
+      "family": "fundamentals",
+      "fds_compatible": true
+    },
+    "ff_ebit_oper": {
+      "label": "EBIT",
+      "fql_template": "FF_EBIT_OPER(ANN,0,,,RF)",
+      "notes": "EBIT. FactSet Fundamentals item. Template form FF_ITEM(ANN,0,,,RF): periodicity options [ANN, QTR, SEMI, LTM, LTM_SEMI, YTD, CAL]; 0 = most recent period (negative offsets go back); RF = Report Filing basis flag. Date companion: FF_FISCAL_DATE(ANN,0,,,RF,\"DATEJ\").",
+      "family": "fundamentals",
+      "fds_compatible": true
+    },
+    "ff_ebitda_oper": {
+      "label": "EBITDA",
+      "fql_template": "FF_EBITDA_OPER(ANN,0,,,RF)",
+      "notes": "EBITDA. FactSet Fundamentals item. Template form FF_ITEM(ANN,0,,,RF): periodicity options [ANN, QTR, SEMI, LTM, LTM_SEMI, YTD, CAL]; 0 = most recent period (negative offsets go back); RF = Report Filing basis flag. Date companion: FF_FISCAL_DATE(ANN,0,,,RF,\"DATEJ\").",
+      "family": "fundamentals",
+      "fds_compatible": true
+    },
+    "ff_div_com_cf": {
+      "label": "Dividends - Total",
+      "fql_template": "FF_DIV_COM_CF(ANN,0,,,RF)",
+      "notes": "Dividends - Total. FactSet Fundamentals item. Template form FF_ITEM(ANN,0,,,RF): periodicity options [ANN, QTR, SEMI, LTM, LTM_SEMI, YTD, CAL]; 0 = most recent period (negative offsets go back); RF = Report Filing basis flag. Date companion: FF_FISCAL_DATE(ANN,0,,,RF,\"DATEJ\").",
+      "family": "fundamentals",
+      "fds_compatible": true
+    },
+    "ff_gross_inc": {
+      "label": "Gross Income",
+      "fql_template": "FF_GROSS_INC(ANN,0,,,RF)",
+      "notes": "Gross Income. FactSet Fundamentals item. Template form FF_ITEM(ANN,0,,,RF): periodicity options [ANN, QTR, SEMI, LTM, LTM_SEMI, YTD, CAL]; 0 = most recent period (negative offsets go back); RF = Report Filing basis flag. Date companion: FF_FISCAL_DATE(ANN,0,,,RF,\"DATEJ\").",
+      "family": "fundamentals",
+      "fds_compatible": true
+    },
+    "ff_oper_inc": {
+      "label": "Operating Income",
+      "fql_template": "FF_OPER_INC(ANN,0,,,RF)",
+      "notes": "Operating Income. FactSet Fundamentals item. Template form FF_ITEM(ANN,0,,,RF): periodicity options [ANN, QTR, SEMI, LTM, LTM_SEMI, YTD, CAL]; 0 = most recent period (negative offsets go back); RF = Report Filing basis flag. Date companion: FF_FISCAL_DATE(ANN,0,,,RF,\"DATEJ\").",
+      "family": "fundamentals",
+      "fds_compatible": true
+    },
+    "ff_net_inc": {
+      "label": "Net Income before Extraordinaries",
+      "fql_template": "FF_NET_INC(ANN,0,,,RF)",
+      "notes": "Net Income before Extraordinaries. FactSet Fundamentals item. Template form FF_ITEM(ANN,0,,,RF): periodicity options [ANN, QTR, SEMI, LTM, LTM_SEMI, YTD, CAL]; 0 = most recent period (negative offsets go back); RF = Report Filing basis flag. Date companion: FF_FISCAL_DATE(ANN,0,,,RF,\"DATEJ\").",
+      "family": "fundamentals",
+      "fds_compatible": true
+    },
+    "ff_int_exp_debt": {
+      "label": "Interest Expense",
+      "fql_template": "FF_INT_EXP_DEBT(ANN,0,,,RF)",
+      "notes": "Interest Expense. FactSet Fundamentals item. Template form FF_ITEM(ANN,0,,,RF): periodicity options [ANN, QTR, SEMI, LTM, LTM_SEMI, YTD, CAL]; 0 = most recent period (negative offsets go back); RF = Report Filing basis flag. Date companion: FF_FISCAL_DATE(ANN,0,,,RF,\"DATEJ\").",
+      "family": "fundamentals",
+      "fds_compatible": true
+    },
+    "ff_cash_st": {
+      "label": "Cash & Equivalents",
+      "fql_template": "FF_CASH_ST(ANN,0,,,RF)",
+      "notes": "Cash & Equivalents. FactSet Fundamentals item. Template form FF_ITEM(ANN,0,,,RF): periodicity options [ANN, QTR, SEMI, LTM, LTM_SEMI, YTD, CAL]; 0 = most recent period (negative offsets go back); RF = Report Filing basis flag. Date companion: FF_FISCAL_DATE(ANN,0,,,RF,\"DATEJ\").",
+      "family": "fundamentals",
+      "fds_compatible": true
+    },
+    "ff_assets": {
+      "label": "Assets - Total",
+      "fql_template": "FF_ASSETS(ANN,0,,,RF)",
+      "notes": "Assets - Total. FactSet Fundamentals item. Template form FF_ITEM(ANN,0,,,RF): periodicity options [ANN, QTR, SEMI, LTM, LTM_SEMI, YTD, CAL]; 0 = most recent period (negative offsets go back); RF = Report Filing basis flag. Date companion: FF_FISCAL_DATE(ANN,0,,,RF,\"DATEJ\").",
+      "family": "fundamentals",
+      "fds_compatible": true
+    },
+    "ff_debt_st": {
+      "label": "Short-term Debt",
+      "fql_template": "FF_DEBT_ST(ANN,0,,,RF)",
+      "notes": "Short-term Debt. FactSet Fundamentals item. Template form FF_ITEM(ANN,0,,,RF): periodicity options [ANN, QTR, SEMI, LTM, LTM_SEMI, YTD, CAL]; 0 = most recent period (negative offsets go back); RF = Report Filing basis flag. Date companion: FF_FISCAL_DATE(ANN,0,,,RF,\"DATEJ\").",
+      "family": "fundamentals",
+      "fds_compatible": true
+    },
+    "ff_debt_lt": {
+      "label": "Long-term Debt",
+      "fql_template": "FF_DEBT_LT(ANN,0,,,RF)",
+      "notes": "Long-term Debt. FactSet Fundamentals item. Template form FF_ITEM(ANN,0,,,RF): periodicity options [ANN, QTR, SEMI, LTM, LTM_SEMI, YTD, CAL]; 0 = most recent period (negative offsets go back); RF = Report Filing basis flag. Date companion: FF_FISCAL_DATE(ANN,0,,,RF,\"DATEJ\").",
+      "family": "fundamentals",
+      "fds_compatible": true
+    },
+    "ff_debt": {
+      "label": "Debt - Total",
+      "fql_template": "FF_DEBT(ANN,0,,,RF)",
+      "notes": "Debt - Total. FactSet Fundamentals item. Template form FF_ITEM(ANN,0,,,RF): periodicity options [ANN, QTR, SEMI, LTM, LTM_SEMI, YTD, CAL]; 0 = most recent period (negative offsets go back); RF = Report Filing basis flag. Date companion: FF_FISCAL_DATE(ANN,0,,,RF,\"DATEJ\").",
+      "family": "fundamentals",
+      "fds_compatible": true
+    },
+    "ff_liabs": {
+      "label": "Liabilities - Total",
+      "fql_template": "FF_LIABS(ANN,0,,,RF)",
+      "notes": "Liabilities - Total. FactSet Fundamentals item. Template form FF_ITEM(ANN,0,,,RF): periodicity options [ANN, QTR, SEMI, LTM, LTM_SEMI, YTD, CAL]; 0 = most recent period (negative offsets go back); RF = Report Filing basis flag. Date companion: FF_FISCAL_DATE(ANN,0,,,RF,\"DATEJ\").",
+      "family": "fundamentals",
+      "fds_compatible": true
+    },
+    "fe_estimate": {
+      "label": "Consensus estimate (FE_ESTIMATE function)",
+      "fql_template": "FE_ESTIMATE({item},{statistic},{report_basis},{period},0,,,'')",
+      "notes": "FE_ESTIMATE syntax: FE_ESTIMATE(item, statistic, report_basis, estimate_period, sdate, edate, frq, 'CONTEXT'). Statistics: [MEAN, MED, NEST, STDDEV, HIGH, LOW, LAST, OLDEST, UP, DOWN, MARK, TOTAL, UNCHGED, COEFFVAR]. Report basis: ANNUAL=annual (alias ANN); QUARTERLY=quarterly (alias QTR); SEMI=semiannual; CALA=calendarized time-weighted annual; CALQ=calendarized time-weighted quarterly; CAL4=calendarized 4-quarter sum; LTMA=last twelve months time-weighted annual; LTM4_ROLL=last twelve months 4-quarter sum; NTMA=next twelve months time-weighted annual; NTM4_ROLL=next twelve months 4-quarter sum; STMA=second twelve months time-weighted annual; STM4_ROLL=second twelve months 4-quarter sum; SLTMA=second last twelve months time-weighted annual. Append _ROLL for rolling on ANNUAL/QUARTERLY/CALA/CALQ. Estimate period: annual FY1-FY4/forward +n/absolute YYYY; quarterly FQ1-FQ5; LTM/NTM/STM need no period. NTM = next twelve-month forward (sum of next four unreported quarter estimates). Date function: FE_ESTIMATE_DATE(date_type, , report_basis, estimate_period, 'MM/DD/YYYY', 0, , '') (date types: FISCALPERIODEND, DATE). Estimates nest strings use SINGLE quotes (e.g. '' or 'MM/DD/YYYY').",
+      "family": "estimates",
+      "fds_compatible": true
+    },
+    "fe_actual": {
+      "label": "Reported actual (FE_ACTUAL function)",
+      "fql_template": "FE_ACTUAL(ACTUAL,{item},{report_basis},{period},,,,'')",
+      "notes": "FE_ACTUAL syntax: FE_ACTUAL(ACTUAL, item, report_basis, period, , , , ''). Example: FE_ACTUAL(ACTUAL,EPS,ANNUAL,0,,,,''). Date function: FE_ACTUAL_DATE(FISCALPERIODEND,,ANNUAL,0,'MM/DD/YYYY').",
+      "family": "estimates",
+      "fds_compatible": true
+    },
+    "fe_valuation_pe_ntm": {
+      "label": "Forward P/E — NTM (FE_VALUATION, native)",
+      "fql_template": "FE_VALUATION(PE,MEAN,NTMA,,0,,,'')",
+      "notes": "FE_VALUATION syntax: FE_VALUATION(item, statistic, report_basis, period, ...). Native next-twelve-month consensus P/E (no in-app price/EPS computation needed). Example FY1: FE_VALUATION(PE,MEAN,ANNUAL,+1,0,,,'').",
+      "family": "estimates",
+      "fds_compatible": true
+    },
+    "fe_valuation_pe_fy1": {
+      "label": "Forward P/E — FY1 (FE_VALUATION, native)",
+      "fql_template": "FE_VALUATION(PE,MEAN,ANNUAL,+1,0,,,'')",
+      "notes": "Native FY1 consensus P/E via FE_VALUATION.",
+      "family": "estimates",
+      "fds_compatible": true
+    },
+    "est_fy1_eps_mean": {
+      "label": "FY1 Mean EPS (prebuilt FE_ESTIMATE template)",
+      "fql_template": "FE_ESTIMATE(EPS,MEAN,ANNUAL,+1,0,,,'')",
+      "notes": "Confirmed prebuilt =FDS Sidebar estimate template. Code: FE_ESTIMATE(EPS,MEAN,ANNUAL,+1,0,,,'').",
+      "family": "estimates",
+      "fds_compatible": true
+    },
+    "est_fy1_eps_mean_roll": {
+      "label": "FY1 Mean EPS - Rolling (prebuilt FE_ESTIMATE template)",
+      "fql_template": "FE_ESTIMATE(EPS,MEAN,ANNUAL_ROLL,+1,0,,,'')",
+      "notes": "Confirmed prebuilt =FDS Sidebar estimate template. Code: FE_ESTIMATE(EPS,MEAN,ANNUAL_ROLL,+1,0,,,'').",
+      "family": "estimates",
+      "fds_compatible": true
+    },
+    "est_fy2_eps_mean_roll": {
+      "label": "FY2 Mean EPS - Rolling (prebuilt FE_ESTIMATE template)",
+      "fql_template": "FE_ESTIMATE(EPS,MEAN,ANNUAL_ROLL,+2,0,,,'')",
+      "notes": "Confirmed prebuilt =FDS Sidebar estimate template. Code: FE_ESTIMATE(EPS,MEAN,ANNUAL_ROLL,+2,0,,,'').",
+      "family": "estimates",
+      "fds_compatible": true
+    },
+    "est_fq1_eps_mean_roll": {
+      "label": "FQ1 Mean EPS - Rolling (prebuilt FE_ESTIMATE template)",
+      "fql_template": "FE_ESTIMATE(EPS,MEAN,QUARTERLY_ROLL,+1,0,,,'')",
+      "notes": "Confirmed prebuilt =FDS Sidebar estimate template. Code: FE_ESTIMATE(EPS,MEAN,QUARTERLY_ROLL,+1,0,,,'').",
+      "family": "estimates",
+      "fds_compatible": true
+    },
+    "est_fy1_sales_mean_roll": {
+      "label": "FY1 Mean Sales - Rolling (prebuilt FE_ESTIMATE template)",
+      "fql_template": "FE_ESTIMATE(SALES,MEAN,ANNUAL_ROLL,+1,0,,,'')",
+      "notes": "Confirmed prebuilt =FDS Sidebar estimate template. Code: FE_ESTIMATE(SALES,MEAN,ANNUAL_ROLL,+1,0,,,'').",
+      "family": "estimates",
+      "fds_compatible": true
+    },
+    "est_ntm_eps_mean": {
+      "label": "NTM EPS - Rolling (prebuilt FE_ESTIMATE template)",
+      "fql_template": "FE_ESTIMATE(EPS,MEAN,NTMA,,0,,,'')",
+      "notes": "Confirmed prebuilt =FDS Sidebar estimate template. Code: FE_ESTIMATE(EPS,MEAN,NTMA,,0,,,'').",
+      "family": "estimates",
+      "fds_compatible": true
+    },
+    "est_ltg_mean": {
+      "label": "Long-Term Growth Mean (prebuilt FE_ESTIMATE template)",
+      "fql_template": "FE_ESTIMATE(EPS_LTG,MEAN,,,0,,,'')",
+      "notes": "Confirmed prebuilt =FDS Sidebar estimate template. Code: FE_ESTIMATE(EPS_LTG,MEAN,,,0,,,'').",
+      "family": "estimates",
+      "fds_compatible": true
+    },
+    "est_cal_eps_mean": {
+      "label": "Calendarized EPS (prebuilt FE_ESTIMATE template)",
+      "fql_template": "FE_ESTIMATE(EPS,MEAN,CALA,1CY,0,,,'')",
+      "notes": "Confirmed prebuilt =FDS Sidebar estimate template. Code: FE_ESTIMATE(EPS,MEAN,CALA,1CY,0,,,'').",
+      "family": "estimates",
+      "fds_compatible": true
+    },
+    "company_name": {
+      "label": "Company name",
+      "fql_template": "FG_COMPANY_NAME",
+      "notes": "Company name (point-in-time). No date arg.",
+      "family": "identifiers",
+      "fds_compatible": true
+    },
+    "exchange": {
+      "label": "Exchange",
+      "fql_template": "FG_EXCHANGE",
+      "notes": "Listing exchange (point-in-time). No date arg.",
+      "family": "identifiers",
+      "fds_compatible": true
+    },
+    "gics_industry": {
+      "label": "GICS industry name (reference)",
+      "fql_template": "FG_GICS_INDUSTRY",
+      "notes": "GICS industry name from the reference library. NOTE: for THIS user's entitlement the verified-working classification fields are FG_FACTSET_SECTOR / FG_FACTSET_IND (the GICS variants returned no data); FG_GICS_INDUSTRY is carried for reference completeness.",
+      "family": "identifiers",
+      "fds_compatible": true
+    },
+    "factset_sector": {
+      "label": "FactSet sector (verified classification)",
+      "fql_template": "FG_FACTSET_SECTOR",
+      "notes": "Point-in-time FactSet sector classification — the verified-working classification field for this user's entitlement (preferred over GICS).",
+      "family": "identifiers",
+      "fds_compatible": true
+    },
+    "factset_industry": {
+      "label": "FactSet industry (verified classification)",
+      "fql_template": "FG_FACTSET_IND",
+      "notes": "Point-in-time FactSet industry classification — the verified-working classification field for this user's entitlement (preferred over GICS).",
+      "family": "identifiers",
+      "fds_compatible": true
+    }
+  },
+  "estimate_item_keywords": {
+    "description": "Use 'keyword' as the item arg in FE_ESTIMATE/FE_ACTUAL/FE_VALUATION. 'norm' is the uppercase normalized form for lookup.",
+    "standard": [
+      {
+        "label": "Accounts Payable",
+        "keyword": "PAY_ACCT",
+        "norm": "PAY_ACCT"
+      },
+      {
+        "label": "Accounts Receivable",
+        "keyword": "RECEIV_NET",
+        "norm": "RECEIV_NET"
+      },
+      {
+        "label": "Annual Recurring Revenue",
+        "keyword": "ARR",
+        "norm": "ARR"
+      },
+      {
+        "label": "Applied Cap Rate (%)",
+        "keyword": "APP_CAP_RATE",
+        "norm": "APP_CAP_RATE"
+      },
+      {
+        "label": "Average Selling Price",
+        "keyword": "ASP",
+        "norm": "ASP"
+      },
+      {
+        "label": "Book Return on Equity",
+        "keyword": "BOOK_ROE",
+        "norm": "BOOK_ROE"
+      },
+      {
+        "label": "Book Value per Share",
+        "keyword": "BPS",
+        "norm": "BPS"
+      },
+      {
+        "label": "Book Value per Share - Tangible",
+        "keyword": "BPS_TANG",
+        "norm": "BPS_TANG"
+      },
+      {
+        "label": "Capital Expenditures",
+        "keyword": "CAPEX",
+        "norm": "CAPEX"
+      },
+      {
+        "label": "Capitalized Research & Development",
+        "keyword": "CAP_RD",
+        "norm": "CAP_RD"
+      },
+      {
+        "label": "Cash and Cash Equivalents",
+        "keyword": "CASH_ST",
+        "norm": "CASH_ST"
+      },
+      {
+        "label": "Cash Flow from Financing",
+        "keyword": "CF_FIN",
+        "norm": "CF_FIN"
+      },
+      {
+        "label": "Cash Flow from Investing",
+        "keyword": "CF_INV",
+        "norm": "CF_INV"
+      },
+      {
+        "label": "Cash Flow from Operations",
+        "keyword": "CF_OP",
+        "norm": "CF_OP"
+      },
+      {
+        "label": "Cash Flow from Operations - GAAP",
+        "keyword": "CFO_GAAP",
+        "norm": "CFO_GAAP"
+      },
+      {
+        "label": "Cash Flow per Share",
+        "keyword": "CFPS",
+        "norm": "CFPS"
+      },
+      {
+        "label": "Cash Net Income",
+        "keyword": "CASH_NP",
+        "norm": "CASH_NP"
+      },
+      {
+        "label": "Cash Net Income from Continuing Operations",
+        "keyword": "CASH_NP_CONT",
+        "norm": "CASH_NP_CONT"
+      },
+      {
+        "label": "Change in Working Capital",
+        "keyword": "WKCAP_CHG",
+        "norm": "WKCAP_CHG"
+      },
+      {
+        "label": "Compensation Ratio (%)",
+        "keyword": "COMP_RATIO",
+        "norm": "COMP_RATIO"
+      },
+      {
+        "label": "Constant Currency Revenue Growth (%)",
+        "keyword": "CCUR_GRTH",
+        "norm": "CCUR_GRTH"
+      },
+      {
+        "label": "Cost of Debt (%)",
+        "keyword": "COS_DEBT",
+        "norm": "COS_DEBT"
+      },
+      {
+        "label": "Cost of Sales",
+        "keyword": "COS",
+        "norm": "COS"
+      },
+      {
+        "label": "Current Assets",
+        "keyword": "ASSETS_CURR",
+        "norm": "ASSETS_CURR"
+      },
+      {
+        "label": "Current Liabilities",
+        "keyword": "LIABS_CURR",
+        "norm": "LIABS_CURR"
+      },
+      {
+        "label": "Depr. & Amort.",
+        "keyword": "DEP_AMORT_EXP",
+        "norm": "DEP_AMORT_EXP"
+      },
+      {
+        "label": "Total Deferred Revenues",
+        "keyword": "DEFREVENUE",
+        "norm": "DEFREVENUE"
+      },
+      {
+        "label": "Deferred Revenues - ST",
+        "keyword": "DEFREVENUE_ST",
+        "norm": "DEFREVENUE_ST"
+      },
+      {
+        "label": "Deferred Revenues - LT",
+        "keyword": "DEFREVENUE_LT",
+        "norm": "DEFREVENUE_LT"
+      },
+      {
+        "label": "Discretionary Cash Flow",
+        "keyword": "DISCR_CF",
+        "norm": "DISCR_CF"
+      },
+      {
+        "label": "Dividends per Share",
+        "keyword": "DPS",
+        "norm": "DPS"
+      },
+      {
+        "label": "EPS",
+        "keyword": "EPS",
+        "norm": "EPS"
+      },
+      {
+        "label": "EPS - Non GAAP ex. SOE",
+        "keyword": "EPS_EX_XORD",
+        "norm": "EPS_EX_XORD"
+      },
+      {
+        "label": "EPS - ex. Extraordinary Items - Diluted",
+        "keyword": "EPSAD",
+        "norm": "EPSAD"
+      },
+      {
+        "label": "EPS - GAAP",
+        "keyword": "EPS_GAAP",
+        "norm": "EPS_GAAP"
+      },
+      {
+        "label": "EPS - Reported Diluted",
+        "keyword": "EPSRD",
+        "norm": "EPSRD"
+      },
+      {
+        "label": "EPS - Consolidated",
+        "keyword": "EPS_C",
+        "norm": "EPS_C"
+      },
+      {
+        "label": "EPS - Non Consolidated",
+        "keyword": "EPS_P",
+        "norm": "EPS_P"
+      },
+      {
+        "label": "EPS - Non GAAP",
+        "keyword": "EPS_NONGAAP",
+        "norm": "EPS_NONGAAP"
+      },
+      {
+        "label": "EPS - Headline Basic",
+        "keyword": "HEPSB",
+        "norm": "HEPSB"
+      },
+      {
+        "label": "EPS - Headline Diluted",
+        "keyword": "HEPSD",
+        "norm": "HEPSD"
+      },
+      {
+        "label": "Operating Income",
+        "keyword": "EBIT",
+        "norm": "EBIT"
+      },
+      {
+        "label": "Operating Income - Non GAAP",
+        "keyword": "EBIT_ADJ",
+        "norm": "EBIT_ADJ"
+      },
+      {
+        "label": "EBIT - Consolidated",
+        "keyword": "EBIT_C",
+        "norm": "EBIT_C"
+      },
+      {
+        "label": "EBIT - Non Consolidated",
+        "keyword": "EBIT_P",
+        "norm": "EBIT_P"
+      },
+      {
+        "label": "Operating Income - GAAP",
+        "keyword": "EBIT_REP",
+        "norm": "EBIT_REP"
+      },
+      {
+        "label": "EBITDA",
+        "keyword": "EBITDA",
+        "norm": "EBITDA"
+      },
+      {
+        "label": "EBITDA Non-GAAP",
+        "keyword": "EBITDA_ADJ",
+        "norm": "EBITDA_ADJ"
+      },
+      {
+        "label": "EBITDA - Consolidated",
+        "keyword": "EBITDA_C",
+        "norm": "EBITDA_C"
+      },
+      {
+        "label": "EBITDA - Non Consolidated",
+        "keyword": "EBITDA_P",
+        "norm": "EBITDA_P"
+      },
+      {
+        "label": "EBITDA GAAP",
+        "keyword": "EBITDA_REP",
+        "norm": "EBITDA_REP"
+      },
+      {
+        "label": "EBITDA after Lease",
+        "keyword": "EBITDAAL",
+        "norm": "EBITDAAL"
+      },
+      {
+        "label": "EBITDA after Lease - Adjusted",
+        "keyword": "EBITDAAL_ADJ",
+        "norm": "EBITDAAL_ADJ"
+      },
+      {
+        "label": "EBITDA after Lease - Reported",
+        "keyword": "EBITDAAL_REP",
+        "norm": "EBITDAAL_REP"
+      },
+      {
+        "label": "EBITDAX",
+        "keyword": "EBITDAX",
+        "norm": "EBITDAX"
+      },
+      {
+        "label": "Equipment Expense",
+        "keyword": "PPE_EXP",
+        "norm": "PPE_EXP"
+      },
+      {
+        "label": "Equity Ratio (%)",
+        "keyword": "EQ_RATIO",
+        "norm": "EQ_RATIO"
+      },
+      {
+        "label": "FFO/Debt (%)",
+        "keyword": "FFO_DEBT",
+        "norm": "FFO_DEBT"
+      },
+      {
+        "label": "Free Cash Flow",
+        "keyword": "FCF",
+        "norm": "FCF"
+      },
+      {
+        "label": "Free Cash Flow per Share",
+        "keyword": "FCFPS",
+        "norm": "FCFPS"
+      },
+      {
+        "label": "Unlevered Free Cash Flow",
+        "keyword": "UFCF",
+        "norm": "UFCF"
+      },
+      {
+        "label": "General & Admin Expense",
+        "keyword": "G_A_EXP",
+        "norm": "G_A_EXP"
+      },
+      {
+        "label": "Gross Income",
+        "keyword": "GROSS_INC",
+        "norm": "GROSS_INC"
+      },
+      {
+        "label": "Gross Merchandise Volume",
+        "keyword": "GMV",
+        "norm": "GMV"
+      },
+      {
+        "label": "Intangible Assets",
+        "keyword": "INTANG",
+        "norm": "INTANG"
+      },
+      {
+        "label": "Interest Coverage Ratio (X)",
+        "keyword": "INT_COVER_RATIO",
+        "norm": "INT_COVER_RATIO"
+      },
+      {
+        "label": "Interest Expense",
+        "keyword": "INT_EXP",
+        "norm": "INT_EXP"
+      },
+      {
+        "label": "Interest Income",
+        "keyword": "INT_INCOME",
+        "norm": "INT_INCOME"
+      },
+      {
+        "label": "Inventories",
+        "keyword": "INVEN",
+        "norm": "INVEN"
+      },
+      {
+        "label": "Local Currency Revenue Growth (%)",
+        "keyword": "LCUR_GRTH",
+        "norm": "LCUR_GRTH"
+      },
+      {
+        "label": "Long-Term Debt",
+        "keyword": "DEBT_LT",
+        "norm": "DEBT_LT"
+      },
+      {
+        "label": "Long Term Growth (%)",
+        "keyword": "EPS_LTG",
+        "norm": "EPS_LTG"
+      },
+      {
+        "label": "Long-Term Investments",
+        "keyword": "INVEST_LT",
+        "norm": "INVEST_LT"
+      },
+      {
+        "label": "Maintenance CAPEX",
+        "keyword": "MAINT_CAPEX",
+        "norm": "MAINT_CAPEX"
+      },
+      {
+        "label": "Minority Interest",
+        "keyword": "MINTEREST",
+        "norm": "MINTEREST"
+      },
+      {
+        "label": "NAVPS",
+        "keyword": "NAVPS",
+        "norm": "NAVPS"
+      },
+      {
+        "label": "NAV - NTM",
+        "keyword": "RNAVPS",
+        "norm": "RNAVPS"
+      },
+      {
+        "label": "Net Debt",
+        "keyword": "NET_DEBT",
+        "norm": "NET_DEBT"
+      },
+      {
+        "label": "Net Income",
+        "keyword": "NET_INC",
+        "norm": "NET_INC"
+      },
+      {
+        "label": "Net Income - Non GAAP",
+        "keyword": "NET_INC_ADJ",
+        "norm": "NET_INC_ADJ"
+      },
+      {
+        "label": "Net Income - Consolidated",
+        "keyword": "NET_INC_C",
+        "norm": "NET_INC_C"
+      },
+      {
+        "label": "Net Income - Non Consolidated",
+        "keyword": "NET_P",
+        "norm": "NET_P"
+      },
+      {
+        "label": "Net Income - GAAP",
+        "keyword": "NET_INC_REP",
+        "norm": "NET_INC_REP"
+      },
+      {
+        "label": "Net Sales",
+        "keyword": "NET_SALES",
+        "norm": "NET_SALES"
+      },
+      {
+        "label": "Operating Expense",
+        "keyword": "OPER_EXP",
+        "norm": "OPER_EXP"
+      },
+      {
+        "label": "Operating Lease Expenses",
+        "keyword": "OP_LEASE_EXP",
+        "norm": "OP_LEASE_EXP"
+      },
+      {
+        "label": "Operating Ratio (%)",
+        "keyword": "OP_RATIO",
+        "norm": "OP_RATIO"
+      },
+      {
+        "label": "Organic Growth (%)",
+        "keyword": "ORGANICGROWTH",
+        "norm": "ORGANICGROWTH"
+      },
+      {
+        "label": "Pension & Benefits",
+        "keyword": "PENS_BENF",
+        "norm": "PENS_BENF"
+      },
+      {
+        "label": "Pretax Income",
+        "keyword": "PTX_INC",
+        "norm": "PTX_INC"
+      },
+      {
+        "label": "Pretax Income - Non GAAP",
+        "keyword": "PTX_INC_ADJ",
+        "norm": "PTX_INC_ADJ"
+      },
+      {
+        "label": "PTP - Consolidated",
+        "keyword": "PTX_INC_C",
+        "norm": "PTX_INC_C"
+      },
+      {
+        "label": "PTP - Non Consolidated",
+        "keyword": "PTX_INC_P",
+        "norm": "PTX_INC_P"
+      },
+      {
+        "label": "Pretax Income - GAAP",
+        "keyword": "PTX_INC_REP",
+        "norm": "PTX_INC_REP"
+      },
+      {
+        "label": "Research & Development",
+        "keyword": "RD_EXP",
+        "norm": "RD_EXP"
+      },
+      {
+        "label": "Compensation and Benefits",
+        "keyword": "SAL_BENEFITS",
+        "norm": "SAL_BENEFITS"
+      },
+      {
+        "label": "Sales",
+        "keyword": "Sales",
+        "norm": "SALES"
+      },
+      {
+        "label": "Sales - Consolidated",
+        "keyword": "SALES_C",
+        "norm": "SALES_C"
+      },
+      {
+        "label": "Sales - Non Consolidated",
+        "keyword": "SALES_P",
+        "norm": "SALES_P"
+      },
+      {
+        "label": "Same Store NOI (%)",
+        "keyword": "SS_NOI",
+        "norm": "SS_NOI"
+      },
+      {
+        "label": "Selling & Marketing Expense",
+        "keyword": "S_M_EXP",
+        "norm": "S_M_EXP"
+      },
+      {
+        "label": "SG&A Expense",
+        "keyword": "SGA",
+        "norm": "SGA"
+      },
+      {
+        "label": "Shareholder Equity",
+        "keyword": "SHLDRS_EQ",
+        "norm": "SHLDRS_EQ"
+      },
+      {
+        "label": "Share Repurchase",
+        "keyword": "SHS_REPURCH",
+        "norm": "SHS_REPURCH"
+      },
+      {
+        "label": "Short-Term Debt",
+        "keyword": "DEBT_ST",
+        "norm": "DEBT_ST"
+      },
+      {
+        "label": "Stock Option Expense - Per Share",
+        "keyword": "SOE",
+        "norm": "SOE"
+      },
+      {
+        "label": "Target Price",
+        "keyword": "PRICE_TGT",
+        "norm": "PRICE_TGT"
+      },
+      {
+        "label": "Tax Expense",
+        "keyword": "INC_TAX",
+        "norm": "INC_TAX"
+      },
+      {
+        "label": "Total Assets",
+        "keyword": "ASSETS",
+        "norm": "ASSETS"
+      },
+      {
+        "label": "Total Capital",
+        "keyword": "TOTAL_CAPITAL",
+        "norm": "TOTAL_CAPITAL"
+      },
+      {
+        "label": "Total Debt",
+        "keyword": "DEBT",
+        "norm": "DEBT"
+      },
+      {
+        "label": "Total Goodwill",
+        "keyword": "GW_TOT",
+        "norm": "GW_TOT"
+      },
+      {
+        "label": "Total Payment Volume",
+        "keyword": "TPV",
+        "norm": "TPV"
+      },
+      {
+        "label": "Total Revenues",
+        "keyword": "REV_TOT",
+        "norm": "REV_TOT"
+      },
+      {
+        "label": "Weighted Average Cost of Capital (%)",
+        "keyword": "WACC",
+        "norm": "WACC"
+      },
+      {
+        "label": "Working Capital",
+        "keyword": "WKCAP",
+        "norm": "WKCAP"
+      }
+    ],
+    "airlines": [
+      {
+        "label": "Available Seat Km (millions)",
+        "keyword": "AVAILABLESEATKM",
+        "norm": "AVAILABLESEATKM"
+      },
+      {
+        "label": "Load Factor (%)",
+        "keyword": "LOADFACTOR",
+        "norm": "LOADFACTOR"
+      },
+      {
+        "label": "OPEX / ASK",
+        "keyword": "OPEX_ASK",
+        "norm": "OPEX_ASK"
+      },
+      {
+        "label": "OPEX / ASK excl. Fuel",
+        "keyword": "OPEX_ASK_XFUEL",
+        "norm": "OPEX_ASK_XFUEL"
+      },
+      {
+        "label": "Revenue Passenger (thousands)",
+        "keyword": "REV_PASSENGER",
+        "norm": "REV_PASSENGER"
+      },
+      {
+        "label": "Passenger Revenue per ASK",
+        "keyword": "PASS_REV_ASK",
+        "norm": "PASS_REV_ASK"
+      },
+      {
+        "label": "Revenue Passenger Km",
+        "keyword": "REVPASSENGERKM",
+        "norm": "REVPASSENGERKM"
+      },
+      {
+        "label": "Passenger Revenue per RPK",
+        "keyword": "PASS_REV_RPK",
+        "norm": "PASS_REV_RPK"
+      },
+      {
+        "label": "Total Revenue per ASK",
+        "keyword": "TOT_REV_ASK",
+        "norm": "TOT_REV_ASK"
+      }
+    ],
+    "banks": [
+      {
+        "label": "Amortization of Intangibles",
+        "keyword": "AMORT_INTANG",
+        "norm": "AMORT_INTANG"
+      },
+      {
+        "label": "Bank owned life insurance",
+        "keyword": "BOLI",
+        "norm": "BOLI"
+      },
+      {
+        "label": "Card Income",
+        "keyword": "CARD_INCOME",
+        "norm": "CARD_INCOME"
+      },
+      {
+        "label": "Common Equity Tier 1 (CET1)",
+        "keyword": "COM_EQUITY_TIER1",
+        "norm": "COM_EQUITY_TIER1"
+      },
+      {
+        "label": "Efficiency Ratio",
+        "keyword": "COST_INCOME",
+        "norm": "COST_INCOME"
+      },
+      {
+        "label": "Deposits - EOP",
+        "keyword": "DEPS",
+        "norm": "DEPS"
+      },
+      {
+        "label": "Deposits - Average",
+        "keyword": "DEPS_AVG",
+        "norm": "DEPS_AVG"
+      },
+      {
+        "label": "Average Earning Assets",
+        "keyword": "AVG_EARN_ASSETS",
+        "norm": "AVG_EARN_ASSETS"
+      },
+      {
+        "label": "FDIC Insurance expense",
+        "keyword": "FDIC",
+        "norm": "FDIC"
+      },
+      {
+        "label": "Foreign Exchange and Other Trading Revenue",
+        "keyword": "FOREX_OTHERTRAD",
+        "norm": "FOREX_OTHERTRAD"
+      },
+      {
+        "label": "Income from Fees & Commissions",
+        "keyword": "INC_FEES",
+        "norm": "INC_FEES"
+      },
+      {
+        "label": "Insurance Commissions",
+        "keyword": "INS_INC",
+        "norm": "INS_INC"
+      },
+      {
+        "label": "Investment Banking & Trust",
+        "keyword": "INV_BANK_TRUST",
+        "norm": "INV_BANK_TRUST"
+      },
+      {
+        "label": "Investment Management Fees",
+        "keyword": "INV_MNGT_FEES",
+        "norm": "INV_MNGT_FEES"
+      },
+      {
+        "label": "Investment Services Fees",
+        "keyword": "INV_SERV_FEES",
+        "norm": "INV_SERV_FEES"
+      },
+      {
+        "label": "Lending & Deposit Related Fees",
+        "keyword": "LEND_DEPS_FEE",
+        "norm": "LEND_DEPS_FEE"
+      },
+      {
+        "label": "Leverage Ratio (%)",
+        "keyword": "LEV_RATIO",
+        "norm": "LEV_RATIO"
+      },
+      {
+        "label": "Leverage Exposure",
+        "keyword": "LEV_EXP",
+        "norm": "LEV_EXP"
+      },
+      {
+        "label": "Loan Loss Provision/Loans (%)",
+        "keyword": "LOANLOSSPROV_PCT",
+        "norm": "LOANLOSSPROV_PCT"
+      },
+      {
+        "label": "Loan Loss Reserve",
+        "keyword": "LOAN_LOSS_RSRV",
+        "norm": "LOAN_LOSS_RSRV"
+      },
+      {
+        "label": "Loan Loss Reserve Ratio (%)",
+        "keyword": "LOANLOSSRSV_PCT",
+        "norm": "LOANLOSSRSV_PCT"
+      },
+      {
+        "label": "Mortgage Banking",
+        "keyword": "MORTGAGE_BANKING",
+        "norm": "MORTGAGE_BANKING"
+      },
+      {
+        "label": "Net Charge-Offs",
+        "keyword": "NET_CHARGE_OFFS",
+        "norm": "NET_CHARGE_OFFS"
+      },
+      {
+        "label": "Non-Compensation Expense",
+        "keyword": "NON_COMP_EXP",
+        "norm": "NON_COMP_EXP"
+      },
+      {
+        "label": "Non-Interest Income",
+        "keyword": "NON_INT_INC",
+        "norm": "NON_INT_INC"
+      },
+      {
+        "label": "Loans - EOP",
+        "keyword": "LOAN_NET",
+        "norm": "LOAN_NET"
+      },
+      {
+        "label": "AT1 Distributions",
+        "keyword": "AT1_DISTR",
+        "norm": "AT1_DISTR"
+      },
+      {
+        "label": "Average Interest Bearing Deposits",
+        "keyword": "AVG_INTB_DEPS",
+        "norm": "AVG_INTB_DEPS"
+      },
+      {
+        "label": "Average Interest Bearing Deposits Cost (%)",
+        "keyword": "AVG_INTB_DEPS_COS",
+        "norm": "AVG_INTB_DEPS_COS"
+      },
+      {
+        "label": "Average Interest Bearing Liabilities",
+        "keyword": "AVG_INTB_LIABS",
+        "norm": "AVG_INTB_LIABS"
+      },
+      {
+        "label": "Average Interest Bearing Liabilities Cost (%)",
+        "keyword": "AVG_INTB_LIABS_COS",
+        "norm": "AVG_INTB_LIABS_COS"
+      },
+      {
+        "label": "Loans - Average",
+        "keyword": "LOAN_NET_AVG",
+        "norm": "LOAN_NET_AVG"
+      },
+      {
+        "label": "Average Non-Interest Bearing Deposits",
+        "keyword": "AVG_NINTB_DEPS",
+        "norm": "AVG_NINTB_DEPS"
+      },
+      {
+        "label": "Net Interest Income",
+        "keyword": "INT_INC_NET",
+        "norm": "INT_INC_NET"
+      },
+      {
+        "label": "Net Interest Margin (%)",
+        "keyword": "INT_INC_MARGIN",
+        "norm": "INT_INC_MARGIN"
+      },
+      {
+        "label": "Non-Performing Assets",
+        "keyword": "ASSETS_NONPERF",
+        "norm": "ASSETS_NONPERF"
+      },
+      {
+        "label": "Non-Performing Loans",
+        "keyword": "LOAN_NONPERF",
+        "norm": "LOAN_NONPERF"
+      },
+      {
+        "label": "NPAs/Loan+OREO (%)",
+        "keyword": "LOANOREO_NONPERF",
+        "norm": "LOANOREO_NONPERF"
+      },
+      {
+        "label": "NPL Coverage Ratio (%)",
+        "keyword": "NPL_COV_RTO",
+        "norm": "NPL_COV_RTO"
+      },
+      {
+        "label": "Occupancy Expense",
+        "keyword": "OCCUPY_EXP",
+        "norm": "OCCUPY_EXP"
+      },
+      {
+        "label": "Occupancy & Equipment Expense",
+        "keyword": "EQUIP_EXP",
+        "norm": "EQUIP_EXP"
+      },
+      {
+        "label": "OREO Expense",
+        "keyword": "OREO_EXP",
+        "norm": "OREO_EXP"
+      },
+      {
+        "label": "Origination Volume",
+        "keyword": "ORIGIN_VOL",
+        "norm": "ORIGIN_VOL"
+      },
+      {
+        "label": "Professional Fees",
+        "keyword": "PROF_FEES_EXP",
+        "norm": "PROF_FEES_EXP"
+      },
+      {
+        "label": "Provision for Credit Losses",
+        "keyword": "LOAN_PROV",
+        "norm": "LOAN_PROV"
+      },
+      {
+        "label": "Reserve Build",
+        "keyword": "RSRV_BUILD",
+        "norm": "RSRV_BUILD"
+      },
+      {
+        "label": "Return on Tangible Equity (RoTE) (%)",
+        "keyword": "ROTE",
+        "norm": "ROTE"
+      },
+      {
+        "label": "Risk Weighted Assets",
+        "keyword": "ASSETS_RISK_WGHT",
+        "norm": "ASSETS_RISK_WGHT"
+      },
+      {
+        "label": "Service Charges on Deposits",
+        "keyword": "SERVICE_CHRG",
+        "norm": "SERVICE_CHRG"
+      },
+      {
+        "label": "Software and Processing Fees",
+        "keyword": "SOFT_PROC_FEES",
+        "norm": "SOFT_PROC_FEES"
+      },
+      {
+        "label": "Software / IT Systems",
+        "keyword": "SOFT_IT_SYS",
+        "norm": "SOFT_IT_SYS"
+      },
+      {
+        "label": "Tangible Common Equity/Tangible Assets (%)",
+        "keyword": "TCE_TA",
+        "norm": "TCE_TA"
+      },
+      {
+        "label": "Texas Ratio (%)",
+        "keyword": "TEXAS_RATIO",
+        "norm": "TEXAS_RATIO"
+      },
+      {
+        "label": "Tier 1 Capital",
+        "keyword": "TIER1_CAP",
+        "norm": "TIER1_CAP"
+      },
+      {
+        "label": "Tier 1 Capital Ratio (%)",
+        "keyword": "CAP_RATIO_TIER1",
+        "norm": "CAP_RATIO_TIER1"
+      },
+      {
+        "label": "Tier 1 Common Capital Ratio (%)",
+        "keyword": "COMCAP_RATIO_TIER1",
+        "norm": "COMCAP_RATIO_TIER1"
+      },
+      {
+        "label": "Tier 1 Common Fully Loaded Ratio (%)",
+        "keyword": "COMLOAD_RATIO_T1",
+        "norm": "COMLOAD_RATIO_T1"
+      },
+      {
+        "label": "Tier 1 Leverage Ratio (%)",
+        "keyword": "LEV_RATIO_TIER1",
+        "norm": "LEV_RATIO_TIER1"
+      },
+      {
+        "label": "Tier 2 Capital Ratio (%)",
+        "keyword": "CAP_RATIO_TIER2",
+        "norm": "CAP_RATIO_TIER2"
+      },
+      {
+        "label": "Total Capital Ratio (%)",
+        "keyword": "CAP_RATIO_TOT",
+        "norm": "CAP_RATIO_TOT"
+      },
+      {
+        "label": "Total OREO",
+        "keyword": "TOT_OREO",
+        "norm": "TOT_OREO"
+      },
+      {
+        "label": "Total Risk-based Capital",
+        "keyword": "RISK_BASED_CAP",
+        "norm": "RISK_BASED_CAP"
+      },
+      {
+        "label": "Trading Income",
+        "keyword": "INC_TRADING",
+        "norm": "INC_TRADING"
+      },
+      {
+        "label": "Transaction Processing Services",
+        "keyword": "TRANS_PROC_SERV",
+        "norm": "TRANS_PROC_SERV"
+      },
+      {
+        "label": "Trust and Asset Management",
+        "keyword": "TRUST_INC",
+        "norm": "TRUST_INC"
+      }
+    ],
+    "misc_sectors": [
+      {
+        "label": "Total Addressable Market",
+        "keyword": "TAM",
+        "norm": "TAM",
+        "sector": "Computer Hardware"
+      },
+      {
+        "label": "Total Student Enrollment",
+        "keyword": "STUDENTENROLL_TOT",
+        "norm": "STUDENTENROLL_TOT",
+        "sector": "Education"
+      },
+      {
+        "label": "New Student Enrollment",
+        "keyword": "STUDENTENROLL_NEW",
+        "norm": "STUDENTENROLL_NEW",
+        "sector": "Education"
+      },
+      {
+        "label": "Annual Subscription Value",
+        "keyword": "ASV",
+        "norm": "ASV",
+        "sector": "Financial Data Provider"
+      },
+      {
+        "label": "EUR/JPY",
+        "keyword": "EUR_JPY",
+        "norm": "EUR_JPY",
+        "sector": "Forex"
+      },
+      {
+        "label": "USD/JPY",
+        "keyword": "USD_JPY",
+        "norm": "USD_JPY",
+        "sector": "Forex"
+      },
+      {
+        "label": "Restaurant Margin (%)",
+        "keyword": "REST_MARG",
+        "norm": "REST_MARG",
+        "sector": "Restaurant"
+      },
+      {
+        "label": "Daily Active Users (millions)",
+        "keyword": "DAU",
+        "norm": "DAU",
+        "sector": "Social Media/Games"
+      },
+      {
+        "label": "Monthly Active Users (millions)",
+        "keyword": "MAU",
+        "norm": "MAU",
+        "sector": "Social Media/Games"
+      },
+      {
+        "label": "Monthly Unique Users (millions)",
+        "keyword": "MUU",
+        "norm": "MUU",
+        "sector": "Social Media/Games"
+      },
+      {
+        "label": "Revenue Per Unit (%)",
+        "keyword": "REV_UNIT",
+        "norm": "REV_UNIT",
+        "sector": "Transportation"
+      },
+      {
+        "label": "Volume Growth (%)",
+        "keyword": "VOL_GRTH",
+        "norm": "VOL_GRTH",
+        "sector": "Transportation"
+      }
+    ],
+    "home_builders": [
+      {
+        "label": "New Orders Units",
+        "keyword": "NEW_ORDERS_UNITS",
+        "norm": "NEW_ORDERS_UNITS"
+      },
+      {
+        "label": "New Orders Avg Price (000's)",
+        "keyword": "NEW_ORD_PRICE",
+        "norm": "NEW_ORD_PRICE"
+      },
+      {
+        "label": "New Orders Value (M)",
+        "keyword": "NEW_ORDERS_VALUE",
+        "norm": "NEW_ORDERS_VALUE"
+      },
+      {
+        "label": "Backlog Units",
+        "keyword": "BACKLOG_UNITS",
+        "norm": "BACKLOG_UNITS"
+      },
+      {
+        "label": "Backlog Avg Price (000's)",
+        "keyword": "BACKLOG_AVG_PRICE",
+        "norm": "BACKLOG_AVG_PRICE"
+      },
+      {
+        "label": "Backlog Value (M)",
+        "keyword": "BACKLOG_VALUE",
+        "norm": "BACKLOG_VALUE"
+      },
+      {
+        "label": "Cancellation Rate (%)",
+        "keyword": "CANCELRATE",
+        "norm": "CANCELRATE"
+      },
+      {
+        "label": "Deliveries Units",
+        "keyword": "DELIVERIES_UNITS",
+        "norm": "DELIVERIES_UNITS"
+      },
+      {
+        "label": "Deliveries Avg Price (000's)",
+        "keyword": "DELIV_PRICE",
+        "norm": "DELIV_PRICE"
+      },
+      {
+        "label": "Home Sales",
+        "keyword": "HOME_SALES",
+        "norm": "HOME_SALES"
+      },
+      {
+        "label": "Land Sales",
+        "keyword": "LAND_SALES",
+        "norm": "LAND_SALES"
+      },
+      {
+        "label": "Financial Services",
+        "keyword": "FIN_SERVICES",
+        "norm": "FIN_SERVICES"
+      }
+    ],
+    "hospitals": [
+      {
+        "label": "Bad Debt Provisions",
+        "keyword": "BAD_DEBT_PROV",
+        "norm": "BAD_DEBT_PROV"
+      },
+      {
+        "label": "Medical Cost Ratio (%)",
+        "keyword": "MCR",
+        "norm": "MCR"
+      },
+      {
+        "label": "Supplies",
+        "keyword": "SUPPLIES",
+        "norm": "SUPPLIES"
+      },
+      {
+        "label": "Other Operating Expense",
+        "keyword": "OTHER_OPEX",
+        "norm": "OTHER_OPEX"
+      },
+      {
+        "label": "SS Admissions (%)",
+        "keyword": "SS_ADM",
+        "norm": "SS_ADM"
+      },
+      {
+        "label": "SS Adjusted Admissions (%)",
+        "keyword": "SS_ADJ_ADM",
+        "norm": "SS_ADJ_ADM"
+      },
+      {
+        "label": "SS Revenue Per Adjusted Admissions (%)",
+        "keyword": "SS_REV_PER_ADJ_ADM",
+        "norm": "SS_REV_PER_ADJ_ADM"
+      }
+    ],
+    "hotels": [
+      {
+        "label": "Average Daily Rate (ADR)",
+        "keyword": "ROOM_RATE_DAILY_TOT",
+        "norm": "ROOM_RATE_DAILY_TOT"
+      },
+      {
+        "label": "ADR - Dom.",
+        "keyword": "ROOM_RATE_DAILY_DOM",
+        "norm": "ROOM_RATE_DAILY_DOM"
+      },
+      {
+        "label": "ADR - Intl.",
+        "keyword": "ROOM_RATE_DAILY_INTL",
+        "norm": "ROOM_RATE_DAILY_INTL"
+      },
+      {
+        "label": "Occupancy (%)",
+        "keyword": "OCCUPY_RATE_TOT",
+        "norm": "OCCUPY_RATE_TOT"
+      },
+      {
+        "label": "Occupancy, Dom (%)",
+        "keyword": "OCCUPY_RATE_DOM",
+        "norm": "OCCUPY_RATE_DOM"
+      },
+      {
+        "label": "Occupancy, Intl (%)",
+        "keyword": "OCCUPY_RATE_INTL",
+        "norm": "OCCUPY_RATE_INTL"
+      },
+      {
+        "label": "RevPAR",
+        "keyword": "REV_PER_ROOM_TOT",
+        "norm": "REV_PER_ROOM_TOT"
+      },
+      {
+        "label": "RevPAR - Dom.",
+        "keyword": "REV_PER_ROOM_DOM",
+        "norm": "REV_PER_ROOM_DOM"
+      },
+      {
+        "label": "RevPAR - Intl.",
+        "keyword": "REV_PER_ROOM_INTL",
+        "norm": "REV_PER_ROOM_INTL"
+      }
+    ],
+    "insurance": [
+      {
+        "label": "Adjusted Net Worth",
+        "keyword": "ADJ_NETWORTH",
+        "norm": "ADJ_NETWORTH"
+      },
+      {
+        "label": "Annualized Premium Equivalent",
+        "keyword": "ANN_PREM_EQ",
+        "norm": "ANN_PREM_EQ"
+      },
+      {
+        "label": "Benefit Ratio (%)",
+        "keyword": "BENEFIT_RATIO",
+        "norm": "BENEFIT_RATIO"
+      },
+      {
+        "label": "Book Value Per Share - Excl AOCI",
+        "keyword": "BVPS_EXCL_AOCI",
+        "norm": "BVPS_EXCL_AOCI"
+      },
+      {
+        "label": "Book Value Per Share - Incl AOCI",
+        "keyword": "BVPS_INCL_AOCI",
+        "norm": "BVPS_INCL_AOCI"
+      },
+      {
+        "label": "Cat Losses",
+        "keyword": "CAT_LOSSES",
+        "norm": "CAT_LOSSES"
+      },
+      {
+        "label": "Cat Losses (%)",
+        "keyword": "CAT_LOSSES_RATIO",
+        "norm": "CAT_LOSSES_RATIO"
+      },
+      {
+        "label": "Claims Expense",
+        "keyword": "CLAIMS_EXP",
+        "norm": "CLAIMS_EXP"
+      },
+      {
+        "label": "Combined Ratio (%)",
+        "keyword": "COMBINED_RATIO",
+        "norm": "COMBINED_RATIO"
+      },
+      {
+        "label": "Deferred Acquisition Costs",
+        "keyword": "DEFACQUI_COST",
+        "norm": "DEFACQUI_COST"
+      },
+      {
+        "label": "Eligible Own Funds",
+        "keyword": "ELIG_OWN_FUND",
+        "norm": "ELIG_OWN_FUND"
+      },
+      {
+        "label": "Eligible Restricted Tier 1 Capital",
+        "keyword": "ELIG_RES_TIER1_CAP",
+        "norm": "ELIG_RES_TIER1_CAP"
+      },
+      {
+        "label": "Eligible Tier 2 Capital",
+        "keyword": "ELIG_TIER2_CAP",
+        "norm": "ELIG_TIER2_CAP"
+      },
+      {
+        "label": "Eligible Tier 3 Capital",
+        "keyword": "ELIG_TIER3_CAP",
+        "norm": "ELIG_TIER3_CAP"
+      },
+      {
+        "label": "Eligible Unrestricted Tier 1 Capital",
+        "keyword": "ELIG_UNRES_TIER1_CAP",
+        "norm": "ELIG_UNRES_TIER1_CAP"
+      },
+      {
+        "label": "Embedded Value",
+        "keyword": "EMBEDDED_GROSS",
+        "norm": "EMBEDDED_GROSS"
+      },
+      {
+        "label": "Embedded Value Operating Profit (EVOP)",
+        "keyword": "EV_OP",
+        "norm": "EV_OP"
+      },
+      {
+        "label": "Embedded Value Profit",
+        "keyword": "EV_PROF",
+        "norm": "EV_PROF"
+      },
+      {
+        "label": "Embedded Value Per Share",
+        "keyword": "EMBEDDED_VALUE",
+        "norm": "EMBEDDED_VALUE"
+      },
+      {
+        "label": "Expense Ratio (%)",
+        "keyword": "EXPENSE_RATIO",
+        "norm": "EXPENSE_RATIO"
+      },
+      {
+        "label": "Fees",
+        "keyword": "FEES",
+        "norm": "FEES"
+      },
+      {
+        "label": "Gross Premiums Written",
+        "keyword": "GROSS_PREM_WRITTEN",
+        "norm": "GROSS_PREM_WRITTEN"
+      },
+      {
+        "label": "Gross Premiums Written - Life",
+        "keyword": "GPW_LIFE",
+        "norm": "GPW_LIFE"
+      },
+      {
+        "label": "Gross Premiums Written - P&C",
+        "keyword": "GPW_PC",
+        "norm": "GPW_PC"
+      },
+      {
+        "label": "Insurance Profit",
+        "keyword": "INS_PROFIT",
+        "norm": "INS_PROFIT"
+      },
+      {
+        "label": "Insurance Reserves",
+        "keyword": "INS_RSRV",
+        "norm": "INS_RSRV"
+      },
+      {
+        "label": "Insurance Service Result",
+        "keyword": "INS_SERV_RESULT",
+        "norm": "INS_SERV_RESULT"
+      },
+      {
+        "label": "Invested Assets",
+        "keyword": "INVEST_ASSETS",
+        "norm": "INVEST_ASSETS"
+      },
+      {
+        "label": "Life Insurance Claims",
+        "keyword": "LIFE_INS_CLAIMS",
+        "norm": "LIFE_INS_CLAIMS"
+      },
+      {
+        "label": "Loss Ratio (%)",
+        "keyword": "LOSS_RATIO",
+        "norm": "LOSS_RATIO"
+      },
+      {
+        "label": "Net Financial Result",
+        "keyword": "NET_FIN_RESULT",
+        "norm": "NET_FIN_RESULT"
+      },
+      {
+        "label": "Net Investment Income",
+        "keyword": "INVEST_INC",
+        "norm": "INVEST_INC"
+      },
+      {
+        "label": "Net Investment Income - Life",
+        "keyword": "INVEST_INC_LIFE",
+        "norm": "INVEST_INC_LIFE"
+      },
+      {
+        "label": "Net Investment Income - P&C",
+        "keyword": "INVEST_INC_PC",
+        "norm": "INVEST_INC_PC"
+      },
+      {
+        "label": "Net Investment Yield (%)",
+        "keyword": "NET_INVEST_YIELD",
+        "norm": "NET_INVEST_YIELD"
+      },
+      {
+        "label": "Net Premiums Earned",
+        "keyword": "PREM_EARN",
+        "norm": "PREM_EARN"
+      },
+      {
+        "label": "Net Premiums Earned - Life",
+        "keyword": "NPE_LIFE",
+        "norm": "NPE_LIFE"
+      },
+      {
+        "label": "Net Premiums Earned - P&C",
+        "keyword": "NPE_PC",
+        "norm": "NPE_PC"
+      },
+      {
+        "label": "Net Premiums Written",
+        "keyword": "PREM_WRITTEN",
+        "norm": "PREM_WRITTEN"
+      },
+      {
+        "label": "Net Premiums Written - Life",
+        "keyword": "NPW_LIFE",
+        "norm": "NPW_LIFE"
+      },
+      {
+        "label": "Net Premiums Written - P&C",
+        "keyword": "NPW_PC",
+        "norm": "NPW_PC"
+      },
+      {
+        "label": "New Business Premium",
+        "keyword": "NEW_BUSI_PREM",
+        "norm": "NEW_BUSI_PREM"
+      },
+      {
+        "label": "New Business Multiple",
+        "keyword": "NEW_BUSI_MULT",
+        "norm": "NEW_BUSI_MULT"
+      },
+      {
+        "label": "Number of Policies in Force",
+        "keyword": "PIF_NB",
+        "norm": "PIF_NB"
+      },
+      {
+        "label": "Operating Capital Generation",
+        "keyword": "OPER_CAP_GEN",
+        "norm": "OPER_CAP_GEN"
+      },
+      {
+        "label": "Present Value of New Business Premium (PVNBP)",
+        "keyword": "PV_NBP",
+        "norm": "PV_NBP"
+      },
+      {
+        "label": "Prior Year Development",
+        "keyword": "PRIOR_YR_DEV",
+        "norm": "PRIOR_YR_DEV"
+      },
+      {
+        "label": "Return on Embedded Value (%)",
+        "keyword": "RETURN_EV",
+        "norm": "RETURN_EV"
+      },
+      {
+        "label": "Solvency Ratio (%)",
+        "keyword": "SOL_RATIO",
+        "norm": "SOL_RATIO"
+      },
+      {
+        "label": "Solvency II Ratio (%)",
+        "keyword": "SOL_2_RATIO",
+        "norm": "SOL_2_RATIO"
+      },
+      {
+        "label": "Surrenders",
+        "keyword": "INS_EQ_POL",
+        "norm": "INS_EQ_POL"
+      },
+      {
+        "label": "Total Equity Securities Investment",
+        "keyword": "EQUITY_INV",
+        "norm": "EQUITY_INV"
+      },
+      {
+        "label": "Total Fixed Income Securities Investment",
+        "keyword": "FIXED_INCOME_INV",
+        "norm": "FIXED_INCOME_INV"
+      },
+      {
+        "label": "Underlying Combined Ratio (%)",
+        "keyword": "COMB_RATIO_UND",
+        "norm": "COMB_RATIO_UND"
+      },
+      {
+        "label": "Underlying Loss Ratio (%)",
+        "keyword": "LOSS_RATIO_UND",
+        "norm": "LOSS_RATIO_UND"
+      },
+      {
+        "label": "Underwriting Expense (millions)",
+        "keyword": "UW_EXP",
+        "norm": "UW_EXP"
+      },
+      {
+        "label": "Underwriting Income",
+        "keyword": "UW_INCOME",
+        "norm": "UW_INCOME"
+      },
+      {
+        "label": "Underwriting Income - Life",
+        "keyword": "UW_INCOME_LIFE",
+        "norm": "UW_INCOME_LIFE"
+      },
+      {
+        "label": "Underwriting Income - P&C",
+        "keyword": "UW_INCOME_PC",
+        "norm": "UW_INCOME_PC"
+      },
+      {
+        "label": "Value of In-Force",
+        "keyword": "VALUE_IN_FORCE",
+        "norm": "VALUE_IN_FORCE"
+      },
+      {
+        "label": "Value of New Business",
+        "keyword": "VALUE_NEW_BUSI",
+        "norm": "VALUE_NEW_BUSI"
+      },
+      {
+        "label": "VNB Margin (%)",
+        "keyword": "VNB_MARGIN",
+        "norm": "VNB_MARGIN"
+      }
+    ],
+    "marijuana": [
+      {
+        "label": "Marijuana - Cost per Gram",
+        "keyword": "COST_PER_GRAM",
+        "norm": "COST_PER_GRAM"
+      },
+      {
+        "label": "Marijuana - Kg of Cannabis Sold",
+        "keyword": "KG_CANNABIS_SOLD",
+        "norm": "KG_CANNABIS_SOLD"
+      },
+      {
+        "label": "Production Costs",
+        "keyword": "PROD_COSTS",
+        "norm": "PROD_COSTS"
+      }
+    ],
+    "mining": {
+      "metal_prices": [
+        {
+          "label": "Alumina Metal Price",
+          "keyword": "PRICE_ALUMIN_TON",
+          "norm": "PRICE_ALUMIN_TON"
+        },
+        {
+          "label": "Aluminum Metal Price",
+          "keyword": "PRICE_ALUM_TON",
+          "norm": "PRICE_ALUM_TON"
+        },
+        {
+          "label": "Bauxite Metal Price",
+          "keyword": "PRICE_BAUX_TON",
+          "norm": "PRICE_BAUX_TON"
+        },
+        {
+          "label": "Cobalt Metal Price",
+          "keyword": "PRICE_COBALT_LBS",
+          "norm": "PRICE_COBALT_LBS"
+        },
+        {
+          "label": "Copper Metal Price",
+          "keyword": "PRICE_COPPER_TON",
+          "norm": "PRICE_COPPER_TON"
+        },
+        {
+          "label": "Diamond Metal Price",
+          "keyword": "PRICE_DIAM_CT",
+          "norm": "PRICE_DIAM_CT"
+        },
+        {
+          "label": "Gold Metal Price",
+          "keyword": "PRICE_GOLD_OZ",
+          "norm": "PRICE_GOLD_OZ"
+        },
+        {
+          "label": "Iron Ore Fines (CFR) Metal Price",
+          "keyword": "PRICE_IRONFINCFR",
+          "norm": "PRICE_IRONFINCFR"
+        },
+        {
+          "label": "Iron Ore Fines (FOB) Metal Price",
+          "keyword": "PRICE_IRONFINFOB",
+          "norm": "PRICE_IRONFINFOB"
+        },
+        {
+          "label": "Iron Ore Lump (CFR) Metal Price",
+          "keyword": "PRICE_IRONLUMCFR",
+          "norm": "PRICE_IRONLUMCFR"
+        },
+        {
+          "label": "Iron Ore Lump (FOB) Metal Price",
+          "keyword": "PRICE_IRONLUMFOB",
+          "norm": "PRICE_IRONLUMFOB"
+        },
+        {
+          "label": "Lead Metal Price",
+          "keyword": "PRICE_LEAD_TON",
+          "norm": "PRICE_LEAD_TON"
+        },
+        {
+          "label": "Lithium Metal Price",
+          "keyword": "PRICE_LITH_TON",
+          "norm": "PRICE_LITH_TON"
+        },
+        {
+          "label": "Metallurgical Coal Metal Price",
+          "keyword": "PRICE_M_COAL_TON",
+          "norm": "PRICE_M_COAL_TON"
+        },
+        {
+          "label": "Molybdenum Metal Price",
+          "keyword": "PRICE_MOLY_LBS",
+          "norm": "PRICE_MOLY_LBS"
+        },
+        {
+          "label": "Nickel Metal Price",
+          "keyword": "PRICE_NICKEL_TON",
+          "norm": "PRICE_NICKEL_TON"
+        },
+        {
+          "label": "Palladium Metal Price",
+          "keyword": "PRICE_PALLAD_OZ",
+          "norm": "PRICE_PALLAD_OZ"
+        },
+        {
+          "label": "Phosphate Metal Price",
+          "keyword": "PRICE_PHOSPH_TON",
+          "norm": "PRICE_PHOSPH_TON"
+        },
+        {
+          "label": "Platinum Metal Price",
+          "keyword": "PRICE_PLAT_OZ",
+          "norm": "PRICE_PLAT_OZ"
+        },
+        {
+          "label": "Potash Metal Price",
+          "keyword": "PRICE_POTASH_TON",
+          "norm": "PRICE_POTASH_TON"
+        },
+        {
+          "label": "Rhodium Metal Price",
+          "keyword": "PRICE_RHOD_OZ",
+          "norm": "PRICE_RHOD_OZ"
+        },
+        {
+          "label": "Silver Metal Price",
+          "keyword": "PRICE_SILVER_OZ",
+          "norm": "PRICE_SILVER_OZ"
+        },
+        {
+          "label": "Thermal Coal Metal Price",
+          "keyword": "PRICE_T_COAL_TON",
+          "norm": "PRICE_T_COAL_TON"
+        },
+        {
+          "label": "Tin Metal Price",
+          "keyword": "PRICE_TIN_TON",
+          "norm": "PRICE_TIN_TON"
+        },
+        {
+          "label": "Uranium Metal Price",
+          "keyword": "PRICE_URAN_LBS",
+          "norm": "PRICE_URAN_LBS"
+        },
+        {
+          "label": "Vanadium Metal Price",
+          "keyword": "PRICE_VANA_LBS",
+          "norm": "PRICE_VANA_LBS"
+        },
+        {
+          "label": "Zinc Metal Price",
+          "keyword": "PRICE_ZINC_TON",
+          "norm": "PRICE_ZINC_TON"
+        }
+      ],
+      "cost_curve_pattern": {
+        "template": "{METAL}_{COST_TYPE}_{PRODUCT_BASIS}",
+        "metals": [
+          "COPPER",
+          "COAL",
+          "GOLD",
+          "FE",
+          "NICKEL",
+          "SILVER",
+          "U",
+          "ZINC"
+        ],
+        "cost_types": {
+          "AIC": "All-In Cost",
+          "AISC": "All-In Sustaining Cost",
+          "CASHCOST": "Cash Cost"
+        },
+        "product_basis": {
+          "BP": "By Product",
+          "CP": "Co Product",
+          "EQ": "Equivalent"
+        },
+        "example": "GOLD_AISC_EQ, COPPER_CASHCOST_BP",
+        "note": "FE prefix = Iron; U prefix = Uranium"
+      },
+      "production_volumes": [
+        {
+          "label": "Total Production",
+          "keyword": "TOTAL_PROD",
+          "norm": "TOTAL_PROD"
+        },
+        {
+          "label": "Total Production Alumina (t)",
+          "keyword": "PROD_ALUN",
+          "norm": "PROD_ALUN"
+        },
+        {
+          "label": "Total Production Aluminium (t)",
+          "keyword": "PROD_ALUM",
+          "norm": "PROD_ALUM"
+        },
+        {
+          "label": "Total Production Bauxite (t)",
+          "keyword": "PROD_BAUX",
+          "norm": "PROD_BAUX"
+        },
+        {
+          "label": "Total Production Borates (t)",
+          "keyword": "PROD_BORATES",
+          "norm": "PROD_BORATES"
+        },
+        {
+          "label": "Total Production Chrome Ore (t)",
+          "keyword": "PROD_CHROMEORE",
+          "norm": "PROD_CHROMEORE"
+        },
+        {
+          "label": "Total Production Coal (t)",
+          "keyword": "PROD_COAL",
+          "norm": "PROD_COAL"
+        },
+        {
+          "label": "Total Production Cobalt (t)",
+          "keyword": "PROD_COBALT",
+          "norm": "PROD_COBALT"
+        },
+        {
+          "label": "Total Production Cobalt Concentrate (t)",
+          "keyword": "PROD_COBCON",
+          "norm": "PROD_COBCON"
+        },
+        {
+          "label": "Total Production Coke (t)",
+          "keyword": "PROD_COKE",
+          "norm": "PROD_COKE"
+        },
+        {
+          "label": "Total Production Copper (t)",
+          "keyword": "PROD_COPP",
+          "norm": "PROD_COPP"
+        },
+        {
+          "label": "Total Production Copper Cathode (t)",
+          "keyword": "PROD_CATH",
+          "norm": "PROD_CATH"
+        },
+        {
+          "label": "Total Production Copper Concentrate (t)",
+          "keyword": "PROD_COPPCON",
+          "norm": "PROD_COPPCON"
+        },
+        {
+          "label": "Total Production Copper Smelting (t)",
+          "keyword": "PROD_COPPSMELT",
+          "norm": "PROD_COPPSMELT"
+        },
+        {
+          "label": "Total Production Copper Refined (t)",
+          "keyword": "PROD_COPPREFINED",
+          "norm": "PROD_COPPREFINED"
+        },
+        {
+          "label": "Total Production Crude Steel (t)",
+          "keyword": "PROD_CRUDESTEEL",
+          "norm": "PROD_CRUDESTEEL"
+        },
+        {
+          "label": "Total Production Diamonds (ct)",
+          "keyword": "PROD_DIAM",
+          "norm": "PROD_DIAM"
+        },
+        {
+          "label": "Total Production Ferro Chrome (t)",
+          "keyword": "PROD_FERROCHROME",
+          "norm": "PROD_FERROCHROME"
+        },
+        {
+          "label": "Total Production Gold (oz)",
+          "keyword": "PROD_GOLD",
+          "norm": "PROD_GOLD"
+        },
+        {
+          "label": "Total Production Gold Concentrate (oz)",
+          "keyword": "PROD_GOLDCON",
+          "norm": "PROD_GOLDCON"
+        },
+        {
+          "label": "Total Production Gold Smelting (t)",
+          "keyword": "PROD_GOLDSMELT",
+          "norm": "PROD_GOLDSMELT"
+        },
+        {
+          "label": "Total Production Hard Coking Coal (t)",
+          "keyword": "PROD_HARDCOAL",
+          "norm": "PROD_HARDCOAL"
+        },
+        {
+          "label": "Total Production Ilmenite (t)",
+          "keyword": "PROD_ILMENITE",
+          "norm": "PROD_ILMENITE"
+        },
+        {
+          "label": "Total Production Iron Ore (t)",
+          "keyword": "PROD_IRON",
+          "norm": "PROD_IRON"
+        },
+        {
+          "label": "Total Production Iron Ore Concentrate (t)",
+          "keyword": "PROD_IRONORECON",
+          "norm": "PROD_IRONORECON"
+        },
+        {
+          "label": "Total Production Lead (t)",
+          "keyword": "PROD_LEAD",
+          "norm": "PROD_LEAD"
+        },
+        {
+          "label": "Total Production Lead Concentrate (t)",
+          "keyword": "PROD_LEADCON",
+          "norm": "PROD_LEADCON"
+        },
+        {
+          "label": "Total Production Lead Smelting (t)",
+          "keyword": "PROD_LEADSMELT",
+          "norm": "PROD_LEADSMELT"
+        },
+        {
+          "label": "Total Production Manganese Alloy (t)",
+          "keyword": "PROD_MANGALLOY",
+          "norm": "PROD_MANGALLOY"
+        },
+        {
+          "label": "Total Production Manganese Ore (t)",
+          "keyword": "PROD_MANGORE",
+          "norm": "PROD_MANGORE"
+        },
+        {
+          "label": "Total Production Melt Shop (t)",
+          "keyword": "PROD_MELTSHOP",
+          "norm": "PROD_MELTSHOP"
+        },
+        {
+          "label": "Total Production Metallurgical Coal (t)",
+          "keyword": "PROD_MET",
+          "norm": "PROD_MET"
+        },
+        {
+          "label": "Total Production Molybdenum (t)",
+          "keyword": "PROD_MOLY",
+          "norm": "PROD_MOLY"
+        },
+        {
+          "label": "Total Production Nickel (t)",
+          "keyword": "PROD_NICK",
+          "norm": "PROD_NICK"
+        },
+        {
+          "label": "Total Production Nickel Concentrate (t)",
+          "keyword": "PROD_NICKCON",
+          "norm": "PROD_NICKCON"
+        },
+        {
+          "label": "Total Production Palladium (oz)",
+          "keyword": "PROD_PALLA",
+          "norm": "PROD_PALLA"
+        },
+        {
+          "label": "Total Production Pellets (t)",
+          "keyword": "PROD_PELLETS",
+          "norm": "PROD_PELLETS"
+        },
+        {
+          "label": "Total Production Platinum (oz)",
+          "keyword": "PROD_PLAT",
+          "norm": "PROD_PLAT"
+        },
+        {
+          "label": "Total Production Rhodium (oz)",
+          "keyword": "PROD_RHOD",
+          "norm": "PROD_RHOD"
+        },
+        {
+          "label": "Total Production Rutile (t)",
+          "keyword": "PROD_RUTILE",
+          "norm": "PROD_RUTILE"
+        },
+        {
+          "label": "Total Production Semi Soft Coking Coal (t)",
+          "keyword": "PROD_SEMISOFT",
+          "norm": "PROD_SEMISOFT"
+        },
+        {
+          "label": "Total Production Silver (oz)",
+          "keyword": "PROD_SILV",
+          "norm": "PROD_SILV"
+        },
+        {
+          "label": "Total Production Silver Concentrate (oz)",
+          "keyword": "PROD_SILVCON",
+          "norm": "PROD_SILVCON"
+        },
+        {
+          "label": "Total Production Silver Smelting (t)",
+          "keyword": "PROD_SILVSMELT",
+          "norm": "PROD_SILVSMELT"
+        },
+        {
+          "label": "Total Production Steel (t)",
+          "keyword": "PROD_STEEL",
+          "norm": "PROD_STEEL"
+        },
+        {
+          "label": "Total Production Sulphuric Acid",
+          "keyword": "PROD_SULPHACID",
+          "norm": "PROD_SULPHACID",
+          "flag": "source_label_was_#NUM!"
+        },
+        {
+          "label": "Total Production Synthetic Rutile (t)",
+          "keyword": "PROD_SYNTHRUTILE",
+          "norm": "PROD_SYNTHRUTILE"
+        },
+        {
+          "label": "Total Production Thermal Coal (t)",
+          "keyword": "PROD_THERCOAL",
+          "norm": "PROD_THERCOAL"
+        },
+        {
+          "label": "Total Production Thermal Coal Export (t)",
+          "keyword": "PROD_THERCOALEPT",
+          "norm": "PROD_THERCOALEPT"
+        },
+        {
+          "label": "Total Production Titanium Dioxide (t)",
+          "keyword": "PROD_TIO2",
+          "norm": "PROD_TIO2"
+        },
+        {
+          "label": "Total Production Titanium (t)",
+          "keyword": "PROD_TITAN",
+          "norm": "PROD_TITAN"
+        },
+        {
+          "label": "Total Production Uranium (t)",
+          "keyword": "PROD_URAN",
+          "norm": "PROD_URAN"
+        },
+        {
+          "label": "Total Production Zinc (t)",
+          "keyword": "PROD_ZINC",
+          "norm": "PROD_ZINC"
+        },
+        {
+          "label": "Total Production Zinc Concentrate (t)",
+          "keyword": "PROD_ZINCCON",
+          "norm": "PROD_ZINCCON"
+        },
+        {
+          "label": "Total Production Zinc Smelting (t)",
+          "keyword": "PROD_ZINCSMELT",
+          "norm": "PROD_ZINCSMELT"
+        },
+        {
+          "label": "Total Production Zinc Refined (t)",
+          "keyword": "PROD_ZINCREFINED",
+          "norm": "PROD_ZINCREFINED"
+        },
+        {
+          "label": "Total Production Zircon (t)",
+          "keyword": "PROD_ZIRCON",
+          "norm": "PROD_ZIRCON"
+        }
+      ],
+      "other": [
+        {
+          "label": "Realized Price",
+          "keyword": "REAL_PRICE",
+          "norm": "REAL_PRICE",
+          "flag": "duplicate_with_oil"
+        },
+        {
+          "label": "Net Change in Cash",
+          "keyword": "CHG_CASH_CF",
+          "norm": "CHG_CASH_CF"
+        }
+      ]
+    },
+    "mlp": [
+      {
+        "label": "Distributable Cash Flow",
+        "keyword": "DCF",
+        "norm": "DCF"
+      },
+      {
+        "label": "Distributable Cash Flow per Unit",
+        "keyword": "DCFPU",
+        "norm": "DCFPU"
+      },
+      {
+        "label": "Distributable Cash Flow to Limited Partners",
+        "keyword": "DCFLP",
+        "norm": "DCFLP"
+      },
+      {
+        "label": "Distributable Cash Flow per Unit to Limited Partners",
+        "keyword": "DCFPULP",
+        "norm": "DCFPULP"
+      }
+    ],
+    "multifinancial": [
+      {
+        "label": "AUC - EOP (billions)",
+        "keyword": "AUC_EOP",
+        "norm": "AUC_EOP"
+      },
+      {
+        "label": "AUM - EOP (billions)",
+        "keyword": "AUM",
+        "norm": "AUM"
+      },
+      {
+        "label": "AUM - Average (billions)",
+        "keyword": "AUM_AVG",
+        "norm": "AUM_AVG"
+      },
+      {
+        "label": "Capital Deployment - AUM (billions)",
+        "keyword": "CAP_DPL_AUM",
+        "norm": "CAP_DPL_AUM"
+      },
+      {
+        "label": "Distributable Earnings - After Tax",
+        "keyword": "DISTR_EARN_ATAX",
+        "norm": "DISTR_EARN_ATAX"
+      },
+      {
+        "label": "Fee AUM - EOP (billions)",
+        "keyword": "FEE_AUM",
+        "norm": "FEE_AUM"
+      },
+      {
+        "label": "Fee Related Earnings",
+        "keyword": "FRE",
+        "norm": "FRE"
+      },
+      {
+        "label": "Fee-Related Earnings Per Share",
+        "keyword": "FREPS",
+        "norm": "FREPS"
+      },
+      {
+        "label": "Fee-Related Earnings - After Tax",
+        "keyword": "FEEREL_EARN_ATAX",
+        "norm": "FEEREL_EARN_ATAX"
+      },
+      {
+        "label": "Fee-Related Earnings Per Share - After Tax",
+        "keyword": "FREPS_ATAX",
+        "norm": "FREPS_ATAX"
+      },
+      {
+        "label": "Fee-Related Earnings Margin (%)",
+        "keyword": "FRE_MARG",
+        "norm": "FRE_MARG"
+      },
+      {
+        "label": "Fee Related Performance Income",
+        "keyword": "FEE_REL_PERF_INC",
+        "norm": "FEE_REL_PERF_INC"
+      },
+      {
+        "label": "Fee Related Revenues",
+        "keyword": "FEE_REL_REV",
+        "norm": "FEE_REL_REV"
+      },
+      {
+        "label": "Fundraising - AUM (billions)",
+        "keyword": "FDRAIS_AUM",
+        "norm": "FDRAIS_AUM"
+      },
+      {
+        "label": "Long Term Flows (billions)",
+        "keyword": "LT_FLOWS",
+        "norm": "LT_FLOWS"
+      },
+      {
+        "label": "Management Fee",
+        "keyword": "MGMT_FEE",
+        "norm": "MGMT_FEE"
+      },
+      {
+        "label": "Net Flows (billions)",
+        "keyword": "NETFLOWS",
+        "norm": "NETFLOWS"
+      },
+      {
+        "label": "Net Realized Performance Income",
+        "keyword": "NET_REALPERF_INC",
+        "norm": "NET_REALPERF_INC"
+      },
+      {
+        "label": "Performance-Related Earnings",
+        "keyword": "PERF_REAL_EARN",
+        "norm": "PERF_REAL_EARN"
+      },
+      {
+        "label": "Performance-Related Earnings Per Share",
+        "keyword": "PERPS",
+        "norm": "PERPS",
+        "flag": "source_label_was_#NUM!"
+      },
+      {
+        "label": "Principal Investment Income",
+        "keyword": "PRIN_INV_INC",
+        "norm": "PRIN_INV_INC"
+      },
+      {
+        "label": "Principal Investment Income Per Share",
+        "keyword": "PRIN_INV_INC_PS",
+        "norm": "PRIN_INV_INC_PS"
+      },
+      {
+        "label": "Realizations - AUM (billions)",
+        "keyword": "REALZ_AUM",
+        "norm": "REALZ_AUM"
+      },
+      {
+        "label": "Realized Performance Income",
+        "keyword": "REAL_PERF_INC",
+        "norm": "REAL_PERF_INC"
+      },
+      {
+        "label": "Realized Performance Compensation",
+        "keyword": "REAL_PRF_COMP",
+        "norm": "REAL_PRF_COMP"
+      },
+      {
+        "label": "Spread-Related Earnings",
+        "keyword": "SPRD_REL_EARN",
+        "norm": "SPRD_REL_EARN"
+      },
+      {
+        "label": "Spread-Related Earnings Per Share",
+        "keyword": "SREPS",
+        "norm": "SREPS"
+      },
+      {
+        "label": "Transaction Fees",
+        "keyword": "TRANS_FEE",
+        "norm": "TRANS_FEE"
+      }
+    ],
+    "oil_and_gas": {
+      "segment_income": [
+        {
+          "label": "Chemicals Income",
+          "keyword": "CHEM_OPINC",
+          "norm": "CHEM_OPINC"
+        },
+        {
+          "label": "Chemicals Post Taxes",
+          "keyword": "CHEM_NETINC",
+          "norm": "CHEM_NETINC"
+        },
+        {
+          "label": "Chemicals Income - Dom",
+          "keyword": "CHEM_DOM",
+          "norm": "CHEM_DOM"
+        },
+        {
+          "label": "Chemicals Post Taxes - Dom",
+          "keyword": "CHEM_NETINC_DOM",
+          "norm": "CHEM_NETINC_DOM"
+        },
+        {
+          "label": "Chemicals Income - Intl",
+          "keyword": "CHEM_INTL",
+          "norm": "CHEM_INTL"
+        },
+        {
+          "label": "Chemicals Post Taxes - Intl",
+          "keyword": "CHEM_NETINC_INTL",
+          "norm": "CHEM_NETINC_INTL"
+        },
+        {
+          "label": "Downstream Income",
+          "keyword": "R_M_OPINC",
+          "norm": "R_M_OPINC"
+        },
+        {
+          "label": "Downstream Post Taxes",
+          "keyword": "R_M_NETINC",
+          "norm": "R_M_NETINC"
+        },
+        {
+          "label": "Downstream Income - Dom",
+          "keyword": "R_M_DOM",
+          "norm": "R_M_DOM"
+        },
+        {
+          "label": "Downstream Post Taxes - Dom",
+          "keyword": "R_M_NETINC_DOM",
+          "norm": "R_M_NETINC_DOM"
+        },
+        {
+          "label": "Downstream Income - Intl",
+          "keyword": "R_M_INTL",
+          "norm": "R_M_INTL"
+        },
+        {
+          "label": "Downstream Post Taxes - Intl",
+          "keyword": "R_M_NETINC_INTL",
+          "norm": "R_M_NETINC_INTL"
+        },
+        {
+          "label": "Upstream Income",
+          "keyword": "E_P_OPINC",
+          "norm": "E_P_OPINC"
+        },
+        {
+          "label": "Upstream Post Taxes",
+          "keyword": "E_P_NETINC",
+          "norm": "E_P_NETINC"
+        },
+        {
+          "label": "Upstream Income - Dom",
+          "keyword": "E_P_DOM",
+          "norm": "E_P_DOM"
+        },
+        {
+          "label": "Upstream Post Taxes - Dom",
+          "keyword": "E_P_NETINC_DOM",
+          "norm": "E_P_NETINC_DOM"
+        },
+        {
+          "label": "Upstream Income - Intl",
+          "keyword": "E_P_INTL",
+          "norm": "E_P_INTL",
+          "flag": "source_intl_op_vs_posttax_labels_appear_swapped"
+        },
+        {
+          "label": "Upstream Post Taxes - Intl",
+          "keyword": "E_P_NETINC_INTL",
+          "norm": "E_P_NETINC_INTL",
+          "flag": "source_intl_op_vs_posttax_labels_appear_swapped"
+        }
+      ],
+      "benchmark_prices": [
+        {
+          "label": "European Gas Price (mcf)",
+          "keyword": "PRICE_EUROGAS",
+          "norm": "PRICE_EUROGAS"
+        },
+        {
+          "label": "Henry Hub Price (mmbtu)",
+          "keyword": "PRICE_HENRYHUB",
+          "norm": "PRICE_HENRYHUB"
+        },
+        {
+          "label": "NYMEX Price (mmbtu)",
+          "keyword": "PRICE_NYMEX",
+          "norm": "PRICE_NYMEX"
+        },
+        {
+          "label": "Brent Price",
+          "keyword": "PRICE_BRENT",
+          "norm": "PRICE_BRENT"
+        },
+        {
+          "label": "Canadian Light Oil Price",
+          "keyword": "PRICE_CA_LIGHT",
+          "norm": "PRICE_CA_LIGHT"
+        },
+        {
+          "label": "Dubai Crude Price",
+          "keyword": "PRICE_DUBAI_OIL",
+          "norm": "PRICE_DUBAI_OIL"
+        },
+        {
+          "label": "Edmonton Par Oil Price",
+          "keyword": "PRICE_ED_OIL",
+          "norm": "PRICE_ED_OIL"
+        },
+        {
+          "label": "Synthetic Crude Price",
+          "keyword": "PRICE_SCO",
+          "norm": "PRICE_SCO"
+        },
+        {
+          "label": "Western Canadian Select Crude Price",
+          "keyword": "PRICE_WCS",
+          "norm": "PRICE_WCS"
+        },
+        {
+          "label": "West Texas Intermediate Price",
+          "keyword": "PRICE_WTI",
+          "norm": "PRICE_WTI"
+        },
+        {
+          "label": "Urals Crude Price",
+          "keyword": "PRICE_URALS",
+          "norm": "PRICE_URALS"
+        }
+      ],
+      "production_per_day": [
+        {
+          "label": "Production Per Day (mboe/d)",
+          "keyword": "PRODPERDAY",
+          "norm": "PRODPERDAY"
+        },
+        {
+          "label": "Production Per Day - Oil & NGLs (mbbl/d)",
+          "keyword": "PROD_DAY_OIL_NGL",
+          "norm": "PROD_DAY_OIL_NGL"
+        },
+        {
+          "label": "Production Per Day - Natural Gas (mmcfe/d)",
+          "keyword": "PROD_DAY_GAS_ONLY",
+          "norm": "PROD_DAY_GAS_ONLY"
+        },
+        {
+          "label": "Production Per Day - NGLs (mbbl/d)",
+          "keyword": "PROD_DAY_NGL_ONLY",
+          "norm": "PROD_DAY_NGL_ONLY"
+        },
+        {
+          "label": "Production Per Day - Oil (mbbl/d)",
+          "keyword": "PROD_DAY_OIL_ONLY",
+          "norm": "PROD_DAY_OIL_ONLY"
+        },
+        {
+          "label": "Production Per Day - Gas & NGLs (mmcfe/d)",
+          "keyword": "PROD_DAY_GAS_NGL",
+          "norm": "PROD_DAY_GAS_NGL"
+        }
+      ],
+      "reserves": [
+        {
+          "label": "1P Reserves (mmboe)",
+          "keyword": "RSV_1P",
+          "norm": "RSV_1P"
+        },
+        {
+          "label": "2P Reserves (mmboe)",
+          "keyword": "RSV_2P",
+          "norm": "RSV_2P"
+        },
+        {
+          "label": "3P Reserves (mmboe)",
+          "keyword": "RSV_3P",
+          "norm": "RSV_3P"
+        }
+      ],
+      "realized_prices": [
+        {
+          "label": "Realized Price",
+          "keyword": "REAL_PRICE",
+          "norm": "REAL_PRICE",
+          "flag": "duplicate_with_mining"
+        },
+        {
+          "label": "Realized Price - Before Hedges",
+          "keyword": "REAL_PRICE_BH",
+          "norm": "REAL_PRICE_BH"
+        },
+        {
+          "label": "Realized Price - Gas & NGLs",
+          "keyword": "REALP_GAS_NGL",
+          "norm": "REALP_GAS_NGL"
+        },
+        {
+          "label": "Realized Price - Natural Gas",
+          "keyword": "REAL_PRICE_GAS",
+          "norm": "REAL_PRICE_GAS"
+        },
+        {
+          "label": "Realized Price - Natural Gas Before Hedges",
+          "keyword": "REALP_GAS_BH",
+          "norm": "REALP_GAS_BH"
+        },
+        {
+          "label": "Realized Price - NGLs",
+          "keyword": "REALP_NGL",
+          "norm": "REALP_NGL"
+        },
+        {
+          "label": "Realized Price - NGLs Before Hedges",
+          "keyword": "REALP_NGL_BH",
+          "norm": "REALP_NGL_BH"
+        },
+        {
+          "label": "Realized Price - Oil",
+          "keyword": "REAL_PRICE_Oil",
+          "norm": "REAL_PRICE_OIL"
+        },
+        {
+          "label": "Realized Price - Oil Before Hedges",
+          "keyword": "REALP_OIL_BH",
+          "norm": "REALP_OIL_BH"
+        },
+        {
+          "label": "Realized Price - Oil & NGLs",
+          "keyword": "REALP_OIL_NGL",
+          "norm": "REALP_OIL_NGL"
+        }
+      ],
+      "total_production": [
+        {
+          "label": "Total Production - OIL (mmbbl)",
+          "keyword": "PROD_OIL",
+          "norm": "PROD_OIL"
+        },
+        {
+          "label": "Total Production - GAS (mmcf)",
+          "keyword": "PROD_GAS",
+          "norm": "PROD_GAS"
+        },
+        {
+          "label": "Total Production - NGL (mmbbl)",
+          "keyword": "PROD_NGL",
+          "norm": "PROD_NGL"
+        },
+        {
+          "label": "Total Production - OIL & NGL (mmbbl)",
+          "keyword": "PROD_OIL_NGL",
+          "norm": "PROD_OIL_NGL"
+        },
+        {
+          "label": "Total Production - OIL Sands (mmbbl)",
+          "keyword": "PROD_OIL_SANDS",
+          "norm": "PROD_OIL_SANDS"
+        },
+        {
+          "label": "Total Production",
+          "keyword": "Total_PRod",
+          "norm": "TOTAL_PROD",
+          "flag": "case_and_dup_with_mining_TOTAL_PROD"
+        }
+      ],
+      "other": [
+        {
+          "label": "DACF",
+          "keyword": "DACF",
+          "norm": "DACF"
+        },
+        {
+          "label": "Exploration Expense",
+          "keyword": "EXPL_EXP",
+          "norm": "EXPL_EXP"
+        },
+        {
+          "label": "OPEX per unit",
+          "keyword": "OPEX_UNIT",
+          "norm": "OPEX_UNIT"
+        }
+      ]
+    },
+    "power_and_utilities": [
+      {
+        "label": "Cash Conversion (FCF/NetProfit) (%)",
+        "keyword": "CASH_CONV",
+        "norm": "CASH_CONV"
+      },
+      {
+        "label": "Deferred Income Taxes (CF)",
+        "keyword": "DFD_TAX_XITC_CF",
+        "norm": "DFD_TAX_XITC_CF"
+      },
+      {
+        "label": "Deferred Income Taxes - Assets (BS)",
+        "keyword": "DFD_TAX_DB",
+        "norm": "DFD_TAX_DB"
+      },
+      {
+        "label": "Deferred Income Taxes - Liabilities (BS)",
+        "keyword": "DFD_TAX_CR",
+        "norm": "DFD_TAX_CR"
+      },
+      {
+        "label": "Fuel",
+        "keyword": "FUEL",
+        "norm": "FUEL"
+      },
+      {
+        "label": "Fuel, Purchased Power",
+        "keyword": "FUEL_PURCH_POWER",
+        "norm": "FUEL_PURCH_POWER"
+      },
+      {
+        "label": "Purchased Power",
+        "keyword": "PURCH_POWER",
+        "norm": "PURCH_POWER"
+      },
+      {
+        "label": "Preferred Equity",
+        "keyword": "PFD_STK",
+        "norm": "PFD_STK"
+      },
+      {
+        "label": "Rate Base",
+        "keyword": "RATEBASE",
+        "norm": "RATEBASE"
+      },
+      {
+        "label": "Avg Rate Base",
+        "keyword": "AVGRATEBASE",
+        "norm": "AVGRATEBASE"
+      },
+      {
+        "label": "Taxes Other Than Income",
+        "keyword": "TAXES_NON_INC",
+        "norm": "TAXES_NON_INC"
+      },
+      {
+        "label": "Total Capacity (Mw)",
+        "keyword": "TOT_CAPACITY_MW",
+        "norm": "TOT_CAPACITY_MW"
+      },
+      {
+        "label": "Total Liabilities and Equity",
+        "keyword": "LIABS_SHLDRS_EQ",
+        "norm": "LIABS_SHLDRS_EQ"
+      }
+    ],
+    "real_estate": [
+      {
+        "label": "Acquisition NOI",
+        "keyword": "ACQUI_NOI",
+        "norm": "ACQUI_NOI"
+      },
+      {
+        "label": "Adjusted Funds from Operations (Per share)",
+        "keyword": "AFFO",
+        "norm": "AFFO"
+      },
+      {
+        "label": "Adjusted Funds From Operations (Gross)",
+        "keyword": "AFFO_GROSS",
+        "norm": "AFFO_GROSS"
+      },
+      {
+        "label": "AFFO Payout (%)",
+        "keyword": "AFFOPAYOUT_RATIO",
+        "norm": "AFFOPAYOUT_RATIO"
+      },
+      {
+        "label": "Real Estate Assets",
+        "keyword": "RE_ASSETS",
+        "norm": "RE_ASSETS"
+      },
+      {
+        "label": "Building and Improvement, Net",
+        "keyword": "BUILD_IMPROV",
+        "norm": "BUILD_IMPROV"
+      },
+      {
+        "label": "Cash NOI",
+        "keyword": "CASH_NOI",
+        "norm": "CASH_NOI"
+      },
+      {
+        "label": "Construction in Progress",
+        "keyword": "CONSTR_PROG",
+        "norm": "CONSTR_PROG"
+      },
+      {
+        "label": "Core Funds from Operations (Per share)",
+        "keyword": "CORE_FFO",
+        "norm": "CORE_FFO"
+      },
+      {
+        "label": "Core Funds From Operations (Gross)",
+        "keyword": "CORE_FFO_GROSS",
+        "norm": "CORE_FFO_GROSS"
+      },
+      {
+        "label": "Development",
+        "keyword": "DEV",
+        "norm": "DEV"
+      },
+      {
+        "label": "Development NOI",
+        "keyword": "DEV_NOI",
+        "norm": "DEV_NOI"
+      },
+      {
+        "label": "Disposition NOI",
+        "keyword": "DISPO_NOI",
+        "norm": "DISPO_NOI"
+      },
+      {
+        "label": "EPRA Net Tangible Assets (NTA)",
+        "keyword": "RE_EPRA_NTA",
+        "norm": "RE_EPRA_NTA"
+      },
+      {
+        "label": "EPRA Net Disposal Value (NDV)",
+        "keyword": "RE_EPRA_NDV",
+        "norm": "RE_EPRA_NDV"
+      },
+      {
+        "label": "EPRA Net Disposal Value (NDV) Per Share",
+        "keyword": "RE_EPRA_NDV_PS",
+        "norm": "RE_EPRA_NDV_PS"
+      },
+      {
+        "label": "EPRA Net Reinstatement Value (NRV)",
+        "keyword": "RE_EPRA_NRV",
+        "norm": "RE_EPRA_NRV"
+      },
+      {
+        "label": "EPRA Net Reinstatement Value (NRV) Per Share",
+        "keyword": "RE_EPRA_NRV_PS",
+        "norm": "RE_EPRA_NRV_PS"
+      },
+      {
+        "label": "EPRA Net Tangible Assets (NTA) Per Share",
+        "keyword": "RE_EPRA_NTA_PS",
+        "norm": "RE_EPRA_NTA_PS"
+      },
+      {
+        "label": "Funds from Operations (Per share)",
+        "keyword": "FFO",
+        "norm": "FFO"
+      },
+      {
+        "label": "Funds From Operations (Gross)",
+        "keyword": "FUNDS_OPER_GROSS",
+        "norm": "FUNDS_OPER_GROSS"
+      },
+      {
+        "label": "FFO Payout (%)",
+        "keyword": "FFOPAYOUT_RATIO",
+        "norm": "FFOPAYOUT_RATIO"
+      },
+      {
+        "label": "Gains/(Losses) on Sale of Real Estate",
+        "keyword": "GAIN_LOSS_SALE_RE",
+        "norm": "GAIN_LOSS_SALE_RE"
+      },
+      {
+        "label": "Implied Cap Rate (%)",
+        "keyword": "IMP_CAP_RATE",
+        "norm": "IMP_CAP_RATE"
+      },
+      {
+        "label": "Investment in Unconsolidated Entities",
+        "keyword": "INV_UNCON_ENTITY",
+        "norm": "INV_UNCON_ENTITY"
+      },
+      {
+        "label": "Development Properties",
+        "keyword": "DEVELOP_PROP",
+        "norm": "DEVELOP_PROP"
+      },
+      {
+        "label": "Investment Properties",
+        "keyword": "INVEST_PROP",
+        "norm": "INVEST_PROP"
+      },
+      {
+        "label": "Land",
+        "keyword": "LAND",
+        "norm": "LAND"
+      },
+      {
+        "label": "Land Held for Development",
+        "keyword": "LAND_HFD",
+        "norm": "LAND_HFD"
+      },
+      {
+        "label": "Loan to Value (%)",
+        "keyword": "LTV",
+        "norm": "LTV"
+      },
+      {
+        "label": "Real Estate Tax and Other",
+        "keyword": "RE_TAX",
+        "norm": "RE_TAX"
+      },
+      {
+        "label": "Reported Funds from Operations (Per share)",
+        "keyword": "FFO_REP",
+        "norm": "FFO_REP"
+      },
+      {
+        "label": "Reported Funds From Operations (Gross)",
+        "keyword": "FFO_REP_GROSS",
+        "norm": "FFO_REP_GROSS"
+      },
+      {
+        "label": "Same Store Revenue",
+        "keyword": "RE_SS_REV",
+        "norm": "RE_SS_REV"
+      },
+      {
+        "label": "Same Store Expense",
+        "keyword": "RE_SS_OPER_EXP",
+        "norm": "RE_SS_OPER_EXP"
+      },
+      {
+        "label": "Same Store Expense growth (%)",
+        "keyword": "SS_EXP_GR",
+        "norm": "SS_EXP_GR"
+      },
+      {
+        "label": "Same Store NOI",
+        "keyword": "SAME_STORE_NOI",
+        "norm": "SAME_STORE_NOI"
+      },
+      {
+        "label": "Real Estate Related Dep, Amort",
+        "keyword": "RE_DEPR_AMORT",
+        "norm": "RE_DEPR_AMORT"
+      },
+      {
+        "label": "Non-Real Estate Related Dep, Amort",
+        "keyword": "NONRE_DEPR_AMORT",
+        "norm": "NONRE_DEPR_AMORT"
+      },
+      {
+        "label": "Straight-line Rent",
+        "keyword": "STRAIGHTLINE_RENT",
+        "norm": "STRAIGHTLINE_RENT"
+      }
+    ],
+    "retailers": [
+      {
+        "label": "Net Sales per Retail Sq. Ft.",
+        "keyword": "SALES_RSF",
+        "norm": "SALES_RSF"
+      },
+      {
+        "label": "# Stores Closed During Period",
+        "keyword": "ST_CL",
+        "norm": "ST_CL"
+      },
+      {
+        "label": "# Stores Closed During Period - Dom.",
+        "keyword": "ST_CL_D",
+        "norm": "ST_CL_D"
+      },
+      {
+        "label": "# Stores Closed During Period - Intl.",
+        "keyword": "ST_CL_I",
+        "norm": "ST_CL_I"
+      },
+      {
+        "label": "# Stores Opened",
+        "keyword": "STOREN_OPENED",
+        "norm": "STOREN_OPENED"
+      },
+      {
+        "label": "# Stores Opened During Period - Dom.",
+        "keyword": "ST_OPN_D",
+        "norm": "ST_OPN_D"
+      },
+      {
+        "label": "# Stores Opened During Period - Intl.",
+        "keyword": "ST_OPN_I",
+        "norm": "ST_OPN_I"
+      },
+      {
+        "label": "# Stores at Period End",
+        "keyword": "ST_END",
+        "norm": "ST_END"
+      },
+      {
+        "label": "# Stores at Period End - Dom.",
+        "keyword": "ST_END_D",
+        "norm": "ST_END_D"
+      },
+      {
+        "label": "# Stores at Period End - Intl.",
+        "keyword": "ST_END_I",
+        "norm": "ST_END_I"
+      },
+      {
+        "label": "# Stores Relocated During Period",
+        "keyword": "ST_RLOC",
+        "norm": "ST_RLOC"
+      },
+      {
+        "label": "# Stores Relocated During Period - Dom.",
+        "keyword": "ST_RLOC_D",
+        "norm": "ST_RLOC_D"
+      },
+      {
+        "label": "# Stores Relocated During Period - Intl.",
+        "keyword": "ST_RLOC_I",
+        "norm": "ST_RLOC_I"
+      },
+      {
+        "label": "Same Store Sales Monthly (%)",
+        "keyword": "SAMESTORESALESM",
+        "norm": "SAMESTORESALESM"
+      },
+      {
+        "label": "Same Store Sales (%)",
+        "keyword": "SAMESTORESALES",
+        "norm": "SAMESTORESALES"
+      },
+      {
+        "label": "Same Store Sales - Dom. (%)",
+        "keyword": "SSS_D",
+        "norm": "SSS_D"
+      },
+      {
+        "label": "Same Store Sales - Intl. (%)",
+        "keyword": "SSS_I",
+        "norm": "SSS_I"
+      },
+      {
+        "label": "Selling Space Sq. Ft. (millions)",
+        "keyword": "SELL_SP",
+        "norm": "SELL_SP"
+      },
+      {
+        "label": "Selling Space Sq. Ft. (millions) - Dom.",
+        "keyword": "SELL_SP_D",
+        "norm": "SELL_SP_D"
+      },
+      {
+        "label": "Selling Space Sq. Ft. (millions) - Intl.",
+        "keyword": "SELL_SP_I",
+        "norm": "SELL_SP_I"
+      }
+    ],
+    "telecoms": [
+      {
+        "label": "Access Lines (thousands)",
+        "keyword": "ACCESS_LINES",
+        "norm": "ACCESS_LINES"
+      },
+      {
+        "label": "ARPU",
+        "keyword": "ARPU",
+        "norm": "ARPU"
+      },
+      {
+        "label": "Broadband ARPU",
+        "keyword": "BROAD_ARPU",
+        "norm": "BROAD_ARPU"
+      },
+      {
+        "label": "Broadband Subscribers (thousands)",
+        "keyword": "BROADBAND_SUB",
+        "norm": "BROADBAND_SUB"
+      },
+      {
+        "label": "Business HS Internet Subscribers (thousands)",
+        "keyword": "BUSIHSI_SUB",
+        "norm": "BUSIHSI_SUB"
+      },
+      {
+        "label": "Business Services ARPU",
+        "keyword": "BUSINESS_ARPU",
+        "norm": "BUSINESS_ARPU"
+      },
+      {
+        "label": "Business Services Subscribers (thousands)",
+        "keyword": "BUSI_SUB",
+        "norm": "BUSI_SUB"
+      },
+      {
+        "label": "Business Video Subscribers (thousands)",
+        "keyword": "BUSIVID_SUB",
+        "norm": "BUSIVID_SUB"
+      },
+      {
+        "label": "Business Voice Subscribers (thousands)",
+        "keyword": "BUSIVOIC_SUB",
+        "norm": "BUSIVOIC_SUB"
+      },
+      {
+        "label": "Churn (%)",
+        "keyword": "CHURN",
+        "norm": "CHURN"
+      },
+      {
+        "label": "Contribution Profit",
+        "keyword": "CONTR_PROF",
+        "norm": "CONTR_PROF"
+      },
+      {
+        "label": "Connected Devices Subscribers (thousands)",
+        "keyword": "DEVICES_SUB",
+        "norm": "DEVICES_SUB"
+      },
+      {
+        "label": "CPGA",
+        "keyword": "CPGA",
+        "norm": "CPGA"
+      },
+      {
+        "label": "Customer Relationship ARPU",
+        "keyword": "CUS_REL_ARPU",
+        "norm": "CUS_REL_ARPU"
+      },
+      {
+        "label": "Customer Relationship Subscribers (thousands)",
+        "keyword": "CUS_REL_SUB",
+        "norm": "CUS_REL_SUB"
+      },
+      {
+        "label": "Gross Adds (thousands)",
+        "keyword": "GROSS_ADDS",
+        "norm": "GROSS_ADDS"
+      },
+      {
+        "label": "High Speed Internet ARPU",
+        "keyword": "HIS_ARPU",
+        "norm": "HIS_ARPU"
+      },
+      {
+        "label": "High Speed Internet Subscribers (thousands)",
+        "keyword": "HS_INET_SUB",
+        "norm": "HS_INET_SUB"
+      },
+      {
+        "label": "Minutes of Usage",
+        "keyword": "MOU",
+        "norm": "MOU"
+      },
+      {
+        "label": "Monthly Revenue Per User",
+        "keyword": "M_REV_USER",
+        "norm": "M_REV_USER"
+      },
+      {
+        "label": "Mobile Phone Subscribers (thousands)",
+        "keyword": "MOBILE_SUB",
+        "norm": "MOBILE_SUB"
+      },
+      {
+        "label": "Net Adds (thousands)",
+        "keyword": "NET_ADDS",
+        "norm": "NET_ADDS"
+      },
+      {
+        "label": "Clients (thousands)",
+        "keyword": "SUBSCRIBERS_NB",
+        "norm": "SUBSCRIBERS_NB"
+      },
+      {
+        "label": "Paid Net Adds (thousands)",
+        "keyword": "PAIDNADDS",
+        "norm": "PAIDNADDS"
+      },
+      {
+        "label": "Postpaid Phone ARPU",
+        "keyword": "POSTPAID_PH_ARPU",
+        "norm": "POSTPAID_PH_ARPU"
+      },
+      {
+        "label": "Postpaid Phone Subscribers (thousands)",
+        "keyword": "POSTPHONE_SUB",
+        "norm": "POSTPHONE_SUB"
+      },
+      {
+        "label": "Postpaid Subscribers (thousands)",
+        "keyword": "POSTPAID_SUB",
+        "norm": "POSTPAID_SUB"
+      },
+      {
+        "label": "Prepaid Subscribers (thousands)",
+        "keyword": "PREPAID_SUB",
+        "norm": "PREPAID_SUB"
+      },
+      {
+        "label": "Residential Customer ARPU",
+        "keyword": "RESIDENT_ARPU",
+        "norm": "RESIDENT_ARPU"
+      },
+      {
+        "label": "Residential Data ARPU",
+        "keyword": "RESI_DATA_ARPU",
+        "norm": "RESI_DATA_ARPU"
+      },
+      {
+        "label": "Residential HS Internet Subscribers (thousands)",
+        "keyword": "RESIHSI_SUB",
+        "norm": "RESIHSI_SUB"
+      },
+      {
+        "label": "Residential Subscribers (thousands)",
+        "keyword": "RESI_SUB",
+        "norm": "RESI_SUB"
+      },
+      {
+        "label": "Residential Video ARPU",
+        "keyword": "RESI_VIDEO_ARPU",
+        "norm": "RESI_VIDEO_ARPU"
+      },
+      {
+        "label": "Residential Video Subscribers (thousands)",
+        "keyword": "RESIVID_SUB",
+        "norm": "RESIVID_SUB"
+      },
+      {
+        "label": "Residential Voice ARPU",
+        "keyword": "RESI_VOICE_ARPU",
+        "norm": "RESI_VOICE_ARPU"
+      },
+      {
+        "label": "Residential Voice Subscribers (thousands)",
+        "keyword": "RESIVOIC_SUB",
+        "norm": "RESIVOIC_SUB"
+      },
+      {
+        "label": "Retail Wireless ARPU",
+        "keyword": "RETAIL_ARPU",
+        "norm": "RETAIL_ARPU"
+      },
+      {
+        "label": "Security Subscribers (thousands)",
+        "keyword": "SECUR_SUB",
+        "norm": "SECUR_SUB"
+      },
+      {
+        "label": "SAC",
+        "keyword": "SAC",
+        "norm": "SAC"
+      },
+      {
+        "label": "Subscription Video ARPU",
+        "keyword": "SUBSVIDEO_ARPU",
+        "norm": "SUBSVIDEO_ARPU"
+      },
+      {
+        "label": "Video Advertising ARPU",
+        "keyword": "VIDEOADVERT_ARPU",
+        "norm": "VIDEOADVERT_ARPU"
+      },
+      {
+        "label": "Video ARPU",
+        "keyword": "VIDO_ARPU",
+        "norm": "VIDO_ARPU"
+      },
+      {
+        "label": "Video Subscribers (thousands)",
+        "keyword": "VIDO_SUB",
+        "norm": "VIDO_SUB"
+      },
+      {
+        "label": "Voice ARPU",
+        "keyword": "VOICE_ARPU",
+        "norm": "VOICE_ARPU"
+      },
+      {
+        "label": "Voice Subscribers (thousands)",
+        "keyword": "VOICE_SUB",
+        "norm": "VOICE_SUB"
+      },
+      {
+        "label": "Wholesale Wireless ARPU",
+        "keyword": "WHOLESAL_ARPU",
+        "norm": "WHOLESAL_ARPU"
+      },
+      {
+        "label": "Wholesale Subscribers (thousands)",
+        "keyword": "WHOLESAL_SUB",
+        "norm": "WHOLESAL_SUB"
+      },
+      {
+        "label": "Wireless ARPU",
+        "keyword": "WIRELES_ARPU",
+        "norm": "WIRELES_ARPU"
+      },
+      {
+        "label": "Wireless Subscribers (thousands)",
+        "keyword": "WIRELES_SUB",
+        "norm": "WIRELES_SUB"
+      },
+      {
+        "label": "Wireless Postpaid ARPU",
+        "keyword": "POSTPAID_ARPU",
+        "norm": "POSTPAID_ARPU"
+      },
+      {
+        "label": "Wireless Prepaid ARPU",
+        "keyword": "PREPAID_ARPU",
+        "norm": "PREPAID_ARPU"
+      },
+      {
+        "label": "Current RPO",
+        "keyword": "CURRENT_RPO",
+        "norm": "CURRENT_RPO"
+      },
+      {
+        "label": "Total RPO",
+        "keyword": "TOTAL_RPO",
+        "norm": "TOTAL_RPO"
+      },
+      {
+        "label": "Non Current RPO",
+        "keyword": "NON_CURRENT_RPO",
+        "norm": "NON_CURRENT_RPO"
+      },
+      {
+        "label": "Current RPO Bookings",
+        "keyword": "CURRENT_RPO_BOOKINGS",
+        "norm": "CURRENT_RPO_BOOKINGS"
+      },
+      {
+        "label": "Total RPO Bookings",
+        "keyword": "TOTAL_RPO_BOOKINGS",
+        "norm": "TOTAL_RPO_BOOKINGS"
+      }
+    ]
+  },
+  "report_layout_codes": {
+    "note": "Directional codes appear only in the template, never in the output data file.",
+    "codes": {
+      "default": "Symbols down a column, request codes on same row as first symbol. No code needed.",
+      "^COL": "Place before request codes. Symbols across a row; data codes in columns below. Scans down columns.",
+      "^ROW": "Switches back to symbols-down-a-column after a ^COL section. May alternate any number of times.",
+      "^SHEET": "Place before requests. Spreads symbols across worksheets; template is sheet 1; symbols occupy same cell on each subsequent sheet.",
+      "blank_rows_cols": "Allowed in any layout; useful for time-series (e.g. 4 quarters down a column needs 4 blank rows between symbols)."
+    }
+  },
+  "data_quality_flags": [
+    {
+      "keyword": "EBITDA",
+      "issue": "Drop-down label in source reads 'EBITA' (typo); keyword and item label are EBITDA."
+    },
+    {
+      "keyword": "EBITDAX",
+      "issue": "Drop-down label reads 'EBITDAR' but keyword is EBITDAX."
+    },
+    {
+      "keyword": "PROD_SULPHACID",
+      "issue": "Item label lost in source (#NUM!); keyword valid. Restored label: Total Production Sulphuric Acid."
+    },
+    {
+      "keyword": "PERPS",
+      "issue": "Item label lost in source (#NUM!); keyword valid. Restored label: Performance-Related Earnings Per Share."
+    },
+    {
+      "keyword": "REAL_PRICE",
+      "issue": "Appears in both Mining and Oil sectors. Disambiguate by sector context."
+    },
+    {
+      "keyword": "FFO",
+      "issue": "Used as 'Funds from Operations' in estimate templates and in Real Estate item list. Same key, sector-context dependent."
+    },
+    {
+      "keywords": [
+        "TOTAL_PROD",
+        "Total_PRod"
+      ],
+      "issue": "Near-duplicate; Mining=TOTAL_PROD, Oil=Total_PRod (mixed case). Normalize to uppercase but preserve original."
+    },
+    {
+      "keywords": [
+        "Sales",
+        "REAL_PRICE_Oil"
+      ],
+      "issue": "Non-uppercase source keywords. FactSet keywords are generally case-insensitive; store normalized uppercase + original."
+    },
+    {
+      "keywords": [
+        "E_P_INTL",
+        "E_P_NETINC_INTL"
+      ],
+      "issue": "Oil Upstream Intl op-income vs post-tax labels appear swapped vs the Dom pair. Verify against live FactSet."
+    }
+  ]
+}

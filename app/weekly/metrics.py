@@ -252,19 +252,49 @@ def _trend_descriptor(r1w: Optional[float], r1m: Optional[float]) -> str:
 # ---------------------------------------------------------------------------
 def valuation_metrics(latest_close: Any, fundamentals: Dict[str, Any]
                       ) -> Dict[str, Any]:
-    """Forward valuation: fwd_pe = latest_close / FY1 EPS mean.
+    """Forward valuation P/E.
 
-    Returns {fwd_pe, fy1_eps_mean}. fwd_pe is None when the latest close or FY1
-    EPS is missing OR the FY1 EPS is <= 0 (a negative/zero forward multiple is
-    not meaningful, so we suppress it).
+    PREFERS the FactSet-NATIVE next-twelve-month P/E pulled via
+    FE_VALUATION(PE,MEAN,NTMA,..) (parsed as ``fwd_pe_ntm``) when it is present
+    and positive. FALLS BACK to the in-app computation ``latest_close / FY1 EPS
+    mean`` when the native field is missing/blank/non-positive.
+
+    Returns {fwd_pe, fwd_pe_source, fwd_pe_ntm, fy1_eps_mean}:
+      * fwd_pe        - the CHOSEN multiple (native or computed), or None.
+      * fwd_pe_source - "factset" when the native field was used, "computed"
+                        when the price/EPS fallback was used, None when neither
+                        is available.
+      * fwd_pe_ntm    - the raw native FE_VALUATION value (or None).
+      * fy1_eps_mean  - the FY1 consensus EPS used by the fallback (or None).
+
+    NaN-safe; never raises. A negative/zero forward multiple is suppressed
+    (None) since it is not meaningful.
     """
     fnd = fundamentals or {}
     eps = _f(fnd.get("fy1_eps_mean"))
     px = _f(latest_close)
-    fwd_pe = None
+    ntm = _f(fnd.get("fwd_pe_ntm"))
+
+    # Computed fallback (latest_close / FY1 EPS mean).
+    computed = None
     if px is not None and eps is not None and eps > 0:
-        fwd_pe = _f(px / eps)
-    return {"fwd_pe": fwd_pe, "fy1_eps_mean": eps}
+        computed = _f(px / eps)
+
+    fwd_pe = None
+    source = None
+    if ntm is not None and ntm > 0:
+        fwd_pe = ntm
+        source = "factset"
+    elif computed is not None:
+        fwd_pe = computed
+        source = "computed"
+
+    return {
+        "fwd_pe": fwd_pe,
+        "fwd_pe_source": source,
+        "fwd_pe_ntm": ntm,
+        "fy1_eps_mean": eps,
+    }
 
 
 def earnings_momentum(fundamentals: Dict[str, Any]) -> Dict[str, Any]:
@@ -426,6 +456,7 @@ def _ticker_metrics(
         "valuation": valuation,
         "momentum": momentum,
         "fwd_pe": valuation.get("fwd_pe"),
+        "fwd_pe_source": valuation.get("fwd_pe_source"),
         # sector-anchor fields filled in a second pass once every name's P/E is
         # known (see compute_weekly_metrics).
         "sector_median_fwd_pe": None,

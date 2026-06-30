@@ -80,6 +80,12 @@ FUNDAMENTAL_FIELDS: List[Tuple[str, str, str]] = [
     # name + a short business description). EXACT user-tested Excel-FQL forms.
     ("company_name", "Company name", "FG_COMPANY_NAME"),
     ("business_desc", "Business description", "FNI_BUS_DESC_CO(ALL,1)"),
+    # Native forward P/E (NTM) via the confirmed FE_VALUATION function. This is
+    # a NUMERIC value that the metrics layer PREFERS over the in-app
+    # latest_close / FY1-EPS computation; the computed form remains the FALLBACK
+    # when this field is blank / non-positive (entitlement-dependent). Appended
+    # LAST so the existing fundamental row positions are unchanged.
+    ("fwd_pe_ntm", "Fwd P/E (NTM)", "FE_VALUATION(PE,MEAN,NTMA,,0,,,'')"),
 ]
 
 
@@ -217,10 +223,12 @@ def _instructions_rows(depth: int, n_tickers: int, batch_note: str = "",
         for i, (key, label, _expr) in enumerate(FUNDAMENTAL_FIELDS):
             rows.append([f"  {fund_col}{2 + i} ({label}): {ff[key]}"])
         rows += [
-            ["  Forward P/E is NOT a native field — computed in-app as"],
-            ["  latest_close / FY1 EPS mean (n/a when EPS<=0 or missing). EPS"],
-            ["  revision direction/magnitude is computed in-app from the current"],
-            ["  FY1 mean vs the -20D (~4 weeks ago) FY1 mean."],
+            ["  Forward P/E (NTM) is pulled NATIVELY via FE_VALUATION(PE,MEAN,"],
+            ["  NTMA,,0,,,''); the note PREFERS it and FALLS BACK to the in-app"],
+            ["  latest_close / FY1 EPS mean when it is blank/non-positive (n/a"],
+            ["  when both are unavailable). EPS revision direction/magnitude is"],
+            ["  computed in-app from the current FY1 mean vs the -20D (~4 weeks"],
+            ["  ago) FY1 mean."],
         ]
     return rows
 
@@ -257,8 +265,9 @@ def _manifest_rows(tickers: List[str], depth: int,
                      "FNI_BUS_DESC_CO) require the FactSet Fundamentals/Company "
                      "entitlement; NA shows as blank and the name falls back to "
                      "the bare ticker downstream.", "", "", "", ""])
-        rows.append(["<computed in-app>", "", "forward P/E",
-                     "latest_close / FY1 EPS mean (n/a if EPS<=0/missing)", ""])
+        rows.append(["<FactSet-native, computed fallback>", "", "forward P/E",
+                     "FE_VALUATION(PE,MEAN,NTMA,..) preferred; falls back to "
+                     "latest_close / FY1 EPS mean (n/a if both unavailable)", ""])
     rows += [
         ["", "", "", "", ""],
         ["Tickers in this file:", "", "", "", len(tickers)],

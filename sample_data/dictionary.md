@@ -41,6 +41,34 @@ Canonical Excel add-in form:
 | `index_weight` | Index weight in benchmark (**optional**) | `FG_INDEX_WEIGHT("MSCI CHINA",0D)` |
 | `next_earnings` | Next earnings/report date (**optional**) | `FE_REP_DT_NEXT(0D)` |
 
+## Confirmed =FDS fundamentals / estimates / identifiers (authoritative library)
+
+These entries come from the **authoritative, confirmed =FDS formula library**
+(see `factset_dictionary.json` / `.md` for the full canonical dictionary incl.
+the ~600-keyword estimate item library). They are **added** alongside the
+price/volume series formulas above (the price/volume pulls are unchanged) so the
+generator can immediately emit confirmed fundamentals/estimates and seed Phase C.
+
+| Key | Label | Family | FQL template |
+|-----|-------|--------|--------------|
+| `market_cap` | Market capitalization (company, current) | price | `P_MARKET_VAL_CO(USD,1)` |
+| `shares_out` | Shares outstanding (company) | fundamentals | `FF_COM_SHS_OUT(ANN,0,,,RF)` |
+| `ebitda` | EBITDA (operating) | fundamentals | `FF_EBITDA_OPER(ANN,0,,,RF)` |
+| `net_income` | Net income before extraordinaries | fundamentals | `FF_NET_INC(ANN,0,,,RF)` |
+| `enterprise_value` | Enterprise value | fundamentals | `FF_ENTRPR_VAL(ANN,0,,,RF)` |
+| `fwd_pe_ntm` | Forward P/E (NTM) — native | estimates | `FE_VALUATION(PE,MEAN,NTMA,,0,,,'')` |
+| `fy1_eps` | FY1 consensus EPS (mean) | estimates | `FE_ESTIMATE(EPS,MEAN,ANNUAL,+1,0,,,'')` |
+| `company_name` | Company name | identifiers | `FG_COMPANY_NAME` |
+| `gics_industry` | GICS industry name (reference) | identifiers | `FG_GICS_INDUSTRY` |
+
+> **Notes:** Fundamentals use the `FF_ITEM(ANN,0,,,RF)` template (`0` = most
+> recent annual period, `RF` = Report Filing basis flag). Estimate nest strings
+> use **single quotes** (e.g. `''`). The verified-working classification fields
+> for this entitlement are `FG_FACTSET_SECTOR` / `FG_FACTSET_IND` (GICS variants
+> returned no data; `FG_GICS_INDUSTRY` kept for reference). The live **weekly**
+> template keeps its user-tested `ANN_ROLL`/`NOW` estimate form; the `fy1_eps`
+> entry here documents the authoritative `ANNUAL`/`0` reference form.
+
 ## Placeholders
 
 - `{start}` / `{end}` — relative (`0D`, `-250D`) or explicit dates (`20240101`),

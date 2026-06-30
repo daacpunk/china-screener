@@ -52,6 +52,69 @@
       "label": "Next earnings/report date (OPTIONAL event field)",
       "fql_template": "FE_REP_DT_NEXT(0D)",
       "notes": "OPTIONAL. Next scheduled earnings/report date for event-calendar flagging; may vary by entitlement. Event flagging also works from a user-supplied column."
+    },
+    "market_cap": {
+      "label": "Market capitalization (company, current)",
+      "fql_template": "P_MARKET_VAL_CO(USD,1)",
+      "family": "price",
+      "fds_compatible": true,
+      "notes": "Current company market cap in USD via the confirmed =FDS price field P_MARKET_VAL_CO; trailing 1 selects the current period. From the authoritative =FDS library. Added entry (does not affect price/volume pulls)."
+    },
+    "shares_out": {
+      "label": "Shares outstanding (company)",
+      "fql_template": "FF_COM_SHS_OUT(ANN,0,,,RF)",
+      "family": "fundamentals",
+      "fds_compatible": true,
+      "notes": "FactSet Fundamentals company shares outstanding. Template FF_ITEM(ANN,0,,,RF): 0 = most recent annual period; RF = Report Filing basis flag. From the authoritative =FDS library."
+    },
+    "ebitda": {
+      "label": "EBITDA (operating)",
+      "fql_template": "FF_EBITDA_OPER(ANN,0,,,RF)",
+      "family": "fundamentals",
+      "fds_compatible": true,
+      "notes": "FactSet Fundamentals operating EBITDA, most recent annual period. From the authoritative =FDS library."
+    },
+    "net_income": {
+      "label": "Net income before extraordinaries",
+      "fql_template": "FF_NET_INC(ANN,0,,,RF)",
+      "family": "fundamentals",
+      "fds_compatible": true,
+      "notes": "FactSet Fundamentals net income before extraordinaries, most recent annual period. From the authoritative =FDS library."
+    },
+    "enterprise_value": {
+      "label": "Enterprise value",
+      "fql_template": "FF_ENTRPR_VAL(ANN,0,,,RF)",
+      "family": "fundamentals",
+      "fds_compatible": true,
+      "notes": "FactSet Fundamentals enterprise value, most recent annual period. From the authoritative =FDS library."
+    },
+    "fwd_pe_ntm": {
+      "label": "Forward P/E (NTM) — native FE_VALUATION",
+      "fql_template": "FE_VALUATION(PE,MEAN,NTMA,,0,,,'')",
+      "family": "estimates",
+      "fds_compatible": true,
+      "notes": "Native next-twelve-month consensus P/E via the confirmed FE_VALUATION function (estimates nest strings use single quotes). No in-app price/EPS computation needed. From the authoritative =FDS library."
+    },
+    "fy1_eps": {
+      "label": "FY1 consensus EPS (mean)",
+      "fql_template": "FE_ESTIMATE(EPS,MEAN,ANNUAL,+1,0,,,'')",
+      "family": "estimates",
+      "fds_compatible": true,
+      "notes": "FY1 forward consensus EPS mean via FE_ESTIMATE. Statistics incl MEAN/MED/NEST/STDDEV/HIGH/LOW; report basis ANNUAL (append _ROLL for rolling). NOTE: the live weekly template uses the user-tested ANN_ROLL/NOW form; this entry documents the authoritative ANNUAL/0 reference form. From the authoritative =FDS library."
+    },
+    "company_name": {
+      "label": "Company name",
+      "fql_template": "FG_COMPANY_NAME",
+      "family": "identifiers",
+      "fds_compatible": true,
+      "notes": "Company name (point-in-time identifier). No date arg. From the authoritative =FDS library."
+    },
+    "gics_industry": {
+      "label": "GICS industry name (reference)",
+      "fql_template": "FG_GICS_INDUSTRY",
+      "family": "identifiers",
+      "fds_compatible": true,
+      "notes": "GICS industry name from the reference library. For THIS entitlement the verified-working classification fields are FG_FACTSET_SECTOR / FG_FACTSET_IND (the GICS variants returned no data); FG_GICS_INDUSTRY is kept for reference. From the authoritative =FDS library."
     }
   }
 }

@@ -53,6 +53,31 @@ def test_template_with_fundamentals_writes_block_as_text():
     assert ws.cell(row=2, column=wtpl.FUND_LABEL_COL).value == "FY1 EPS mean"
 
 
+def test_template_includes_fe_valuation_and_keeps_ann_roll_estimates():
+    """Part B: the fundamentals block ADDS native FE_VALUATION fwd P/E while the
+    existing user-tested ANN_ROLL/NOW estimate strings stay UNCHANGED."""
+    ff = wtpl.fundamental_formulas("A2")
+    # New native forward P/E via FE_VALUATION.
+    assert ff["fwd_pe_ntm"] == '=FDS(A2,"FE_VALUATION(PE,MEAN,NTMA,,0,,,\'\')")'
+    # Existing ANN_ROLL estimate formulas are still present and unchanged.
+    assert ff["fy1_eps_mean"] == '=FDS(A2,"FE_ESTIMATE(EPS,MEAN,ANN_ROLL,+1,NOW,,,\'\')")'
+    assert ff["fy2_eps_mean"] == '=FDS(A2,"FE_ESTIMATE(EPS,MEAN,ANN_ROLL,+2,NOW,,,\'\')")'
+    # fwd_pe_ntm is NUMERIC (not a text key).
+    assert "fwd_pe_ntm" not in wtpl.FUNDAMENTAL_TEXT_KEYS
+    # Rendered into the workbook + manifest when include_fundamentals.
+    b = wtpl.build_weekly_template(["0700-HK"], include_fundamentals=True)
+    wb = load_workbook(io.BytesIO(b))
+    ws = wb["0700-HK"]
+    cells = [str(ws.cell(row=r, column=wtpl.FUND_FORMULA_COL).value)
+             for r in range(2, 2 + len(wtpl.FUNDAMENTAL_FIELDS))]
+    blob = "\n".join(cells)
+    assert "FE_VALUATION(PE,MEAN,NTMA,,0,,,'')" in blob
+    assert "FE_ESTIMATE(EPS,MEAN,ANN_ROLL,+1,NOW,,,'')" in blob
+    # Existing sector/industry rows are unchanged (positions preserved).
+    assert ws.cell(row=7, column=wtpl.FUND_FORMULA_COL).value == '=FDS(A2,"FG_FACTSET_SECTOR")'
+    assert ws.cell(row=8, column=wtpl.FUND_FORMULA_COL).value == '=FDS(A2,"FG_FACTSET_IND")'
+
+
 def test_lean_template_omits_fundamentals_block():
     b = wtpl.build_weekly_template(["0700-HK"], include_fundamentals=False)
     ws = load_workbook(io.BytesIO(b))["0700-HK"]
@@ -167,6 +192,47 @@ def test_valuation_fwd_pe_none_when_eps_nonpositive_or_missing():
     assert M.valuation_metrics(360.0, {"fy1_eps_mean": -5.0})["fwd_pe"] is None
     assert M.valuation_metrics(360.0, {})["fwd_pe"] is None
     assert M.valuation_metrics(None, {"fy1_eps_mean": 20.0})["fwd_pe"] is None
+
+
+def test_ingest_parses_fwd_pe_ntm():
+    """Part B: the native FE_VALUATION fwd P/E cell round-trips into
+    parsed['fundamentals'][ticker]['fwd_pe_ntm'] as a float; NA -> None."""
+    fnd = {
+        "0700-HK": {"fy1_eps_mean": 20.0, "fwd_pe_ntm": 17.5},
+        "9988-HK": {"fy1_eps_mean": 5.0, "fwd_pe_ntm": "#N/A"},
+    }
+    data = _populate(["0700-HK", "9988-HK"], fundamentals=fnd)
+    out = wing.parse_weekly_workbook(data, "data.xlsx")
+    assert out["fundamentals"]["0700-HK"]["fwd_pe_ntm"] == 17.5
+    assert out["fundamentals"]["9988-HK"].get("fwd_pe_ntm") is None
+
+
+def test_valuation_prefers_factset_fwd_pe_ntm():
+    """Part B: when the FactSet-native fwd_pe_ntm is present and positive it is
+    PREFERRED over the computed close/EPS multiple."""
+    v = M.valuation_metrics(360.0, {"fy1_eps_mean": 20.0, "fwd_pe_ntm": 15.0})
+    assert v["fwd_pe"] == 15.0  # native (not the computed 18.0)
+    assert v["fwd_pe_source"] == "factset"
+    assert v["fwd_pe_ntm"] == 15.0
+    assert v["fy1_eps_mean"] == 20.0
+
+
+def test_valuation_falls_back_to_computed_when_ntm_blank_or_nonpositive():
+    """Part B: blank / non-positive native field -> computed close/EPS fallback."""
+    # Missing native field -> computed 18.0.
+    v = M.valuation_metrics(360.0, {"fy1_eps_mean": 20.0})
+    assert math.isclose(v["fwd_pe"], 18.0, rel_tol=1e-9)
+    assert v["fwd_pe_source"] == "computed"
+    assert v["fwd_pe_ntm"] is None
+    # Non-positive native field -> ignored, computed used.
+    v2 = M.valuation_metrics(360.0, {"fy1_eps_mean": 20.0, "fwd_pe_ntm": 0.0})
+    assert math.isclose(v2["fwd_pe"], 18.0, rel_tol=1e-9)
+    assert v2["fwd_pe_source"] == "computed"
+    v3 = M.valuation_metrics(360.0, {"fy1_eps_mean": 20.0, "fwd_pe_ntm": -2.0})
+    assert v3["fwd_pe_source"] == "computed"
+    # Neither available -> None / None.
+    none = M.valuation_metrics(None, {})
+    assert none["fwd_pe"] is None and none["fwd_pe_source"] is None
 
 
 # ---------------------------------------------------------------------------
