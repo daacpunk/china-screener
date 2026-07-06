@@ -11,7 +11,7 @@ import re
 from typing import Any, Dict, List, Optional
 
 from .base import LLMProvider
-from .prompts import _METHODOLOGY, _row_line
+from .prompts import _METHODOLOGY, _name_ticker_label, _row_line
 from .resilience import complete_with_fallback, complete_with_retry
 
 
@@ -188,7 +188,7 @@ def build_catalyst_prompt(row: Dict[str, Any], side: str, with_news: bool = Fals
     if with_news:
         web_block = (
             "USE LIVE WEB / RECENT-NEWS CONTEXT: search the web to determine WHY "
-            f"{row.get('ticker')} ({row.get('name')}) — sector {row.get('sector')}, "
+            f"{_name_ticker_label(row)} — sector {row.get('sector')}, "
             f"as of {asof} — dislocated over the lookback window. Look specifically "
             "for: ex-dividend / ex-date, index inclusion/exclusion or rebalance, "
             "earnings or guidance, M&A, regulatory/policy news, and share "

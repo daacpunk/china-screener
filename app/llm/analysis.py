@@ -198,7 +198,8 @@ def analyze_rows(
         # Transparency: annotate when a fallback (non-primary) provider answered.
         if used and used != getattr(provider, "name", ""):
             note = f"{note} [via {used}]"
-        return {"ticker": r.get("ticker"), "playbook": task["playbook"],
+        return {"ticker": r.get("ticker"), "name": r.get("name"),
+                "playbook": task["playbook"],
                 "note": note, "provider": used, "_usage": cap}
 
     def _run_portfolio() -> Dict[str, Any]:

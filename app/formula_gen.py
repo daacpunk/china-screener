@@ -196,6 +196,39 @@ def _event_fql(formulas: dict) -> str:
     return "FE_REP_DT_NEXT"
 
 
+def _company_name_fql(formulas: dict) -> str:
+    """FQL root for the company-name identifier (FG_COMPANY_NAME).
+
+    Prefers a dictionary entry named like company_name / name / security; else
+    falls back to FG_COMPANY_NAME (the authoritative point-in-time name field).
+    """
+    for key in ("company_name", "name", "security", "company"):
+        if key in formulas:
+            return _fql_root(formulas, key, "FG_COMPANY_NAME")
+    for k in formulas:
+        if "name" in k.lower() or "company" in k.lower():
+            return _fql_root(formulas, k, "FG_COMPANY_NAME")
+    return "FG_COMPANY_NAME"
+
+
+def company_name_formula(ticker_or_cell: str, dictionary: dict) -> str:
+    """Single-cell =FDS(...,"FG_COMPANY_NAME") for one ticker.
+
+    ``ticker_or_cell`` may be a literal ticker (embedded as "9988-HK") or a cell
+    reference (e.g. A2). FG_COMPANY_NAME takes no date arg, so this is a single
+    point-in-time value, matching the main screen's double-quote FDS escaping,
+    e.g. =FDS("9988-HK","FG_COMPANY_NAME") or =FDS(A2,"FG_COMPANY_NAME").
+    """
+    formulas = (dictionary or {}).get("formulas", {})
+    fql = _company_name_fql(formulas)
+    tc = str(ticker_or_cell)
+    # A bare cell reference (e.g. A2, $A$2) is used unquoted; anything else is a
+    # literal identifier and gets wrapped in double quotes.
+    if re.fullmatch(r"\$?[A-Z]{1,3}\$?\d+", tc):
+        return f'=FDS({tc},"{fql}")'
+    return f'=FDS("{tc}","{fql}")'
+
+
 def method_a_spill_formulas(
     dictionary: dict,
     lookback: int = 109,
@@ -203,6 +236,7 @@ def method_a_spill_formulas(
     volume_metric: str = "volume",
     ticker_cell: str = "A2",
     include_event: bool = False,
+    include_name: bool = False,
 ) -> Dict[str, str]:
     """Return ONE spilling range FDS formula per series, referencing a ticker CELL.
 
@@ -241,6 +275,9 @@ def method_a_spill_formulas(
         ev_fql = _event_fql(formulas)
         # Single-value next-event date (NOT a spill).
         out["event"] = f'=FDS({ticker_cell},"{ev_fql}(0)")'
+    if include_name:
+        # Single-value company name (NOT a spill). No date arg.
+        out["name"] = company_name_formula(ticker_cell, dictionary)
     return out
 
 
@@ -323,6 +360,7 @@ def build_formula_workbook(
     volume_metric: str = "volume",
     include_date: bool = False,
     include_event: bool = False,
+    include_name: bool = True,
     batch_note: str = "",
 ) -> bytes:
     """Build the formula workbook as xlsx bytes.
@@ -351,6 +389,14 @@ def build_formula_workbook(
     ]
     if batch_note:
         instr += [[batch_note]]
+    if include_name:
+        instr += [
+            [""],
+            ['A "company_name" column is included: a single-value '
+             '=FDS(...,"FG_COMPANY_NAME") per ticker (no date arg). Tab 3 reads it '
+             'so the screen shows "Company Name (TICKER)". It is optional and does '
+             'not affect the price/volume pull.'],
+        ]
     instr += [
         [""],
         ["HOW TO USE:"],
@@ -466,24 +512,38 @@ def build_formula_workbook(
                 header = ["ticker", "date", "close", "volume"]
                 if include_event:
                     header.append("next_event")
+                if include_name:
+                    header.append("company_name")
                 ws.append(header)
                 _style_header(ws, len(header))
                 spill = method_a_spill_formulas(
                     dictionary, lookback=lookback,
                     price_metric=price_metric, volume_metric=volume_metric,
-                    ticker_cell="A2", include_event=include_event)
+                    ticker_cell="A2", include_event=include_event,
+                    include_name=include_name)
                 ws.cell(row=2, column=1, value=t)  # A2 = ticker literal
                 # Force TEXT storage so '=' is inert until the macro activates it.
+                # Company name / event are appended AFTER B/C/D so the spill-
+                # activation macro (which targets columns 2/3/4) is untouched.
                 cells = [(2, "date"), (3, "close"), (4, "volume")]
+                next_col = 5
                 if include_event:
-                    # E2 = single next-event date value (not a spill).
-                    cells.append((5, "event"))
+                    # single next-event date value (not a spill).
+                    cells.append((next_col, "event"))
+                    next_col += 1
+                if include_name:
+                    # single company-name value (not a spill).
+                    cells.append((next_col, "name"))
                 for col, key in cells:
                     c = ws.cell(row=2, column=col, value=spill[key])
                     c.data_type = "s"  # string, not formula
                 widths = [(1, 14), (2, 16), (3, 30), (4, 32)]
+                extra_col = 5
                 if include_event:
-                    widths.append((5, 30))
+                    widths.append((extra_col, 30))
+                    extra_col += 1
+                if include_name:
+                    widths.append((extra_col, 34))
                 for col, w in widths:
                     ws.column_dimensions[get_column_letter(col)].width = w
         elif layout == "stacked":
@@ -493,6 +553,8 @@ def build_formula_workbook(
             ws = wb.create_sheet("AllTickers")
             header = (["ticker", "date", "close", "volume"] if include_date
                       else ["ticker", "close", "volume"])
+            if include_name:
+                header.append("company_name")
             ws.append(header)
             _style_header(ws, len(header))
             for t in tickers:
@@ -500,12 +562,24 @@ def build_formula_workbook(
                                      price_metric=price_metric,
                                      volume_metric=volume_metric,
                                      include_date=include_date)
-                for g in grid:
+                for i, g in enumerate(grid):
                     if include_date:
-                        ws.append([t, g["date_formula"], g["close_formula"], g["volume_formula"]])
+                        row_vals = [t, g["date_formula"], g["close_formula"], g["volume_formula"]]
                     else:
-                        ws.append([t, g["close_formula"], g["volume_formula"]])
-            widths = ((1, 14), (2, 24), (3, 30), (4, 32)) if include_date else ((1, 14), (2, 30), (3, 32))
+                        row_vals = [t, g["close_formula"], g["volume_formula"]]
+                    if include_name:
+                        # Emit the name FDS only on the first row of each ticker
+                        # block (one point-in-time value; Tab 3 forward-fills).
+                        row_vals.append(company_name_formula(t, dictionary) if i == 0 else None)
+                    ws.append(row_vals)
+            if include_date:
+                widths = [(1, 14), (2, 24), (3, 30), (4, 32)]
+                name_col = 5
+            else:
+                widths = [(1, 14), (2, 30), (3, 32)]
+                name_col = 4
+            if include_name:
+                widths.append((name_col, 34))
             for col, w in widths:
                 ws.column_dimensions[get_column_letter(col)].width = w
         else:
@@ -513,6 +587,8 @@ def build_formula_workbook(
                 safe = _safe_sheet_name(t)
                 ws = wb.create_sheet(safe)
                 header = ["date", "close", "volume"] if include_date else ["close", "volume"]
+                if include_name:
+                    header.append("company_name")
                 ws.append(header)
                 _style_header(ws, len(header))
                 # Explicit row-per-day grid: one self-contained FDS formula per
@@ -522,6 +598,7 @@ def build_formula_workbook(
                                      price_metric=price_metric,
                                      volume_metric=volume_metric,
                                      include_date=include_date)
+                name_col = 4 if include_date else 3
                 for g in grid:
                     r = g["row"]
                     if include_date:
@@ -531,16 +608,25 @@ def build_formula_workbook(
                     else:
                         ws.cell(row=r, column=1, value=g["close_formula"])
                         ws.cell(row=r, column=2, value=g["volume_formula"])
-                widths = ((1, 22), (2, 30), (3, 32)) if include_date else ((1, 30), (2, 32))
+                if include_name:
+                    # Single company-name value in row 2 (this sheet's ticker).
+                    ws.cell(row=2, column=name_col,
+                            value=company_name_formula(t, dictionary))
+                widths = [(1, 22), (2, 30), (3, 32)] if include_date else [(1, 30), (2, 32)]
+                if include_name:
+                    widths.append((name_col, 34))
                 for col, w in widths:
                     ws.column_dimensions[get_column_letter(col)].width = w
     else:
         for t in tickers:
             safe = _safe_sheet_name(t)
             ws = wb.create_sheet(safe)
-            ws.append(["ticker_cell", "date_col_B", "relative_price_C",
-                       "relative_volume_D", "explicit_price_E"])
-            _style_header(ws, 5)
+            hdr = ["ticker_cell", "date_col_B", "relative_price_C",
+                   "relative_volume_D", "explicit_price_E"]
+            if include_name:
+                hdr.append("company_name")
+            ws.append(hdr)
+            _style_header(ws, len(hdr))
             ws.cell(row=2, column=1, value=t)  # A2 = ticker
             grid = method_b_offset_grid(dictionary, lookback=lookback,
                                         price_metric=price_metric,
@@ -550,7 +636,13 @@ def build_formula_workbook(
                 ws.cell(row=r, column=3, value=g["relative_formula"])
                 ws.cell(row=r, column=4, value=g["relative_volume_formula"])
                 ws.cell(row=r, column=5, value=g["explicit_date_formula"])
-            for col, w in ((1, 14), (2, 14), (3, 34), (4, 34), (5, 34)):
+            if include_name:
+                # Column F, single company-name value referencing the ticker cell.
+                ws.cell(row=2, column=6, value=company_name_formula("$A$2", dictionary))
+            widths = [(1, 14), (2, 14), (3, 34), (4, 34), (5, 34)]
+            if include_name:
+                widths.append((6, 34))
+            for col, w in widths:
                 ws.column_dimensions[get_column_letter(col)].width = w
 
     bio = io.BytesIO()
@@ -576,6 +668,7 @@ def build_formula_workbooks_batched(
     volume_metric: str = "volume",
     include_date: bool = False,
     include_event: bool = False,
+    include_name: bool = True,
     batch_size: int = 75,
 ) -> List[tuple]:
     """Split ``tickers`` into chunks of ``batch_size`` and build one workbook per
@@ -597,7 +690,8 @@ def build_formula_workbooks_batched(
             chunk, dictionary, method=method, lookback=lookback,
             start=start, end=end, freq=freq, layout=layout,
             price_metric=price_metric, volume_metric=volume_metric,
-            include_date=include_date, include_event=include_event, batch_note=note,
+            include_date=include_date, include_event=include_event,
+            include_name=include_name, batch_note=note,
         )
         fname = (f"factset_formulas_method_{method}_batch_"
                  f"{idx:0{width}d}_of_{total:0{width}d}.xlsx")

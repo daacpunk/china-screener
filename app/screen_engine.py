@@ -417,6 +417,19 @@ def run_screen(
     prices["close"] = pd.to_numeric(prices["close"], errors="coerce")
     prices = prices.dropna(subset=["date"])
 
+    # Company name pulled from the FactSet data dump (FG_COMPANY_NAME), if the
+    # uploaded price file carried a 'name' column. Used as a FALLBACK when the
+    # universe file itself lacks a name for a ticker. First non-blank per ticker.
+    dump_name_map: Dict[str, str] = {}
+    if "name" in prices.columns:
+        for tkr, g in prices.groupby("ticker"):
+            for v in g["name"].tolist():
+                if v is not None and not (isinstance(v, float) and pd.isna(v)):
+                    s = str(v).strip()
+                    if s and s.lower() not in ("nan", "none"):
+                        dump_name_map[str(tkr).strip()] = s
+                        break
+
     uni = universe.copy()
     uni.columns = [str(c).strip().lower() for c in uni.columns]
     # normalise expected universe columns
@@ -477,9 +490,17 @@ def run_screen(
         ev = umeta.get("event_date")
         if _has_event(ev):
             event_present_any = True
+        # Prefer the universe name; fall back to the data-dump name. Never
+        # overwrite a good universe name with a blank.
+        uni_name = umeta.get("name")
+        if uni_name is None or (isinstance(uni_name, float) and pd.isna(uni_name)) \
+                or str(uni_name).strip().lower() in ("", "nan", "none"):
+            name_val = dump_name_map.get(str(tkr).strip())
+        else:
+            name_val = uni_name
         row = {
             "ticker": tkr,
-            "name": umeta.get("name"),
+            "name": name_val,
             "sector": umeta.get("sector"),
             "sub_industry": umeta.get("sub_industry"),
             "index_weight": _safe_float(umeta.get("index_weight")),

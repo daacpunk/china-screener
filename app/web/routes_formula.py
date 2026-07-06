@@ -79,6 +79,7 @@ def formula_download(method: str = Form("A"), lookback: int = Form(0),
                      freq: str = Form("D"), layout: str = Form("spill"),
                      price_metric: str = Form(""), volume_metric: str = Form(""),
                      include_date: str = Form(""), include_event: str = Form(""),
+                     include_name: str = Form("1"),
                      batch_size: int = Form(75), as_zip: str = Form("")):
     d = _active_dict()
     if not d:
@@ -94,6 +95,9 @@ def formula_download(method: str = Form("A"), lookback: int = Form(0),
         lookback = fg.min_required_bars(params)
     inc_date = str(include_date).lower() in ("1", "true", "on", "yes")
     inc_event = str(include_event).lower() in ("1", "true", "on", "yes")
+    # Company name defaults ON (backward-compatible extra column); only an
+    # explicit off value ('0'/'false'/'off'/'no') disables it.
+    inc_name = str(include_name).strip().lower() not in ("0", "false", "off", "no", "")
     uni = assemble_active_universe()
     tickers = uni["ticker"].tolist() if not uni.empty else ["BABA-CN"]
     bsize = batch_size if batch_size and batch_size > 0 else 75
@@ -112,7 +116,7 @@ def formula_download(method: str = Form("A"), lookback: int = Form(0),
             tickers, d["data"], method=method, lookback=lookback,
             start=start, end=end, freq=freq, layout=layout,
             price_metric=pm, volume_metric=vm, include_date=inc_date,
-            include_event=inc_event, batch_size=bsize)
+            include_event=inc_event, include_name=inc_name, batch_size=bsize)
         zip_bytes = fg.zip_workbooks(files)
         zname = f"factset_formulas_method_{method}.zip"
         return Response(
@@ -124,7 +128,8 @@ def formula_download(method: str = Form("A"), lookback: int = Form(0),
     data = fg.build_formula_workbook(tickers, d["data"], method=method, lookback=lookback,
                                      start=start, end=end, freq=freq, layout=layout,
                                      price_metric=pm, volume_metric=vm,
-                                     include_date=inc_date, include_event=inc_event)
+                                     include_date=inc_date, include_event=inc_event,
+                                     include_name=inc_name)
     fname = f"factset_formulas_method_{method}.xlsx"
     return Response(
         content=data,

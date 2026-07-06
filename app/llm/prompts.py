@@ -25,6 +25,21 @@ _METHODOLOGY = (
 )
 
 
+def _name_ticker_label(r: Dict[str, Any]) -> str:
+    """Render a name/ticker label as "Company Name (TICKER)" when a company name
+    is present, else just the bare "TICKER" (backward-compatible).
+
+    Matches the weekly-note convention (Name (ticker)). Safe on missing/blank
+    name: falls back to the ticker alone. Never raises.
+    """
+    ticker = str(r.get("ticker") or "").strip()
+    name = r.get("name")
+    name = "" if name is None else str(name).strip()
+    if name and name.lower() not in ("nan", "none") and name != ticker:
+        return f"{name} ({ticker})"
+    return ticker
+
+
 def _row_line(r: Dict[str, Any]) -> str:
     def f(x, nd=2):
         try:
@@ -44,7 +59,7 @@ def _row_line(r: Dict[str, Any]) -> str:
         flags.append("adv_unknown")
     flag_bits = (" flags=" + ",".join(flags)) if flags else ""
     return (
-        f"- {r.get('ticker')} ({r.get('name')}) | {r.get('sector')}/{r.get('sub_industry')} "
+        f"- {_name_ticker_label(r)} | {r.get('sector')}/{r.get('sub_industry')} "
         f"| 1w z={f(r.get('z_1w'))} 1m-ex-wk z={f(r.get('z_1m_ex_week'))} "
         f"rank_z={f(r.get('rank_z'))} "
         f"| dist20d={f(r.get('dist_from_sma'))} RSI={f(r.get('rsi'),1)} "

@@ -18,6 +18,8 @@ FACTSET_ERRORS = ["#N/A", "@NA", "#ERR", "N/A", "NA", "#VALUE!", "#NAME?", "NaN"
 _PRICE_ALIASES = ["close", "price", "p_price", "adj close", "adj_close", "closing price", "px_last"]
 _VOLUME_ALIASES = ["volume", "vol", "p_volume", "turnover", "trd_volume"]
 _DATE_ALIASES = ["date", "p_date", "asof", "as_of", "trade_date"]
+_NAME_ALIASES = ["company_name", "company name", "fg_company_name", "name",
+                 "company", "security", "security_name", "description"]
 _TICKER_ALIASES = [
     "ticker", "symbol", "fsym_id", "id", "sec_id", "request_id",
     "ric", "bbg", "bloomberg", "sedol", "isin", "code", "stock code",
@@ -301,6 +303,7 @@ def _read_multisheet_spill(content: bytes, filename: str):
         s_date = _find_col(scols, _DATE_ALIASES)
         s_price = _find_col(scols, _PRICE_ALIASES)
         s_vol = _find_col(scols, _VOLUME_ALIASES)
+        s_name = _find_col([c for c in scols if c != s_tkr], _NAME_ALIASES)
         if not s_price:
             continue  # not a price sheet
         sheet_count += 1
@@ -335,7 +338,15 @@ def _read_multisheet_spill(content: bytes, filename: str):
             out["date"] = _reconstruct_dates(len(out)).values
             date_reconstructed = True
         out["ticker"] = tkr_val
-        frames.append(out[["ticker", "date", "close", "volume"]])
+        # Company name from this sheet's company_name column (first non-blank).
+        nm_val = None
+        if s_name and s_name in sdf.columns:
+            for v in sdf[s_name].tolist():
+                nm_val = _clean_name_value(v)
+                if nm_val:
+                    break
+        out["name"] = nm_val
+        frames.append(out[["ticker", "date", "close", "volume", "name"]])
 
     # Require it to actually look like a multi-ticker spill workbook.
     if sheet_count < 1 or not frames:
@@ -349,6 +360,46 @@ def _read_multisheet_spill(content: bytes, filename: str):
     report["multisheet_spill"] = True
     report["sheets_read"] = int(sheet_count)
     return tidy, report
+
+
+def _clean_name_value(v: Any) -> str | None:
+    """Return a clean company-name string, or None if blank / a FactSet error."""
+    if v is None:
+        return None
+    s = str(v).strip()
+    if not s or s.lower() in ("nan", "none", "null"):
+        return None
+    # Reject FactSet error placeholders that may land in a name cell.
+    if s.upper() in {e.upper() for e in FACTSET_ERRORS}:
+        return None
+    # Strip stray control / box artifacts FactSet sometimes appends.
+    s = "".join(ch for ch in s if ch == " " or (ch.isprintable() and ch not in "\u25a0\u25aa")).strip()
+    return s or None
+
+
+def _attach_name_from_dump(tidy: pd.DataFrame, src: pd.DataFrame,
+                           ticker_col: str, name_col: str | None) -> pd.DataFrame:
+    """Attach a per-ticker ``name`` column to the tidy price frame from the data
+    dump's company-name column (first non-blank value per ticker). Never raises;
+    returns ``tidy`` unchanged when no usable name column is present.
+    """
+    if not name_col or name_col not in src.columns or ticker_col not in src.columns:
+        return tidy
+    try:
+        tk = src[ticker_col].astype(str).str.strip()
+        nm = src[name_col].map(_clean_name_value)
+        mapping: Dict[str, str] = {}
+        for t, n in zip(tk, nm):
+            if not t or t.lower() in ("nan", "none", ""):
+                continue
+            if n and t not in mapping:
+                mapping[t] = n
+        if mapping:
+            tidy = tidy.copy()
+            tidy["name"] = tidy["ticker"].astype(str).str.strip().map(mapping)
+    except Exception:
+        return tidy
+    return tidy
 
 
 def _reconstruct_dates(n: int) -> pd.Series:
@@ -381,6 +432,9 @@ def parse_prices(content: bytes, filename: str = "") -> Tuple[pd.DataFrame, Dict
     date_col = _find_col(cols, _DATE_ALIASES)
     price_col = _find_col(cols, _PRICE_ALIASES)
     vol_col = _find_col(cols, _VOLUME_ALIASES)
+    # Company-name column from the data dump (optional). Exclude the ticker
+    # column itself so we never mistake the identifier for the name.
+    name_col = _find_col([c for c in cols if c != ticker_col], _NAME_ALIASES)
 
     # Spill per-ticker sheet uploaded directly: the ticker literal sits only in
     # the first data row (A2) while close/volume spill down many rows below it.
@@ -456,6 +510,10 @@ def parse_prices(content: bytes, filename: str = "") -> Tuple[pd.DataFrame, Dict
     tidy = tidy.dropna(subset=["date"])
     tidy = tidy[tidy["ticker"].astype(str).str.lower() != "nan"]
     tidy = tidy.sort_values(["ticker", "date"]).reset_index(drop=True)
+    # Attach company name from the dump (if a name column was present) so the
+    # screen can label names even when the universe file lacked a name column.
+    if ticker_col:
+        tidy = _attach_name_from_dump(tidy, df, ticker_col, name_col)
 
     report = build_quality_report(tidy, factset_errs)
     report["date_reconstructed"] = bool(date_reconstructed)

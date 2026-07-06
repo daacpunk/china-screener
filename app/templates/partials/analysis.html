@@ -13,7 +13,7 @@
 <h3>Per-name notes</h3>
 {% for n in analysis.per_name %}
 <div class="card" style="margin-bottom:10px">
-  <div class="flex"><b class="mono">{{ n.ticker }}</b><span class="pill">{{ n.playbook }}</span></div>
+  <div class="flex"><b>{% if n.name and n.name != n.ticker %}{{ n.name }} <span class="mono">({{ n.ticker }})</span>{% else %}<span class="mono">{{ n.ticker }}</span>{% endif %}</b><span class="pill">{{ n.playbook }}</span></div>
   <div style="margin-top:8px;white-space:pre-wrap">{{ n.note }}</div>
 </div>
 {% endfor %}
