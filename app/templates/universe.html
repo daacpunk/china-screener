@@ -27,7 +27,7 @@
           <div><label>20D ADV USD column</label><input name="adv_col" placeholder="optional"></div></div>
         <div class="row"><div><label>Next-event date column</label><input name="event_col" placeholder="optional (e.g. next_earnings)"></div>
           <div></div></div>
-        <p class="help">A next-event date column (earnings-release date) enables the catalyst flags and the “hide imminent-event names” filter on Results. Earnings dates are pulled live via <span class="mono">=FDSLIVE(A2,"RTP_EARNINGS_RELEASE_DATE")</span> in the main generator. Auto-detected aliases for a user-supplied column: event_date, next_earnings, earnings_date, next_event, rtp_earnings_release_date, report_date (fe_rep_dt_next still accepted for legacy files).</p>
+        <p class="help">A next-event date column enables the catalyst flags and the “hide imminent-event names” filter on Results. Event tagging in the main generator now uses the <b>ex-dividend date</b> only (<span class="mono">=FDS(A2,"FCA_EVENT_DATE(…,&quot;&quot;EXDATE&quot;&quot;,&quot;&quot;YYYYMMDD&quot;&quot;)")</span>); the live earnings-release field was removed because it did not refresh in Excel. Auto-detected aliases for a user-supplied column still work: event_date, next_earnings, earnings_date, next_event, report_date (fe_rep_dt_next still accepted for legacy files).</p>
       </details>
       <div class="spacer"></div>
       <button class="btn" type="submit">Upload &amp; activate</button>

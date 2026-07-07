@@ -31,12 +31,11 @@ def test_canonical_is_valid_app_dictionary():
         assert "label" in val and "notes" in val, key
         assert val.get("family") in {"price", "fundamentals", "estimates",
                                       "identifiers", "corporate_actions"}, key
-        # LIVE real-time RTP_ fields are pulled via =FDSLIVE (NOT =FDS) so they
-        # are explicitly fds_compatible=False; every other entry stays True.
-        if str(val["fql_template"]).startswith("RTP_"):
-            assert val.get("fds_compatible") is False, key
-        else:
-            assert val.get("fds_compatible") is True, key
+        # The non-refreshing LIVE real-time RTP_ earnings fields were removed;
+        # no entry may resolve to an RTP_ field any more, and every remaining
+        # entry is a standard =FDS pull (fds_compatible=True).
+        assert not str(val["fql_template"]).startswith("RTP_"), key
+        assert val.get("fds_compatible") is True, key
 
 
 def test_canonical_contains_key_confirmed_formulas():
@@ -118,5 +117,9 @@ def test_main_dictionary_has_new_authoritative_entries():
     assert f["company_name"]["fql_template"] == "FG_COMPANY_NAME"
     # Existing working entries MUST still be present (not removed).
     for k in ("price", "volume", "price_point", "volume_point", "date_point",
-              "sector", "sub_industry", "index_weight", "next_earnings"):
+              "sector", "sub_industry", "index_weight", "ex_dividend_date"):
         assert k in f, f"removed existing entry {k}"
+    # The removed RTP earnings entries must NOT be present.
+    assert "next_earnings" not in f
+    assert "earnings_release_status" not in f
+    assert "earnings_date_next" not in f

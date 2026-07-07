@@ -48,20 +48,6 @@
       "fql_template": "FG_INDEX_WEIGHT(\"MSCI CHINA\",0D)",
       "notes": "OPTIONAL. Constituent weight in the specified benchmark; requires a benchmark argument and the right entitlement. The universe upload already carries index weight, so this is optional."
     },
-    "next_earnings": {
-      "label": "Next earnings-release date (OPTIONAL event field)",
-      "fql_template": "RTP_EARNINGS_RELEASE_DATE",
-      "family": "corporate_actions",
-      "notes": "OPTIONAL. LIVE real-time earnings release date; user-tested. MUST be called via =FDSLIVE (NOT =FDS): =FDSLIVE(A2,\"RTP_EARNINGS_RELEASE_DATE\") -> 20260831 (YYYYMMDD int). No date args, no nested quotes. Used for deterministic mechanical-dislocation event tagging. Event flagging also works from a user-supplied column.",
-      "fds_compatible": false
-    },
-    "earnings_release_status": {
-      "label": "Earnings-release status (OPTIONAL event field)",
-      "fql_template": "RTP_EARNINGS_RELEASE_STATUS",
-      "family": "corporate_actions",
-      "fds_compatible": false,
-      "notes": "OPTIONAL. LIVE real-time earnings release status; companion to RTP_EARNINGS_RELEASE_DATE. MUST be called via =FDSLIVE (NOT =FDS): =FDSLIVE(A2,\"RTP_EARNINGS_RELEASE_STATUS\") -> text like \"Projected\" or \"Confirmed\". No date args, no nested quotes. Carried through as row metadata for the research note."
-    },
     "ex_dividend_date": {
       "label": "Ex-dividend date (OPTIONAL event field)",
       "fql_template": "FCA_EVENT_DATE(0,\"CASH_DIST\",\"EXDATE\",\"YYYYMMDD\")",

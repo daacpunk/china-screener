@@ -82,8 +82,8 @@ The generator uses the universe's Symbol <b>as-is</b> — FactSet resolves SEDOL
           <span class="help">Large universes are split into multiple workbooks (zipped) so each refreshes fast.</span></div>
       </div>
       <div class="row">
-        <div><label><input type="checkbox" name="include_event" value="on"> Include next-event date column</label>
-          <span class="help">Adds a next-event column per ticker sheet with the LIVE <span class="mono">=FDSLIVE(A2,"RTP_EARNINGS_RELEASE_DATE")</span> earnings-release date (returns YYYYMMDD, e.g. 20260831) plus a companion <span class="mono">=FDSLIVE(A2,"RTP_EARNINGS_RELEASE_STATUS")</span> status (e.g. &ldquo;Projected&rdquo;/&ldquo;Confirmed&rdquo;). Enables catalyst flags in the screen. Default off.</span></div>
+        <div><label><input type="checkbox" name="include_event" value="on"> Include next-event date column (legacy)</label>
+          <span class="help">Legacy toggle &mdash; no longer emits anything. The live earnings-release field did not refresh in Excel, so it was removed. Event tagging now uses the <b>ex-dividend date</b> only: <span class="mono">=FDS(A2,"FCA_EVENT_DATE(0,&quot;&quot;CASH_DIST&quot;&quot;,&quot;&quot;EXDATE&quot;&quot;,&quot;&quot;YYYYMMDD&quot;&quot;)")</span> (returns YYYYMMDD, e.g. 20260526), included automatically with the event columns.</span></div>
       </div>
       <div class="note info" style="margin-top:6px">
         <b>Spilling layout = ~3 FactSet calls per ticker</b> (date + price + volume), vs one call per cell.

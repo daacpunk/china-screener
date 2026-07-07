@@ -359,20 +359,6 @@
       "family": "identifiers",
       "fds_compatible": true
     },
-    "earnings_date_next": {
-      "label": "Next earnings-release date (OPTIONAL event field)",
-      "fql_template": "RTP_EARNINGS_RELEASE_DATE",
-      "notes": "OPTIONAL. LIVE real-time earnings release date; user-tested. MUST be called via =FDSLIVE (NOT =FDS): =FDSLIVE(A2,\"RTP_EARNINGS_RELEASE_DATE\") -> 20260831 (YYYYMMDD int). No date args, no nested quotes. Used for deterministic MECHANICAL_DISLOCATION event-calendar tagging.",
-      "family": "corporate_actions",
-      "fds_compatible": false
-    },
-    "earnings_release_status": {
-      "label": "Earnings-release status (OPTIONAL event field)",
-      "fql_template": "RTP_EARNINGS_RELEASE_STATUS",
-      "family": "corporate_actions",
-      "fds_compatible": false,
-      "notes": "OPTIONAL. LIVE real-time earnings release status; companion to RTP_EARNINGS_RELEASE_DATE. MUST be called via =FDSLIVE (NOT =FDS): =FDSLIVE(A2,\"RTP_EARNINGS_RELEASE_STATUS\") -> text like \"Projected\" or \"Confirmed\". No date args, no nested quotes. Carried through as row metadata for the research note."
-    },
     "ex_dividend_date": {
       "label": "Ex-dividend date (OPTIONAL event field)",
       "fql_template": "FCA_EVENT_DATE(0,\"CASH_DIST\",\"EXDATE\",\"YYYYMMDD\")",
