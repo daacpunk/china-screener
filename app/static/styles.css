@@ -123,3 +123,8 @@ hr{border:none;border-top:1px solid var(--border);margin:18px 0}
   .results-layout{grid-template-columns:1fr}
   .results-sidebar{position:static;order:2}
 }
+
+/* Background research-note generation: spinner for the polling partial */
+.note-generating{display:flex;align-items:center;gap:10px;padding:12px 0;color:var(--muted)}
+.note-generating .spinner{width:18px;height:18px;border:2px solid var(--border);border-top-color:var(--accent,#4a90d9);border-radius:50%;animation:note-spin 0.8s linear infinite;flex:none}
+@keyframes note-spin{to{transform:rotate(360deg)}}

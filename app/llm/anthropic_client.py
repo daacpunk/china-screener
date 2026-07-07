@@ -18,7 +18,14 @@ class AnthropicProvider(LLMProvider):
         except Exception as e:  # noqa: BLE001
             raise LLMError(f"anthropic SDK not installed: {e}")
         model = self.model or DEFAULT_MODEL["anthropic"]
-        client = anthropic.Anthropic(api_key=self.api_key)
+        # Explicit timeout so a single call can never hang forever (match the 60s
+        # the perplexity/deepseek httpx clients use). max_retries=0 so OUR
+        # resilience layer controls retries instead of the SDK compounding delays.
+        client = anthropic.Anthropic(
+            api_key=self.api_key,
+            timeout=opts.get("timeout", 60),
+            max_retries=0,
+        )
         kwargs = {
             "model": model,
             "max_tokens": int(opts.get("max_tokens", 800)),

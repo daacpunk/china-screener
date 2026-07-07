@@ -1,0 +1,15 @@
+{# Polling partial for background research-note generation.
+   Self-targets and swaps outerHTML so that when the status route returns the
+   FINAL note (which has no poller), it REPLACES this whole element and polling
+   stops. Rendered both by POST /analysis/note (kickoff) and by
+   GET /analysis/note/status while the job is still running. #}
+<div id="note-poll"
+     hx-get="/analysis/note/status?job={{ job_id }}"
+     hx-trigger="load delay:2s, every 2s"
+     hx-target="#note-poll"
+     hx-swap="outerHTML">
+  <div class="note-generating">
+    <span class="spinner" aria-hidden="true"></span>
+    <span>Generating research note (this can take a minute for many names + web search)…</span>
+  </div>
+</div>

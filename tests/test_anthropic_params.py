@@ -38,8 +38,11 @@ def _install_fake_anthropic(monkeypatch, captured, raise_first_with=None):
             return _Msg()
 
     class _Anthropic:
-        def __init__(self, api_key=None):
+        def __init__(self, api_key=None, **kwargs):
             self.api_key = api_key
+            # Capture client-construction kwargs (timeout / max_retries) so tests
+            # can assert our explicit timeout + retry policy.
+            state["client_kwargs"] = dict(kwargs)
             self.messages = _Messages()
 
     fake = types.ModuleType("anthropic")
@@ -78,6 +81,26 @@ def test_auto_retry_drops_temperature_on_deprecation(monkeypatch):
     assert len(captured) == 2  # retried
     assert "temperature" in captured[0]      # first attempt had it
     assert "temperature" not in captured[1]  # retry dropped it
+
+
+def test_client_has_timeout_and_no_sdk_retries(monkeypatch):
+    # The client must be built with an explicit timeout (default 60s) and
+    # max_retries=0 so our resilience layer controls retries, not the SDK.
+    captured = []
+    state = _install_fake_anthropic(monkeypatch, captured)
+    prov = AnthropicProvider(api_key="k", model="claude-sonnet-4-6")
+    prov.complete("hi")
+    ck = state["client_kwargs"]
+    assert ck.get("timeout") == 60
+    assert ck.get("max_retries") == 0
+
+
+def test_client_timeout_honors_opts(monkeypatch):
+    captured = []
+    state = _install_fake_anthropic(monkeypatch, captured)
+    prov = AnthropicProvider(api_key="k", model="claude-sonnet-4-6")
+    prov.complete("hi", timeout=5)
+    assert state["client_kwargs"].get("timeout") == 5
 
 
 def test_helper_classification():

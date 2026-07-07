@@ -21,6 +21,7 @@ from ..llm import research_notes as rn
 from ..llm.base import LLMProvider
 from ..llm.registry import build_provider
 from ..llm.research_notes import is_web_capable
+from . import jobs
 from .common import base_ctx, df_to_records, run_active_screen, templates
 from .routes_results import _SIDEBAR_CACHE
 
@@ -172,8 +173,49 @@ def analysis_analyze(request: Request, provider: str = Form("")):
     return templates.TemplateResponse(request, "partials/analysis.html", {"analysis": result})
 
 
+def _note_job(prov, master, oversold, overbought, params, max_longs, max_shorts,
+              idio_only, wn, asof, fallbacks, web_provider) -> dict:
+    """Self-contained SLOW work run on a background thread: LLM note generation,
+    persistence, and markdown render. Returns a plain DATA dict — the status
+    route builds the Jinja TemplateResponse on the request thread (Jinja needs
+    the request). Never renders here. rn.generate_note itself never raises.
+    """
+    out = rn.generate_note(
+        prov, master, oversold, overbought, params,
+        max_longs=max_longs, max_shorts=max_shorts, idio_only=idio_only,
+        with_news=wn, asof=asof, fallback_providers=fallbacks,
+        web_provider=web_provider,
+    )
+    note_id = None
+    try:
+        note_id = ns.save_note(out.get("asof"), out.get("provider"),
+                               out.get("candidates"), out.get("markdown"))
+    except Exception:  # noqa: BLE001 — persistence must never crash the job
+        note_id = None
+    html = md.markdown(out["markdown"], extensions=["tables"]) if out.get("markdown") else ""
+    return {
+        "note_id": note_id, "html": html, "candidates": out.get("candidates") or [],
+        "error": out.get("error"), "provider": out.get("provider"),
+        "asof": out.get("asof"), "notice": out.get("notice"),
+    }
+
+
+def _render_note(request: Request, data: dict, stale: dict) -> HTMLResponse:
+    """Render the FINAL note partial (no poller) from a job-result data dict."""
+    return templates.TemplateResponse(request, "partials/note.html", {
+        "note": {
+            "id": data.get("note_id"), "html": data.get("html", ""),
+            "candidates": data.get("candidates") or [],
+            "error": data.get("error"), "provider": data.get("provider"),
+            "asof": data.get("asof"), "notice": data.get("notice"),
+        },
+        **stale,
+    })
+
+
 def _generate_note(request: Request, provider: str, max_longs: int,
                    max_shorts: int, idio_only: str, with_news: str) -> HTMLResponse:
+    # FAST prep on the request thread: read the active screen + resolve providers.
     res = run_active_screen()
     if res.get("_empty"):
         return HTMLResponse("<div class='note error'>No screen results — run a screen first.</div>")
@@ -189,35 +231,65 @@ def _generate_note(request: Request, provider: str, max_longs: int,
     wn = _truthy(with_news) if str(with_news).strip() != "" else (
         is_web_capable(prov) or is_web_capable(web_provider)
     )
-    out = rn.generate_note(
-        prov,
-        df_to_records(res["master"]),
-        df_to_records(res["oversold"]),
-        df_to_records(res["overbought"]),
-        ss.get_screen_params(),
-        max_longs=max(0, int(max_longs)),
-        max_shorts=max(0, int(max_shorts)),
-        idio_only=_truthy(idio_only),
-        with_news=wn,
-        asof=stale["asof"],
-        fallback_providers=fallbacks,
-        web_provider=web_provider,
+    # Pull plain records on the REQUEST thread; the worker only does LLM + persist
+    # + render, never touches the DataFrame/screen read.
+    master = df_to_records(res["master"])
+    oversold = df_to_records(res["oversold"])
+    overbought = df_to_records(res["overbought"])
+    params = ss.get_screen_params()
+    ml = max(0, int(max_longs))
+    msh = max(0, int(max_shorts))
+    idio = _truthy(idio_only)
+
+    # FAST PATH: no provider -> generate_note returns instantly (candidates +
+    # set-a-key error). Skip the background job and render inline as before.
+    if prov is None or not getattr(prov, "available", False):
+        data = _note_job(prov, master, oversold, overbought, params, ml, msh,
+                         idio, wn, stale["asof"], fallbacks, web_provider)
+        return _render_note(request, data, stale)
+
+    # SLOW PATH: kick off the LLM work in a background job and return the polling
+    # partial immediately so the HTTP request never exceeds the edge timeout.
+    job_id = jobs.start_job(
+        _note_job, prov, master, oversold, overbought, params, ml, msh,
+        idio, wn, stale["asof"], fallbacks, web_provider,
     )
-    note_id = None
-    try:
-        note_id = ns.save_note(out.get("asof"), out.get("provider"),
-                               out.get("candidates"), out.get("markdown"))
-    except Exception:  # noqa: BLE001 — persistence must never crash the screen
-        note_id = None
-    html = md.markdown(out["markdown"], extensions=["tables"]) if out.get("markdown") else ""
-    return templates.TemplateResponse(request, "partials/note.html", {
-        "note": {
-            "id": note_id, "html": html, "candidates": out.get("candidates") or [],
-            "error": out.get("error"), "provider": out.get("provider"),
-            "asof": out.get("asof"), "notice": out.get("notice"),
-        },
-        **stale,
+    return templates.TemplateResponse(request, "partials/note_pending.html", {
+        "job_id": job_id, **stale,
     })
+
+
+@router.get("/analysis/note/status", response_class=HTMLResponse)
+def analysis_note_status(request: Request, job: str = ""):
+    """Poll target for the background research-note job.
+
+    running -> the SAME pending partial (keeps polling);
+    done    -> the FINAL note partial (no poller, polling stops);
+    error   -> a clean error partial (no poller);
+    unknown -> a gentle 'note expired, please regenerate' partial (no poller).
+    """
+    # Staleness is recomputed from the current active screen for the final render.
+    res = run_active_screen()
+    meta = res.get("meta", {}) or {}
+    stale = _staleness(meta)
+    rec = jobs.get_job(job)
+    if rec is None:
+        return HTMLResponse(
+            "<div class='note info'>This note request expired — please regenerate.</div>"
+        )
+    status = rec.get("status")
+    if status == "running":
+        return templates.TemplateResponse(request, "partials/note_pending.html", {
+            "job_id": job, **stale,
+        })
+    if status == "error":
+        emsg = rec.get("error") or "generation failed"
+        return HTMLResponse(
+            f"<div class='note error'>Research note generation failed: {emsg}</div>"
+        )
+    # done
+    data = rec.get("result") or {}
+    return _render_note(request, data, stale)
 
 
 @router.post("/analysis/note", response_class=HTMLResponse)
