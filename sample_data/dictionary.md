@@ -39,15 +39,24 @@ Canonical Excel add-in form:
 | `sector` | FactSet sector (point-in-time) | `FG_FACTSET_SECTOR` |
 | `sub_industry` | FactSet industry (point-in-time) | `FG_FACTSET_IND` |
 | `index_weight` | Index weight in benchmark (**optional**) | `FG_INDEX_WEIGHT("MSCI CHINA",0D)` |
-| `next_earnings` | Next earnings/report date (**optional**, event field) | `FE_REP_DT_NEXT(0D)` |
-| `ex_dividend_date` | Ex-dividend date (**optional**, event field) | `FCA_EVENT_DATE(0,"CASH_DIST","EXDATE","YYYYMMDD")` |
+| `next_earnings` | Next earnings-release date (**optional**, event field) — **=FDSLIVE** | `RTP_EARNINGS_RELEASE_DATE` |
+| `earnings_release_status` | Earnings-release status (**optional**, event field) — **=FDSLIVE** | `RTP_EARNINGS_RELEASE_STATUS` |
+| `ex_dividend_date` | Ex-dividend date (**optional**, event field) — `=FDS` | `FCA_EVENT_DATE(0,"CASH_DIST","EXDATE","YYYYMMDD")` |
 
-> **Event-date fields (deterministic MECHANICAL_DISLOCATION tagging).** Both
-> `next_earnings` (returns a date) and `ex_dividend_date` (returns `YYYYMMDD`,
-> e.g. `20260526`) are OPTIONAL identity/event columns pulled per ticker in the
-> main-screen template (default ON, backward-compatible toggle). They feed the
-> screen engine's event-window logic so ex-div / earnings names auto-tag as a
-> mechanical dislocation in the research note even without web search.
+> **Event fields (deterministic MECHANICAL_DISLOCATION tagging).**
+> `next_earnings` (`RTP_EARNINGS_RELEASE_DATE`, returns `YYYYMMDD` int e.g.
+> `20260831`) and `earnings_release_status` (`RTP_EARNINGS_RELEASE_STATUS`,
+> returns text e.g. `"Projected"`/`"Confirmed"`) are LIVE real-time RTP_ fields
+> that MUST be pulled with **`=FDSLIVE`** (NOT `=FDS`): e.g.
+> `=FDSLIVE(A2,"RTP_EARNINGS_RELEASE_DATE")` and
+> `=FDSLIVE(A2,"RTP_EARNINGS_RELEASE_STATUS")`. RTP fields take no date args and
+> carry no nested quotes. `ex_dividend_date` (returns `YYYYMMDD`, e.g.
+> `20260526`) stays a standard `=FDS` `FCA_EVENT_DATE` pull. All are OPTIONAL
+> identity/event columns pulled per ticker in the main-screen template (default
+> ON, backward-compatible toggle). They feed the screen engine's event-window
+> logic so ex-div / earnings names auto-tag as a mechanical dislocation in the
+> research note even without web search; the earnings status is carried through
+> as row metadata for the note.
 >
 > **`FCA_EVENT_DATE` quoting.** Inside `=FDS(...)` the nested string args need
 > **doubled** double-quotes, matching how `=FDS` escapes embedded strings:

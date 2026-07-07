@@ -29,7 +29,7 @@
       "notes": "Best-effort per-row trading date. Some FactSet setups lack a standalone P_DATE field; in the time-series spill FactSet provides the date column automatically next to the price spill."
     },
     "adv_usd_20d": {
-      "label": "20-day average daily value traded (USD) — OPTIONAL, computed in-app",
+      "label": "20-day average daily value traded (USD) \u2014 OPTIONAL, computed in-app",
       "fql_template": "AVG(P_PRICE(0D,-19D,D)*P_VOLUME_DAY(0D,-19D,D))",
       "notes": "OPTIONAL. There is no P_ADV_USD field. This valid FQL expression is the trailing 20-obs average of traded value (price*volume). The app computes 20D ADV (USD) itself in-app (Tab 3), so pulling this is optional."
     },
@@ -49,10 +49,18 @@
       "notes": "OPTIONAL. Constituent weight in the specified benchmark; requires a benchmark argument and the right entitlement. The universe upload already carries index weight, so this is optional."
     },
     "next_earnings": {
-      "label": "Next earnings/report date (OPTIONAL event field)",
-      "fql_template": "FE_REP_DT_NEXT(0D)",
-      "family": "price",
-      "notes": "OPTIONAL. Next scheduled earnings/report date for event-calendar flagging; user-tested. Returns a date (serial or date value). Event flagging also works from a user-supplied column."
+      "label": "Next earnings-release date (OPTIONAL event field)",
+      "fql_template": "RTP_EARNINGS_RELEASE_DATE",
+      "family": "corporate_actions",
+      "notes": "OPTIONAL. LIVE real-time earnings release date; user-tested. MUST be called via =FDSLIVE (NOT =FDS): =FDSLIVE(A2,\"RTP_EARNINGS_RELEASE_DATE\") -> 20260831 (YYYYMMDD int). No date args, no nested quotes. Used for deterministic mechanical-dislocation event tagging. Event flagging also works from a user-supplied column.",
+      "fds_compatible": false
+    },
+    "earnings_release_status": {
+      "label": "Earnings-release status (OPTIONAL event field)",
+      "fql_template": "RTP_EARNINGS_RELEASE_STATUS",
+      "family": "corporate_actions",
+      "fds_compatible": false,
+      "notes": "OPTIONAL. LIVE real-time earnings release status; companion to RTP_EARNINGS_RELEASE_DATE. MUST be called via =FDSLIVE (NOT =FDS): =FDSLIVE(A2,\"RTP_EARNINGS_RELEASE_STATUS\") -> text like \"Projected\" or \"Confirmed\". No date args, no nested quotes. Carried through as row metadata for the research note."
     },
     "ex_dividend_date": {
       "label": "Ex-dividend date (OPTIONAL event field)",
@@ -96,7 +104,7 @@
       "notes": "FactSet Fundamentals enterprise value, most recent annual period. From the authoritative =FDS library."
     },
     "fwd_pe_ntm": {
-      "label": "Forward P/E (NTM) — native FE_VALUATION",
+      "label": "Forward P/E (NTM) \u2014 native FE_VALUATION",
       "fql_template": "FE_VALUATION(PE,MEAN,NTMA,,0,,,'')",
       "family": "estimates",
       "fds_compatible": true,

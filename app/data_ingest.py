@@ -22,7 +22,12 @@ _NAME_ALIASES = ["company_name", "company name", "fg_company_name", "name",
                  "company", "security", "security_name", "description"]
 _EARNINGS_ALIASES = ["earnings_date", "earnings date", "next_earnings",
                      "next earnings", "earnings_date_next", "fe_rep_dt_next",
+                     "rtp_earnings_release_date",
                      "next_event", "next event", "report_date", "report date"]
+_EARNINGS_STATUS_ALIASES = ["earnings_status", "earnings status",
+                            "earnings_release_status", "earnings release status",
+                            "rtp_earnings_release_status", "release_status",
+                            "release status"]
 _EX_DIV_ALIASES = ["ex_dividend_date", "ex dividend date", "ex_div_date",
                    "ex-dividend date", "exdate", "ex_date", "ex-date",
                    "fca_event_date", "ex_dividend", "ex dividend"]
@@ -311,6 +316,7 @@ def _read_multisheet_spill(content: bytes, filename: str):
         s_vol = _find_col(scols, _VOLUME_ALIASES)
         s_name = _find_col([c for c in scols if c != s_tkr], _NAME_ALIASES)
         s_earn = _find_col([c for c in scols if c != s_tkr], _EARNINGS_ALIASES)
+        s_status = _find_col([c for c in scols if c != s_tkr], _EARNINGS_STATUS_ALIASES)
         s_exdiv = _find_col([c for c in scols if c != s_tkr], _EX_DIV_ALIASES)
         if not s_price:
             continue  # not a price sheet
@@ -363,10 +369,21 @@ def _read_multisheet_spill(content: bytes, filename: str):
                 if dts is not None:
                     return dts
             return None
+        # Earnings status is a free-text field ("Projected"/"Confirmed"), not a
+        # date — grab the first non-blank string as-is (None if absent/blank).
+        def _first_status(col):
+            if not col or col not in sdf.columns:
+                return None
+            for v in sdf[col].tolist():
+                st = _clean_status_value(v)
+                if st is not None:
+                    return st
+            return None
         out["earnings_date"] = _first_event(s_earn)
+        out["earnings_status"] = _first_status(s_status)
         out["ex_dividend_date"] = _first_event(s_exdiv)
         frames.append(out[["ticker", "date", "close", "volume", "name",
-                           "earnings_date", "ex_dividend_date"]])
+                           "earnings_date", "earnings_status", "ex_dividend_date"]])
 
     # Require it to actually look like a multi-ticker spill workbook.
     if sheet_count < 1 or not frames:
@@ -395,6 +412,47 @@ def _clean_name_value(v: Any) -> str | None:
     # Strip stray control / box artifacts FactSet sometimes appends.
     s = "".join(ch for ch in s if ch == " " or (ch.isprintable() and ch not in "\u25a0\u25aa")).strip()
     return s or None
+
+
+def _clean_status_value(v: Any) -> str | None:
+    """Return a clean earnings-status string (e.g. "Projected"/"Confirmed"), or
+    None if blank / a FactSet error placeholder. Stored as-is (no date decode)."""
+    if v is None:
+        return None
+    try:
+        s = str(v).strip()
+    except Exception:
+        return None
+    if not s or s.lower() in ("nan", "none", "null", "nat"):
+        return None
+    if s.upper() in {e.upper() for e in FACTSET_ERRORS} or s.startswith("#"):
+        return None
+    return s or None
+
+
+def _attach_status_from_dump(tidy: pd.DataFrame, src: pd.DataFrame,
+                             ticker_col: str, status_col: str | None) -> pd.DataFrame:
+    """Attach a per-ticker ``earnings_status`` text column to the tidy frame from
+    the dump (first non-blank value per ticker). Backward-compatible: returns
+    ``tidy`` unchanged when no usable status column is present. Never raises."""
+    if not status_col or status_col not in getattr(src, "columns", []) \
+            or ticker_col not in getattr(src, "columns", []):
+        return tidy
+    try:
+        tk = src[ticker_col].astype(str).str.strip()
+        st = src[status_col].map(_clean_status_value)
+        mapping: Dict[str, str] = {}
+        for t, s in zip(tk, st):
+            if not t or t.lower() in ("nan", "none", ""):
+                continue
+            if s is not None and t not in mapping:
+                mapping[t] = s
+        if mapping:
+            tidy = tidy.copy()
+            tidy["earnings_status"] = tidy["ticker"].astype(str).str.strip().map(mapping)
+    except Exception:
+        return tidy
+    return tidy
 
 
 def _attach_name_from_dump(tidy: pd.DataFrame, src: pd.DataFrame,
@@ -426,10 +484,11 @@ def _decode_event_date(v: Any) -> pd.Timestamp | None:
     """Decode ONE event-date cell to a ``pd.Timestamp`` (or None).
 
     Handles the three shapes the two FactSet event pulls can arrive in:
-      * ``FCA_EVENT_DATE(...,"YYYYMMDD")`` -> an 8-digit int/float/str like
-        ``20260526`` (or a stringified float ``20260526.0``).
-      * ``FE_REP_DT_NEXT(0D)`` -> a real date/datetime, a date string, or an
-        Excel/FactSet-Julian serial (days from 1899-12-30, ~33000..55000).
+      * ``RTP_EARNINGS_RELEASE_DATE`` (=FDSLIVE) / ``FCA_EVENT_DATE(...,"YYYYMMDD")``
+        (=FDS) -> an 8-digit int/float/str like ``20260831`` / ``20260526`` (or
+        a stringified float ``20260526.0``).
+      * a real date/datetime, a date string, or an Excel/FactSet-Julian serial
+        (days from 1899-12-30, ~33000..55000).
       * blank / FactSet error placeholder (``#N/A`` etc.) -> None.
     Never raises.
     """
@@ -533,8 +592,10 @@ def parse_prices(content: bytes, filename: str = "") -> Tuple[pd.DataFrame, Dict
     # Company-name column from the data dump (optional). Exclude the ticker
     # column itself so we never mistake the identifier for the name.
     name_col = _find_col([c for c in cols if c != ticker_col], _NAME_ALIASES)
-    # Optional per-ticker event-date columns (earnings + ex-dividend).
+    # Optional per-ticker event-date columns (earnings + ex-dividend) and the
+    # companion earnings-status text column.
     earnings_col = _find_col([c for c in cols if c != ticker_col], _EARNINGS_ALIASES)
+    status_col = _find_col([c for c in cols if c != ticker_col], _EARNINGS_STATUS_ALIASES)
     ex_div_col = _find_col([c for c in cols if c != ticker_col], _EX_DIV_ALIASES)
 
     # Spill per-ticker sheet uploaded directly: the ticker literal sits only in
@@ -618,6 +679,8 @@ def parse_prices(content: bytes, filename: str = "") -> Tuple[pd.DataFrame, Dict
         # Attach decoded per-ticker event dates when present (backward-compatible;
         # adds columns only when the dump carries them).
         tidy = _attach_event_dates_from_dump(tidy, df, ticker_col, earnings_col, ex_div_col)
+        # Attach the earnings-status text column when the dump carries it.
+        tidy = _attach_status_from_dump(tidy, df, ticker_col, status_col)
 
     report = build_quality_report(tidy, factset_errs)
     report["date_reconstructed"] = bool(date_reconstructed)

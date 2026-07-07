@@ -31,7 +31,12 @@ def test_canonical_is_valid_app_dictionary():
         assert "label" in val and "notes" in val, key
         assert val.get("family") in {"price", "fundamentals", "estimates",
                                       "identifiers", "corporate_actions"}, key
-        assert val.get("fds_compatible") is True, key
+        # LIVE real-time RTP_ fields are pulled via =FDSLIVE (NOT =FDS) so they
+        # are explicitly fds_compatible=False; every other entry stays True.
+        if str(val["fql_template"]).startswith("RTP_"):
+            assert val.get("fds_compatible") is False, key
+        else:
+            assert val.get("fds_compatible") is True, key
 
 
 def test_canonical_contains_key_confirmed_formulas():

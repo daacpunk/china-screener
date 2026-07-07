@@ -255,14 +255,14 @@
       "fds_compatible": true
     },
     "fe_valuation_pe_ntm": {
-      "label": "Forward P/E — NTM (FE_VALUATION, native)",
+      "label": "Forward P/E \u2014 NTM (FE_VALUATION, native)",
       "fql_template": "FE_VALUATION(PE,MEAN,NTMA,,0,,,'')",
       "notes": "FE_VALUATION syntax: FE_VALUATION(item, statistic, report_basis, period, ...). Native next-twelve-month consensus P/E (no in-app price/EPS computation needed). Example FY1: FE_VALUATION(PE,MEAN,ANNUAL,+1,0,,,'').",
       "family": "estimates",
       "fds_compatible": true
     },
     "fe_valuation_pe_fy1": {
-      "label": "Forward P/E — FY1 (FE_VALUATION, native)",
+      "label": "Forward P/E \u2014 FY1 (FE_VALUATION, native)",
       "fql_template": "FE_VALUATION(PE,MEAN,ANNUAL,+1,0,,,'')",
       "notes": "Native FY1 consensus P/E via FE_VALUATION.",
       "family": "estimates",
@@ -348,23 +348,30 @@
     "factset_sector": {
       "label": "FactSet sector (verified classification)",
       "fql_template": "FG_FACTSET_SECTOR",
-      "notes": "Point-in-time FactSet sector classification — the verified-working classification field for this user's entitlement (preferred over GICS).",
+      "notes": "Point-in-time FactSet sector classification \u2014 the verified-working classification field for this user's entitlement (preferred over GICS).",
       "family": "identifiers",
       "fds_compatible": true
     },
     "factset_industry": {
       "label": "FactSet industry (verified classification)",
       "fql_template": "FG_FACTSET_IND",
-      "notes": "Point-in-time FactSet industry classification — the verified-working classification field for this user's entitlement (preferred over GICS).",
+      "notes": "Point-in-time FactSet industry classification \u2014 the verified-working classification field for this user's entitlement (preferred over GICS).",
       "family": "identifiers",
       "fds_compatible": true
     },
     "earnings_date_next": {
-      "label": "Next earnings/report date (OPTIONAL event field)",
-      "fql_template": "FE_REP_DT_NEXT(0D)",
-      "notes": "OPTIONAL. FactSet Estimates next scheduled earnings/report date; user-tested. Returns a date value. Used for deterministic event-calendar (mechanical-dislocation) tagging.",
-      "family": "price",
-      "fds_compatible": true
+      "label": "Next earnings-release date (OPTIONAL event field)",
+      "fql_template": "RTP_EARNINGS_RELEASE_DATE",
+      "notes": "OPTIONAL. LIVE real-time earnings release date; user-tested. MUST be called via =FDSLIVE (NOT =FDS): =FDSLIVE(A2,\"RTP_EARNINGS_RELEASE_DATE\") -> 20260831 (YYYYMMDD int). No date args, no nested quotes. Used for deterministic MECHANICAL_DISLOCATION event-calendar tagging.",
+      "family": "corporate_actions",
+      "fds_compatible": false
+    },
+    "earnings_release_status": {
+      "label": "Earnings-release status (OPTIONAL event field)",
+      "fql_template": "RTP_EARNINGS_RELEASE_STATUS",
+      "family": "corporate_actions",
+      "fds_compatible": false,
+      "notes": "OPTIONAL. LIVE real-time earnings release status; companion to RTP_EARNINGS_RELEASE_DATE. MUST be called via =FDSLIVE (NOT =FDS): =FDSLIVE(A2,\"RTP_EARNINGS_RELEASE_STATUS\") -> text like \"Projected\" or \"Confirmed\". No date args, no nested quotes. Carried through as row metadata for the research note."
     },
     "ex_dividend_date": {
       "label": "Ex-dividend date (OPTIONAL event field)",

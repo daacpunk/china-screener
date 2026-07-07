@@ -28,17 +28,34 @@ ROOT = Path(__file__).resolve().parent.parent
 DICT = json.loads((ROOT / "sample_data" / "dictionary.json").read_text())
 
 # Verified exact emitted strings (doubled double-quotes round-trip in Excel).
+# Ex-dividend keeps the =FDS FCA_EVENT_DATE pull UNCHANGED. Earnings switched to
+# the LIVE =FDSLIVE function with the RTP_ fields (no nested quotes, no date args).
 EX_DIV_LITERAL = '=FDS("9988-HK","FCA_EVENT_DATE(0,""CASH_DIST"",""EXDATE"",""YYYYMMDD"")")'
 EX_DIV_CELLREF = '=FDS(A2,"FCA_EVENT_DATE(0,""CASH_DIST"",""EXDATE"",""YYYYMMDD"")")'
-EARN_LITERAL = '=FDS("9988-HK","FE_REP_DT_NEXT(0D)")'
+EARN_LITERAL = '=FDSLIVE("9988-HK","RTP_EARNINGS_RELEASE_DATE")'
+EARN_CELLREF = '=FDSLIVE(A2,"RTP_EARNINGS_RELEASE_DATE")'
+STATUS_LITERAL = '=FDSLIVE("9988-HK","RTP_EARNINGS_RELEASE_STATUS")'
+STATUS_CELLREF = '=FDSLIVE(A2,"RTP_EARNINGS_RELEASE_STATUS")'
 
 
 # --- Layer 1: formula generator ------------------------------------------
 
 def test_single_cell_event_formulas_exact_escaping():
+    # Ex-dividend =FDS pull is UNCHANGED (doubled-quote escaping).
     assert fg.ex_dividend_formula("9988-HK", DICT) == EX_DIV_LITERAL
     assert fg.ex_dividend_formula("A2", DICT) == EX_DIV_CELLREF
+    # Earnings date + status now emit =FDSLIVE with the RTP_ fields.
     assert fg.earnings_date_formula("9988-HK", DICT) == EARN_LITERAL
+    assert fg.earnings_date_formula("A2", DICT) == EARN_CELLREF
+    assert fg.earnings_status_formula("9988-HK", DICT) == STATUS_LITERAL
+    assert fg.earnings_status_formula("A2", DICT) == STATUS_CELLREF
+
+
+def test_fdslive_helper_literal_and_cell_forms():
+    assert fg.fdslive_formula("9988-HK", "RTP_EARNINGS_RELEASE_DATE") == EARN_LITERAL
+    assert fg.fdslive_formula("A2", "RTP_EARNINGS_RELEASE_DATE") == EARN_CELLREF
+    assert fg.fdslive_formula("$A$2", "RTP_EARNINGS_RELEASE_STATUS") == \
+        '=FDSLIVE($A$2,"RTP_EARNINGS_RELEASE_STATUS")'
 
 
 def _headers(data, sheet=None):
@@ -67,11 +84,17 @@ def test_workbook_emits_both_event_formulas_when_enabled():
                                          include_events=True)
         hdrs, _ws, _wb = _headers(data)
         assert "earnings_date" in hdrs, layout
+        assert "earnings_status" in hdrs, layout
         assert "ex_dividend_date" in hdrs, layout
         text = _all_formula_text(data)
-        # doubled-quote ex-div template present (cell-ref or literal form)
+        # doubled-quote ex-div =FDS template present (UNCHANGED) ...
         assert 'FCA_EVENT_DATE(0,""CASH_DIST"",""EXDATE"",""YYYYMMDD"")' in text, layout
-        assert "FE_REP_DT_NEXT(0D)" in text, layout
+        # ... and BOTH RTP earnings pulls via the LIVE =FDSLIVE function.
+        assert '=FDSLIVE' in text, layout
+        assert 'RTP_EARNINGS_RELEASE_DATE' in text, layout
+        assert 'RTP_EARNINGS_RELEASE_STATUS' in text, layout
+        # the OLD earnings field must be gone
+        assert "FE_REP_DT_NEXT" not in text, layout
 
 
 def test_method_b_emits_both_event_formulas_when_enabled():
@@ -79,7 +102,10 @@ def test_method_b_emits_both_event_formulas_when_enabled():
                                      include_events=True)
     text = _all_formula_text(data)
     assert 'FCA_EVENT_DATE(0,""CASH_DIST"",""EXDATE"",""YYYYMMDD"")' in text
-    assert "FE_REP_DT_NEXT(0D)" in text
+    assert '=FDSLIVE(' in text
+    assert 'RTP_EARNINGS_RELEASE_DATE' in text
+    assert 'RTP_EARNINGS_RELEASE_STATUS' in text
+    assert "FE_REP_DT_NEXT" not in text
 
 
 def test_workbook_omits_event_formulas_when_disabled():
@@ -89,9 +115,12 @@ def test_workbook_omits_event_formulas_when_disabled():
                                          include_events=False)
         hdrs, _ws, _wb = _headers(data)
         assert "earnings_date" not in hdrs, layout
+        assert "earnings_status" not in hdrs, layout
         assert "ex_dividend_date" not in hdrs, layout
         text = _all_formula_text(data)
         assert "FCA_EVENT_DATE" not in text, layout
+        assert "FDSLIVE" not in text, layout
+        assert "RTP_EARNINGS" not in text, layout
 
 
 def test_spill_price_vol_columns_untouched_by_events():
@@ -220,4 +249,24 @@ def test_dictionary_has_ex_dividend_entry_with_single_quote_template():
 def test_dictionary_has_next_earnings_entry():
     f = DICT["formulas"]
     assert "next_earnings" in f
-    assert f["next_earnings"]["fql_template"] == "FE_REP_DT_NEXT(0D)"
+    # Earnings now resolves to the LIVE RTP_ field (pulled via =FDSLIVE).
+    assert f["next_earnings"]["fql_template"] == "RTP_EARNINGS_RELEASE_DATE"
+    assert f["next_earnings"].get("fds_compatible") is False
+
+
+def test_dictionary_has_earnings_release_status_entry():
+    f = DICT["formulas"]
+    assert "earnings_release_status" in f
+    assert f["earnings_release_status"]["fql_template"] == "RTP_EARNINGS_RELEASE_STATUS"
+    assert f["earnings_release_status"].get("fds_compatible") is False
+
+
+def test_decode_earnings_rtp_int_and_status_text():
+    # RTP earnings date returns a YYYYMMDD int (e.g. 20260831) -> real date.
+    assert di._decode_event_date(20260831) == pd.Timestamp("2026-08-31")
+    assert di._decode_event_date("20260831") == pd.Timestamp("2026-08-31")
+    # RTP earnings status is free text carried through as-is.
+    assert di._clean_status_value("Projected") == "Projected"
+    assert di._clean_status_value("  Confirmed ") == "Confirmed"
+    for v in (None, "", "nan", "#N/A", float("nan")):
+        assert di._clean_status_value(v) is None

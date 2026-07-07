@@ -180,20 +180,21 @@ def method_a_grid(
 # Spilling per-ticker layout — the fast default for Method A.
 # ---------------------------------------------------------------------------
 def _event_fql(formulas: dict) -> str:
-    """FQL root for the next-event date metric (FE_REP_DT_NEXT).
+    """FQL root for the next-event date metric (RTP_EARNINGS_RELEASE_DATE).
 
     Prefers a dictionary entry named like next_earnings / event / report; else
-    falls back to FE_REP_DT_NEXT (FactSet estimated next report date).
+    falls back to RTP_EARNINGS_RELEASE_DATE (the live FactSet real-time earnings
+    release date field, pulled via =FDSLIVE not =FDS).
     """
     for key in ("next_earnings", "event_date", "next_event", "earnings_date", "report_date"):
         if key in formulas:
-            return _fql_root(formulas, key, "FE_REP_DT_NEXT")
+            return _fql_root(formulas, key, "RTP_EARNINGS_RELEASE_DATE")
     # name-pattern scan
     for k in formulas:
         kl = k.lower()
         if any(s in kl for s in ("earn", "event", "report", "rep_dt")):
-            return _fql_root(formulas, k, "FE_REP_DT_NEXT")
-    return "FE_REP_DT_NEXT"
+            return _fql_root(formulas, k, "RTP_EARNINGS_RELEASE_DATE")
+    return "RTP_EARNINGS_RELEASE_DATE"
 
 
 def _company_name_fql(formulas: dict) -> str:
@@ -219,8 +220,9 @@ def _fds_escape(template: str) -> str:
     (the same convention the add-in / the P_-with-string fields use). A template
     stored in the dictionary as ``FCA_EVENT_DATE(0,"CASH_DIST","EXDATE","YYYYMMDD")``
     therefore emits as ``FCA_EVENT_DATE(0,""CASH_DIST"",""EXDATE"",""YYYYMMDD"")``.
-    Templates with no embedded quotes (e.g. ``FE_REP_DT_NEXT(0D)``) are returned
-    unchanged.
+    Templates with no embedded quotes (e.g. ``FF_DIV_COM_CF(ANN,0,,,RF)``) are
+    returned unchanged. (RTP_ earnings fields do not go through this =FDS escaper
+    at all — they are emitted via ``fdslive_formula`` / ``=FDSLIVE``.)
     """
     return str(template).replace('"', '""')
 
@@ -235,11 +237,29 @@ def _dict_template(formulas: dict, key: str, default: str) -> str:
 
 
 def _earnings_template(formulas: dict) -> str:
-    """Full next-earnings template, preferring the dictionary entry."""
+    """Field name for the earnings-release DATE, preferring the dictionary entry.
+
+    This is a live real-time (RTP_) field pulled via ``=FDSLIVE`` (NOT ``=FDS``):
+    ``RTP_EARNINGS_RELEASE_DATE`` returns an int like ``20260831`` (YYYYMMDD).
+    It has no date args and no nested quotes.
+    """
     for key in ("next_earnings", "earnings_date_next", "earnings_date", "report_date"):
         if key in (formulas or {}):
-            return _dict_template(formulas, key, "FE_REP_DT_NEXT(0D)")
-    return "FE_REP_DT_NEXT(0D)"
+            return _dict_template(formulas, key, "RTP_EARNINGS_RELEASE_DATE")
+    return "RTP_EARNINGS_RELEASE_DATE"
+
+
+def _earnings_status_template(formulas: dict) -> str:
+    """Field name for the earnings-release STATUS, preferring the dictionary entry.
+
+    Also a live real-time (RTP_) field pulled via ``=FDSLIVE``:
+    ``RTP_EARNINGS_RELEASE_STATUS`` returns text like ``"Projected"`` /
+    ``"Confirmed"``. No date args, no nested quotes.
+    """
+    for key in ("earnings_release_status", "earnings_status", "release_status"):
+        if key in (formulas or {}):
+            return _dict_template(formulas, key, "RTP_EARNINGS_RELEASE_STATUS")
+    return "RTP_EARNINGS_RELEASE_STATUS"
 
 
 def _ex_div_template(formulas: dict) -> str:
@@ -266,11 +286,40 @@ def _event_date_formula(ticker_or_cell: str, template: str) -> str:
     return f'=FDS("{tc}","{esc}")'
 
 
+def fdslive_formula(ticker_or_cell: str, field: str) -> str:
+    """Single-cell ``=FDSLIVE(<id>,"<FIELD>")`` for a live real-time (RTP_) field.
+
+    RTP fields (e.g. RTP_EARNINGS_RELEASE_DATE / RTP_EARNINGS_RELEASE_STATUS) are
+    pulled with the live ``=FDSLIVE`` function, NOT the standard ``=FDS``. They
+    take no date args and carry no nested quotes, so the field name is wrapped in
+    simple double-quotes only (no doubling).
+
+    ``ticker_or_cell`` follows the SAME literal-ticker vs cell-ref convention as
+    the =FDS helpers: a bare cell reference (A2, $A$2) is used unquoted
+    (``=FDSLIVE(A2,"...")``); anything else is a literal identifier wrapped in
+    double quotes (``=FDSLIVE("9988-HK","...")``).
+    """
+    tc = str(ticker_or_cell)
+    fld = str(field)
+    if re.fullmatch(r"\$?[A-Z]{1,3}\$?\d+", tc):
+        return f'=FDSLIVE({tc},"{fld}")'
+    return f'=FDSLIVE("{tc}","{fld}")'
+
+
 def earnings_date_formula(ticker_or_cell: str, dictionary: dict) -> str:
-    """Single-cell next-earnings =FDS(...) using the dictionary template
-    (default ``FE_REP_DT_NEXT(0D)``)."""
+    """Single-cell earnings-release DATE via the LIVE ``=FDSLIVE`` function using
+    the dictionary field name (default ``RTP_EARNINGS_RELEASE_DATE``), e.g.
+    ``=FDSLIVE(A2,"RTP_EARNINGS_RELEASE_DATE")`` -> ``20260831`` (YYYYMMDD int)."""
     formulas = (dictionary or {}).get("formulas", {})
-    return _event_date_formula(ticker_or_cell, _earnings_template(formulas))
+    return fdslive_formula(ticker_or_cell, _earnings_template(formulas))
+
+
+def earnings_status_formula(ticker_or_cell: str, dictionary: dict) -> str:
+    """Single-cell earnings-release STATUS via the LIVE ``=FDSLIVE`` function using
+    the dictionary field name (default ``RTP_EARNINGS_RELEASE_STATUS``), e.g.
+    ``=FDSLIVE(A2,"RTP_EARNINGS_RELEASE_STATUS")`` -> text like ``"Projected"``."""
+    formulas = (dictionary or {}).get("formulas", {})
+    return fdslive_formula(ticker_or_cell, _earnings_status_template(formulas))
 
 
 def ex_dividend_formula(ticker_or_cell: str, dictionary: dict) -> str:
@@ -347,9 +396,11 @@ def method_a_spill_formulas(
         # Single-value next-event date (NOT a spill).
         out["event"] = f'=FDS({ticker_cell},"{ev_fql}(0)")'
     if include_events:
-        # Two verified single-value event dates (NOT spills), using the full
-        # dictionary templates with correct doubled-quote escaping.
+        # Verified single-value event fields (NOT spills). Earnings date + status
+        # are LIVE RTP_ fields via =FDSLIVE; ex-dividend is an =FDS FCA_EVENT_DATE
+        # pull with doubled-quote escaping (unchanged).
         out["earnings_date"] = earnings_date_formula(ticker_cell, dictionary)
+        out["earnings_status"] = earnings_status_formula(ticker_cell, dictionary)
         out["ex_dividend_date"] = ex_dividend_formula(ticker_cell, dictionary)
     if include_name:
         # Single-value company name (NOT a spill). No date arg.
@@ -477,14 +528,19 @@ def build_formula_workbook(
     if include_events:
         instr += [
             [""],
-            ['Two OPTIONAL event-date columns are included per ticker (single '
-             'values, no spill): "earnings_date" via FE_REP_DT_NEXT(0D) and '
-             '"ex_dividend_date" via FCA_EVENT_DATE. Ex-div returns YYYYMMDD '
-             '(e.g. 20260526). Inside =FDS the nested strings use DOUBLED quotes:'],
+            ['THREE OPTIONAL event columns are included per ticker (single values, '
+             'no spill): "earnings_date" + "earnings_status" (LIVE real-time RTP_ '
+             'fields via =FDSLIVE) and "ex_dividend_date" (=FDS FCA_EVENT_DATE).'],
+            ['  =FDSLIVE(A2,"RTP_EARNINGS_RELEASE_DATE")    -> 20260831 (YYYYMMDD int)'],
+            ['  =FDSLIVE(A2,"RTP_EARNINGS_RELEASE_STATUS")  -> "Projected" / "Confirmed"'],
+            ['Ex-dividend uses the standard =FDS function; ex-div returns YYYYMMDD '
+             '(e.g. 20260526) and its nested strings use DOUBLED quotes:'],
             ['  =FDS(A2,"FCA_EVENT_DATE(0,""CASH_DIST"",""EXDATE"",""YYYYMMDD"")")'],
-            ['Tab 3 decodes both to real dates and flags a MECHANICAL_DISLOCATION '
-             'when an ex-div / earnings date falls in the screen event window. '
-             'They do NOT affect the price/volume pull and are backward-compatible.'],
+            ['Note: earnings uses =FDSLIVE (live), ex-div uses =FDS. Tab 3 decodes '
+             'the dates to real dates, carries the earnings status text through, '
+             'and flags a MECHANICAL_DISLOCATION when an ex-div / earnings date '
+             'falls in the screen event window. They do NOT affect the '
+             'price/volume pull and are backward-compatible.'],
         ]
     instr += [
         [""],
@@ -602,7 +658,7 @@ def build_formula_workbook(
                 if include_event:
                     header.append("next_event")
                 if include_events:
-                    header += ["earnings_date", "ex_dividend_date"]
+                    header += ["earnings_date", "earnings_status", "ex_dividend_date"]
                 if include_name:
                     header.append("company_name")
                 ws.append(header)
@@ -624,8 +680,11 @@ def build_formula_workbook(
                     cells.append((next_col, "event"))
                     next_col += 1
                 if include_events:
-                    # two single-value event-date cells (not spills).
+                    # single-value event cells (not spills): earnings date +
+                    # status (=FDSLIVE), then ex-dividend (=FDS).
                     cells.append((next_col, "earnings_date"))
+                    next_col += 1
+                    cells.append((next_col, "earnings_status"))
                     next_col += 1
                     cells.append((next_col, "ex_dividend_date"))
                     next_col += 1
@@ -643,6 +702,8 @@ def build_formula_workbook(
                 if include_events:
                     widths.append((extra_col, 24))
                     extra_col += 1
+                    widths.append((extra_col, 20))
+                    extra_col += 1
                     widths.append((extra_col, 40))
                     extra_col += 1
                 if include_name:
@@ -657,7 +718,7 @@ def build_formula_workbook(
             header = (["ticker", "date", "close", "volume"] if include_date
                       else ["ticker", "close", "volume"])
             if include_events:
-                header += ["earnings_date", "ex_dividend_date"]
+                header += ["earnings_date", "earnings_status", "ex_dividend_date"]
             if include_name:
                 header.append("company_name")
             ws.append(header)
@@ -673,9 +734,11 @@ def build_formula_workbook(
                     else:
                         row_vals = [t, g["close_formula"], g["volume_formula"]]
                     if include_events:
-                        # Emit the two event dates only on the first row of each
-                        # ticker block (single values; Tab 3 forward-fills).
+                        # Emit the event fields only on the first row of each
+                        # ticker block (single values; Tab 3 forward-fills):
+                        # earnings date + status (=FDSLIVE), ex-dividend (=FDS).
                         row_vals.append(earnings_date_formula(t, dictionary) if i == 0 else None)
+                        row_vals.append(earnings_status_formula(t, dictionary) if i == 0 else None)
                         row_vals.append(ex_dividend_formula(t, dictionary) if i == 0 else None)
                     if include_name:
                         # Emit the name FDS only on the first row of each ticker
@@ -691,6 +754,8 @@ def build_formula_workbook(
             if include_events:
                 widths.append((extra_col, 24))
                 extra_col += 1
+                widths.append((extra_col, 20))
+                extra_col += 1
                 widths.append((extra_col, 40))
                 extra_col += 1
             if include_name:
@@ -705,7 +770,7 @@ def build_formula_workbook(
                 base_ncol = 3 if include_date else 2
                 event_col = base_ncol + 1  # first extra column after price/vol block
                 if include_events:
-                    header += ["earnings_date", "ex_dividend_date"]
+                    header += ["earnings_date", "earnings_status", "ex_dividend_date"]
                 if include_name:
                     header.append("company_name")
                 ws.append(header)
@@ -728,12 +793,15 @@ def build_formula_workbook(
                         ws.cell(row=r, column=2, value=g["volume_formula"])
                 extra_col = event_col
                 if include_events:
-                    # Two single-value event dates in row 2 (this sheet's ticker).
+                    # Single-value event cells in row 2 (this sheet's ticker):
+                    # earnings date + status (=FDSLIVE), then ex-dividend (=FDS).
                     ws.cell(row=2, column=extra_col,
                             value=earnings_date_formula(t, dictionary))
                     ws.cell(row=2, column=extra_col + 1,
+                            value=earnings_status_formula(t, dictionary))
+                    ws.cell(row=2, column=extra_col + 2,
                             value=ex_dividend_formula(t, dictionary))
-                    extra_col += 2
+                    extra_col += 3
                 if include_name:
                     # Single company-name value in row 2 (this sheet's ticker).
                     ws.cell(row=2, column=extra_col,
@@ -742,8 +810,9 @@ def build_formula_workbook(
                 wcol = event_col
                 if include_events:
                     widths.append((wcol, 24))
-                    widths.append((wcol + 1, 40))
-                    wcol += 2
+                    widths.append((wcol + 1, 20))
+                    widths.append((wcol + 2, 40))
+                    wcol += 3
                 if include_name:
                     widths.append((wcol, 34))
                 for col, w in widths:
@@ -755,7 +824,7 @@ def build_formula_workbook(
             hdr = ["ticker_cell", "date_col_B", "relative_price_C",
                    "relative_volume_D", "explicit_price_E"]
             if include_events:
-                hdr += ["earnings_date", "ex_dividend_date"]
+                hdr += ["earnings_date", "earnings_status", "ex_dividend_date"]
             if include_name:
                 hdr.append("company_name")
             ws.append(hdr)
@@ -773,14 +842,18 @@ def build_formula_workbook(
             extra_col = 6
             widths = [(1, 14), (2, 14), (3, 34), (4, 34), (5, 34)]
             if include_events:
-                # Single-value event dates referencing the ticker cell $A$2.
+                # Single-value event cells referencing the ticker cell $A$2:
+                # earnings date + status (=FDSLIVE), then ex-dividend (=FDS).
                 ws.cell(row=2, column=extra_col,
                         value=earnings_date_formula("$A$2", dictionary))
                 ws.cell(row=2, column=extra_col + 1,
+                        value=earnings_status_formula("$A$2", dictionary))
+                ws.cell(row=2, column=extra_col + 2,
                         value=ex_dividend_formula("$A$2", dictionary))
                 widths.append((extra_col, 24))
-                widths.append((extra_col + 1, 40))
-                extra_col += 2
+                widths.append((extra_col + 1, 20))
+                widths.append((extra_col + 2, 40))
+                extra_col += 3
             if include_name:
                 # Single company-name value referencing the ticker cell.
                 ws.cell(row=2, column=extra_col, value=company_name_formula("$A$2", dictionary))

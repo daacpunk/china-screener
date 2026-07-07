@@ -83,7 +83,7 @@ The generator uses the universe's Symbol <b>as-is</b> — FactSet resolves SEDOL
       </div>
       <div class="row">
         <div><label><input type="checkbox" name="include_event" value="on"> Include next-event date column</label>
-          <span class="help">Adds an <span class="mono">E</span> column per ticker sheet with <span class="mono">=FDS(A2,"FE_REP_DT_NEXT(0)")</span> (next earnings/report date). Enables catalyst flags in the screen. Default off.</span></div>
+          <span class="help">Adds a next-event column per ticker sheet with the LIVE <span class="mono">=FDSLIVE(A2,"RTP_EARNINGS_RELEASE_DATE")</span> earnings-release date (returns YYYYMMDD, e.g. 20260831) plus a companion <span class="mono">=FDSLIVE(A2,"RTP_EARNINGS_RELEASE_STATUS")</span> status (e.g. &ldquo;Projected&rdquo;/&ldquo;Confirmed&rdquo;). Enables catalyst flags in the screen. Default off.</span></div>
       </div>
       <div class="note info" style="margin-top:6px">
         <b>Spilling layout = ~3 FactSet calls per ticker</b> (date + price + volume), vs one call per cell.

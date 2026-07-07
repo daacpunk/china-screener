@@ -508,8 +508,9 @@ def run_screen(
                         dump_name_map[str(tkr).strip()] = s
                         break
 
-    # Per-ticker event dates pulled from the FactSet data dump (FE_REP_DT_NEXT /
-    # FCA_EVENT_DATE). First non-null per ticker. These feed deterministic
+    # Per-ticker event dates pulled from the FactSet data dump
+    # (RTP_EARNINGS_RELEASE_DATE via =FDSLIVE / FCA_EVENT_DATE via =FDS). First
+    # non-null per ticker. These feed deterministic
     # MECHANICAL_DISLOCATION tagging via _select_event_date below. Absent columns
     # -> empty maps -> current behavior (no events).
     def _first_dt_map(col: str) -> Dict[str, pd.Timestamp]:
@@ -526,6 +527,25 @@ def run_screen(
 
     dump_earnings_map = _first_dt_map("earnings_date")
     dump_exdiv_map = _first_dt_map("ex_dividend_date")
+
+    # Earnings-release STATUS text (RTP_EARNINGS_RELEASE_STATUS, e.g. "Projected"
+    # / "Confirmed"). Carried onto the row as metadata for the research note; the
+    # event-window logic itself stays date-based. First non-blank per ticker.
+    def _first_status_map(col: str) -> Dict[str, str]:
+        m: Dict[str, str] = {}
+        if col not in prices.columns:
+            return m
+        for tkr, g in prices.groupby("ticker"):
+            for v in g[col].tolist():
+                if v is None or (isinstance(v, float) and pd.isna(v)):
+                    continue
+                s = str(v).strip()
+                if s and s.lower() not in ("nan", "none", "nat"):
+                    m[str(tkr).strip()] = s
+                    break
+        return m
+
+    dump_status_map = _first_status_map("earnings_status")
 
     uni = universe.copy()
     uni.columns = [str(c).strip().lower() for c in uni.columns]
@@ -622,6 +642,7 @@ def run_screen(
             "adv_unknown": adv_unknown,
             "event_flag": bool(event_flag),
             "event_date": event_date_out,
+            "earnings_status": dump_status_map.get(tkr_key),
         }
         row.update(metrics)
         rows.append(row)
@@ -635,7 +656,7 @@ def run_screen(
         "macd", "macd_signal_val", "macd_state", "combined_signal",
         "peer_relative_z", "peer_group_used", "peer_count", "dislocation_type",
         "reversion_score", "fade_score",
-        "event_flag", "event_date", "n_bars", "abs_z",
+        "event_flag", "event_date", "earnings_status", "n_bars", "abs_z",
     ]
     meta = {
         "asof": (asof.date().isoformat() if isinstance(asof, pd.Timestamp) and not pd.isna(asof) else None),

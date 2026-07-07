@@ -115,10 +115,11 @@ _Fundamentals template_: `FF_ITEM(ANN,0,,,RF)`. Periodicity options: `ANN, QTR, 
 
 | Key | Label | Family | FQL template |
 |-----|-------|--------|--------------|
-| `earnings_date_next` | Next earnings/report date (**optional**, event field) | price | `FE_REP_DT_NEXT(0D)` |
-| `ex_dividend_date` | Ex-dividend date (**optional**, event field) | corporate_actions | `FCA_EVENT_DATE(0,"CASH_DIST","EXDATE","YYYYMMDD")` |
+| `earnings_date_next` | Next earnings-release date (**optional**, event field) — **=FDSLIVE** | corporate_actions | `RTP_EARNINGS_RELEASE_DATE` |
+| `earnings_release_status` | Earnings-release status (**optional**, event field) — **=FDSLIVE** | corporate_actions | `RTP_EARNINGS_RELEASE_STATUS` |
+| `ex_dividend_date` | Ex-dividend date (**optional**, event field) — `=FDS` | corporate_actions | `FCA_EVENT_DATE(0,"CASH_DIST","EXDATE","YYYYMMDD")` |
 
-> **Event-date fields (user-tested).** `earnings_date_next` returns a date value; `ex_dividend_date` returns `YYYYMMDD` (e.g. `20260526`). They are OPTIONAL per-ticker pulls used for deterministic MECHANICAL_DISLOCATION tagging in the research note.
+> **Event fields (user-tested).** `earnings_date_next` (`RTP_EARNINGS_RELEASE_DATE`, returns `YYYYMMDD` int e.g. `20260831`) and `earnings_release_status` (`RTP_EARNINGS_RELEASE_STATUS`, returns text e.g. `"Projected"`/`"Confirmed"`) are LIVE real-time RTP_ fields that MUST be pulled with **`=FDSLIVE`** (NOT `=FDS`), e.g. `=FDSLIVE(A2,"RTP_EARNINGS_RELEASE_DATE")` / `=FDSLIVE(A2,"RTP_EARNINGS_RELEASE_STATUS")`; no date args, no nested quotes. `ex_dividend_date` returns `YYYYMMDD` (e.g. `20260526`) via a standard `=FDS` `FCA_EVENT_DATE` pull. They are OPTIONAL per-ticker pulls used for deterministic MECHANICAL_DISLOCATION tagging in the research note.
 >
 > **`FCA_EVENT_DATE` quoting.** Inside `=FDS(...)` the nested string args need **doubled** double-quotes (same escaping `=FDS` uses for any embedded string). The emitted cell must be:
 > ```

@@ -83,7 +83,8 @@ def test_build_workbook_method_a_opens():
     # company_name (Q-B2) + event-date columns are appended by default; no date
     # column. Event columns land AFTER the close/volume block.
     assert [c.value for c in ws[1]] == [
-        "close", "volume", "earnings_date", "ex_dividend_date", "company_name"]
+        "close", "volume", "earnings_date", "earnings_status",
+        "ex_dividend_date", "company_name"]
     close2 = str(ws.cell(row=2, column=1).value)
     close3 = str(ws.cell(row=3, column=1).value)
     volume2 = str(ws.cell(row=2, column=2).value)
@@ -101,8 +102,8 @@ def test_build_workbook_method_a_with_date_column():
     wb = openpyxl.load_workbook(io.BytesIO(data))
     ws = wb["9988-HK"]
     assert [c.value for c in ws[1]] == [
-        "date", "close", "volume", "earnings_date", "ex_dividend_date",
-        "company_name"]
+        "date", "close", "volume", "earnings_date", "earnings_status",
+        "ex_dividend_date", "company_name"]
     assert 'P_DATE(0D)' in str(ws.cell(row=2, column=1).value)
     assert 'P_PRICE(0D)' in str(ws.cell(row=2, column=2).value)
     assert 'P_VOLUME_DAY(0D)' in str(ws.cell(row=2, column=3).value)
@@ -130,8 +131,8 @@ def test_build_workbook_method_a_stacked():
     ws = wb["AllTickers"]
     # Default: no date column -> ticker, close, volume (+ event dates + company_name).
     assert [c.value for c in ws[1]] == [
-        "ticker", "close", "volume", "earnings_date", "ex_dividend_date",
-        "company_name"]
+        "ticker", "close", "volume", "earnings_date", "earnings_status",
+        "ex_dividend_date", "company_name"]
     # header + 2 tickers * 10 days = 21 rows
     assert ws.max_row == 1 + 2 * 10
     # first ticker block: row 2 = AAA today, explicit single-date formula (col2)
@@ -297,7 +298,7 @@ def test_build_workbook_spill_layout_bcd_columns():
     # (date/close/volume) remain untouched for the spill-activation macro.
     assert [c.value for c in ws[1]] == [
         "ticker", "date", "close", "volume", "earnings_date",
-        "ex_dividend_date", "company_name"]
+        "earnings_status", "ex_dividend_date", "company_name"]
     assert ws.cell(row=2, column=1).value == "9988-HK"  # A2 = ticker literal
     assert _af(ws.cell(row=2, column=2).value) == '=FDS(A2,"JULIAN(P_PRICE(0,-109D,D).dates)")'
     assert _af(ws.cell(row=2, column=3).value) == '=FDS(A2,"P_PRICE(0,-109D,D)")'
@@ -349,7 +350,8 @@ def test_build_workbook_per_ticker_still_row_per_day_grid():
     wb = openpyxl.load_workbook(io.BytesIO(data))
     ws = wb["9988-HK"]
     assert [c.value for c in ws[1]] == [
-        "close", "volume", "earnings_date", "ex_dividend_date", "company_name"]
+        "close", "volume", "earnings_date", "earnings_status",
+        "ex_dividend_date", "company_name"]
     assert "P_PRICE(0D)" in str(ws.cell(row=2, column=1).value)
     assert "P_PRICE(0D-1D)" in str(ws.cell(row=3, column=1).value)
     assert ws.max_row == 1 + 20  # full grid, NOT a single spill row
