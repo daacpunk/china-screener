@@ -1,5 +1,7 @@
 """Research Notes: pure selection, prompt grounding, crash-proof orchestration,
 and notes_store round-trip."""
+import time
+
 from app import notes_store as ns
 from app.llm import research_notes as rn
 from app.llm.base import LLMProvider
@@ -338,3 +340,177 @@ def test_web_broken_story_with_dividend_text_never_upgraded():
     c = {x["ticker"]: x for x in out["candidates"]}["BBB"]
     assert c["verdict"] == "BROKEN_STORY"
     assert c["source"] == "llm"
+
+
+# --- Concurrency: parallelized per-name triage (ThreadPool, max_workers=4) ---
+#
+# Regression guard for the 5+5 timeout bug: the per-name catalyst triage used to
+# run SERIALLY, so 10 web-grounded calls + synthesis exceeded the HTTP request
+# timeout. It is now dispatched through a bounded ThreadPoolExecutor. These
+# tests prove (a) it actually runs concurrently, (b) order is preserved, (c) a
+# raising provider still yields a candidate, and (d) event tagging survives
+# concurrency.
+
+_PER_CALL_SLEEP = 0.2
+
+
+def _wide_universe(n_long: int, n_short: int):
+    """Build n_long idiosyncratic oversold + n_short idiosyncratic overbought
+    rows with strictly decreasing scores so selection order is deterministic."""
+    oversold = []
+    for i in range(n_long):
+        oversold.append({
+            "ticker": f"L{i:02d}", "name": f"Long{i}", "sector": "Tech",
+            "sub_industry": "Semis", "rank_z": -2.0 - i * 0.01, "rsi": 25.0,
+            "peer_relative_z": -2.0, "reversion_score": 0.99 - i * 0.01,
+            "dislocation_type": "IDIOSYNCRATIC", "partial_history": False,
+            "event_flag": False,
+        })
+    overbought = []
+    for i in range(n_short):
+        overbought.append({
+            "ticker": f"S{i:02d}", "name": f"Short{i}", "sector": "Energy",
+            "sub_industry": "Oil", "rank_z": 2.0 + i * 0.01, "rsi": 78.0,
+            "peer_relative_z": 2.0, "fade_score": 0.99 - i * 0.01,
+            "dislocation_type": "IDIOSYNCRATIC", "partial_history": False,
+            "event_flag": False,
+        })
+    return oversold, overbought
+
+
+class SleepyMechProvider(LLMProvider):
+    """Synthesis provider: complete() sleeps ~0.2s and returns a full note /
+    mechanical triage verdict. Non-web-capable (used for note synthesis)."""
+    name = "fake"
+
+    def __init__(self, *a, **k):
+        super().__init__("fake-key", "fake-model")
+
+    @property
+    def available(self):
+        return True
+
+    def complete(self, prompt, **opts):
+        time.sleep(_PER_CALL_SLEEP)
+        return (
+            "The drop coincides with an index rebalance and forced passive "
+            "flow; fundamentals look intact and the move is mechanical.\n"
+            "VERDICT: MECHANICAL_DISLOCATION"
+        )
+
+
+class SleepyPerp(SleepyMechProvider):
+    """Web-capable sleepy fake (name=='perplexity') so triage actually runs
+    the LLM path (with_news). Each call sleeps ~0.2s."""
+    name = "perplexity"
+
+
+def test_generate_note_5x5_runs_concurrently_and_completes():
+    oversold, overbought = _wide_universe(5, 5)
+    web = SleepyPerp()
+    synth = SleepyMechProvider()
+    t0 = time.time()
+    out = rn.generate_note(
+        synth, oversold + overbought, oversold, overbought, params={},
+        max_longs=5, max_shorts=5, idio_only=True, with_news=True,
+        asof="2026-07-08", web_provider=web,
+    )
+    elapsed = time.time() - t0
+    # A full note and all 10 candidates triaged.
+    assert out["error"] == ""
+    assert out["markdown"]
+    assert len(out["candidates"]) == 10
+    verdicts = {c["ticker"]: c["verdict"] for c in out["candidates"]}
+    assert all(v == "MECHANICAL_DISLOCATION" for v in verdicts.values())
+    # 10 triage calls sleeping 0.2s each would take >=2.0s serially; with
+    # max_workers=4 the triage wall-clock is ~ceil(10/4)*0.2 = 0.6s plus one
+    # synthesis call (~0.2s). Assert clearly below the serial 10*0.2s to prove
+    # concurrency.
+    assert elapsed < _PER_CALL_SLEEP * 10 * 0.6, (
+        f"triage did not run concurrently: {elapsed:.2f}s"
+    )
+
+
+def test_generate_note_5x5_order_matches_serial_baseline():
+    """Ordering preserved: verdicts/sources come back in the same
+    longs-then-shorts order as a serial baseline computed by calling the pure
+    worker directly per name."""
+    oversold, overbought = _wide_universe(5, 5)
+    web = SleepyPerp()
+    synth = SleepyMechProvider()
+    out = rn.generate_note(
+        synth, oversold + overbought, oversold, overbought, params={},
+        max_longs=5, max_shorts=5, idio_only=True, with_news=True,
+        asof="2026-07-08", web_provider=web,
+    )
+    # Serial baseline: mirror the split-provider routing generate_note uses,
+    # then call the worker per name in longs-then-shorts order.
+    sel = rn.select_candidates(oversold + overbought, oversold, overbought,
+                               max_longs=5, max_shorts=5, idio_only=True)
+    baseline = []
+    for side, key in (("long", "longs"), ("short", "shorts")):
+        for r in sel[key]:
+            res = rn._triage_one(
+                r, side, with_news=True, web_capable=True, web_runner=web,
+                provider=synth, triage_fallbacks=[],
+            )
+            baseline.append((r["ticker"], res["entry"]["verdict"],
+                             res["entry"]["source"]))
+    got = [(c["ticker"], c["verdict"], c["source"]) for c in out["candidates"]]
+    assert got == baseline
+
+
+class RaisingPerp(LLMProvider):
+    """Web-capable fake whose complete() always raises."""
+    name = "perplexity"
+
+    def __init__(self, *a, **k):
+        super().__init__("fake-key", "fake-model")
+
+    @property
+    def available(self):
+        return True
+
+    def complete(self, prompt, **opts):
+        raise RuntimeError("boom: web triage exploded")
+
+
+def test_generate_note_worker_raise_still_yields_candidate():
+    """A worker whose triage provider raises still yields a candidate
+    (NEEDS_DATA / error captured); the pool does not die and synthesis runs."""
+    oversold, overbought = _wide_universe(3, 2)
+    out = rn.generate_note(
+        SleepyMechProvider(), oversold + overbought, oversold, overbought,
+        params={}, max_longs=3, max_shorts=2, idio_only=True, with_news=True,
+        asof="2026-07-08", web_provider=RaisingPerp(),
+    )
+    # All 5 candidates present despite every triage call raising.
+    assert len(out["candidates"]) == 5
+    for c in out["candidates"]:
+        assert c["verdict"] == "NEEDS_DATA"
+        assert c["source"] == "llm"
+    # Errors captured, one per name; note synthesis still produced text.
+    assert "boom" in out["error"]
+    assert out["error"].count("boom") == 5
+    assert out["markdown"]
+
+
+def test_generate_note_event_flag_mechanical_under_concurrency():
+    """An event-flagged name still tags MECHANICAL_DISLOCATION source=event
+    under the concurrent path (no web, LLM not called for the event name)."""
+    event_rows = [
+        dict(_wide_universe(1, 0)[0][0], ticker="EVT", name="EventCo",
+             event_flag=True, event_date="2026-06-29"),
+    ]
+    # Add a few plain names so the pool has multiple concurrent tasks.
+    extra_os, extra_ob = _wide_universe(3, 2)
+    oversold = event_rows + extra_os
+    out = rn.generate_note(
+        NeedsDataProvider(), oversold + extra_ob, oversold, extra_ob,
+        params={}, max_longs=4, max_shorts=2, idio_only=True,
+        asof="2026-07-08",
+    )
+    c = {x["ticker"]: x for x in out["candidates"]}["EVT"]
+    assert c["verdict"] == "MECHANICAL_DISLOCATION"
+    assert c["source"] == "event"
+    assert c["event_date"] == "2026-06-29"

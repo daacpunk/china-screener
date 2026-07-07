@@ -8,6 +8,7 @@ logged via the same best-effort _log_usage pattern.
 from __future__ import annotations
 
 import re
+from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Dict, List, Optional
 
 from .base import LLMProvider
@@ -306,6 +307,116 @@ def _candidate_summary(sel: Dict[str, List[Dict[str, Any]]]) -> List[Dict[str, A
     return out
 
 
+def _triage_one(
+    r: Dict[str, Any],
+    side: str,
+    *,
+    with_news: bool,
+    web_capable: bool,
+    web_runner: Optional[LLMProvider],
+    provider: Optional[LLMProvider],
+    triage_fallbacks: List[LLMProvider],
+) -> Dict[str, Any]:
+    """PURE, thread-safe per-name catalyst triage worker.
+
+    Reproduces the ORIGINAL serial-loop logic EXACTLY for a single candidate
+    row: the deterministic event pre-tag, the run_llm gate, the
+    complete_with_fallback call (max_tokens=300, section="triage"),
+    _parse_verdict, the event+llm override, and the web-event upgrade via
+    detect_mechanical_event. NEVER raises — the LLM call is wrapped in
+    try/except and any error is returned as a string in ``error``.
+
+    Returns ``{"entry": <triaged candidate dict>, "error": <str or "">,
+    "log": (runner, ok, note)}``. The caller is responsible for appending the
+    entry / error / usage-log in the ORIGINAL order (this worker touches no
+    shared mutable state). Usage logging is returned as data (not performed
+    here) so ordering/thread-safety stays with the caller.
+    """
+    has_event = bool(r.get("event_flag"))
+    event_date = r.get("event_date")
+    verdict, rationale, source = "NEEDS_DATA", "", "llm"
+    error = ""
+    log: Optional[tuple] = None
+
+    # Deterministic pre-tag: a known corporate event in-window is a
+    # mechanical/technical dislocation by construction.
+    if has_event:
+        verdict = "MECHANICAL_DISLOCATION"
+        source = "event"
+        rationale = (
+            f"Auto-tagged: corporate event on {event_date or '(date n/a)'} "
+            "within window — mechanical/technical dislocation likely."
+        )
+
+    # The triage runner is the split web runner when one exists
+    # (Perplexity or a web-capable synthesis provider), else the main
+    # provider for deterministic (non-web) classification of non-event
+    # names. Web grounding only actually happens when ``web_capable``.
+    triage_runner = web_runner if web_runner is not None else provider
+    triage_with_news = bool(with_news) and web_capable
+
+    # Run the LLM when it can add value: either there's no event pre-tag,
+    # or web lookup is on (web context can refine WHICH event / add color).
+    run_llm = (not has_event) or (with_news and web_capable)
+    if run_llm and triage_runner is not None:
+        try:
+            # Triage: retry on the SAME runner first (web behavior
+            # depends on Perplexity); only fall back if it stays
+            # overloaded — a non-web fallback answer is acceptable.
+            text, _used = complete_with_fallback(
+                triage_runner,
+                build_catalyst_prompt(r, side, with_news=triage_with_news),
+                fallback_providers=triage_fallbacks,
+                section="triage",
+                max_tokens=300,
+            )
+            llm_verdict = _parse_verdict(text)
+            llm_rationale = (text or "").strip()
+            if has_event:
+                # Event flag biases toward mechanical: never let the LLM
+                # downgrade an event-backed name to NEEDS_DATA/PASS.
+                if llm_verdict == "NEEDS_DATA":
+                    verdict = "MECHANICAL_DISLOCATION"
+                else:
+                    verdict = llm_verdict
+                source = "event+llm"
+                rationale = llm_rationale or rationale
+            else:
+                verdict = llm_verdict
+                rationale = llm_rationale
+                source = "llm"
+                # Option B: a name with NO universe event_flag, rescued
+                # by what the WEB found. If web lookup actually ran for
+                # this triage and the cautious model returned NEEDS_DATA
+                # while its rationale describes a concrete mechanical
+                # event, upgrade to MECHANICAL_DISLOCATION. BROKEN_STORY
+                # is a real reject and is never upgraded.
+                if (
+                    with_news and web_capable
+                    and llm_verdict == "NEEDS_DATA"
+                ):
+                    matched = detect_mechanical_event(llm_rationale)
+                    if matched:
+                        verdict = "MECHANICAL_DISLOCATION"
+                        source = "web-event"
+                        rationale = (
+                            f"Web-detected mechanical event ({matched}); "
+                            "upgraded from NEEDS_DATA. "
+                            + (llm_rationale or "")
+                        ).strip()
+            log = (triage_runner, True, f"triage {r.get('ticker')}")
+        except Exception as e:  # noqa: BLE001
+            error = f"triage {r.get('ticker')}: {e}"
+            log = (triage_runner, False, str(e)[:200])
+            # On error the deterministic event pre-tag (if any) stands.
+
+    entry = {
+        "row": r, "side": side, "verdict": verdict,
+        "rationale": rationale, "source": source, "event_date": event_date,
+    }
+    return {"entry": entry, "error": error, "log": log}
+
+
 def generate_note(
     provider: Optional[LLMProvider],
     master: List[Dict[str, Any]],
@@ -319,6 +430,7 @@ def generate_note(
     asof: Any = None,
     fallback_providers: Optional[List[LLMProvider]] = None,
     web_provider: Optional[LLMProvider] = None,
+    max_workers: int = 4,
 ) -> Dict[str, Any]:
     """Orchestrate select -> per-name catalyst triage -> note synthesis.
 
@@ -397,88 +509,65 @@ def generate_note(
 
     errors: List[str] = []
     triaged: Dict[str, List[Dict[str, Any]]] = {"longs": [], "shorts": []}
+
+    # Build the ordered per-name task list across longs THEN shorts, tagging
+    # each with its (key, index) so results can be reassembled in the ORIGINAL
+    # order regardless of thread completion order. The per-name triage calls
+    # are web-grounded (Perplexity) and each takes many seconds; running them
+    # SERIALLY (10 names) plus the synthesis call exceeded the HTTP request
+    # timeout. Dispatching through a bounded ThreadPoolExecutor collapses the
+    # wall-clock from ~N*call to ~ceil(N/workers)*call — the split-provider
+    # routing (web_runner/web_capable/triage_fallbacks/notice) is computed ONCE
+    # above and passed into each pure worker, so no per-name state is shared.
+    tasks: List[Dict[str, Any]] = []
     for side, key in (("long", "longs"), ("short", "shorts")):
-        for r in sel[key]:
-            has_event = bool(r.get("event_flag"))
-            event_date = r.get("event_date")
-            verdict, rationale, source = "NEEDS_DATA", "", "llm"
+        for i, r in enumerate(sel[key]):
+            tasks.append({"side": side, "key": key, "index": i, "row": r})
 
-            # Deterministic pre-tag: a known corporate event in-window is a
-            # mechanical/technical dislocation by construction.
-            if has_event:
-                verdict = "MECHANICAL_DISLOCATION"
-                source = "event"
-                rationale = (
-                    f"Auto-tagged: corporate event on {event_date or '(date n/a)'} "
-                    "within window — mechanical/technical dislocation likely."
-                )
+    results: Dict[tuple, Dict[str, Any]] = {}
+    with ThreadPoolExecutor(max_workers=max(1, int(max_workers))) as ex:
+        future_to_task = {
+            ex.submit(
+                _triage_one, t["row"], t["side"],
+                with_news=with_news, web_capable=web_capable,
+                web_runner=web_runner, provider=provider,
+                triage_fallbacks=triage_fallbacks,
+            ): t
+            for t in tasks
+        }
+        for fut, t in future_to_task.items():
+            # _triage_one never raises; guard defensively so one bad future
+            # can't kill the pool / lose the deterministic pre-tag.
+            try:
+                results[(t["key"], t["index"])] = fut.result()
+            except Exception as e:  # noqa: BLE001 — defensive; worker is crash-proof
+                r = t["row"]
+                event_date = r.get("event_date")
+                results[(t["key"], t["index"])] = {
+                    "entry": {
+                        "row": r, "side": t["side"], "verdict": "NEEDS_DATA",
+                        "rationale": "", "source": "llm", "event_date": event_date,
+                    },
+                    "error": f"triage {r.get('ticker')}: {e}",
+                    "log": (provider, False, str(e)[:200]),
+                }
 
-            # The triage runner is the split web runner when one exists
-            # (Perplexity or a web-capable synthesis provider), else the main
-            # provider for deterministic (non-web) classification of non-event
-            # names. Web grounding only actually happens when ``web_capable``.
-            triage_runner = web_runner if web_runner is not None else provider
-            triage_with_news = bool(with_news) and web_capable
-
-            # Run the LLM when it can add value: either there's no event pre-tag,
-            # or web lookup is on (web context can refine WHICH event / add color).
-            run_llm = (not has_event) or (with_news and web_capable)
-            if run_llm and triage_runner is not None:
-                try:
-                    # Triage: retry on the SAME runner first (web behavior
-                    # depends on Perplexity); only fall back if it stays
-                    # overloaded — a non-web fallback answer is acceptable.
-                    text, _used = complete_with_fallback(
-                        triage_runner,
-                        build_catalyst_prompt(r, side, with_news=triage_with_news),
-                        fallback_providers=triage_fallbacks,
-                        section="triage",
-                        max_tokens=300,
-                    )
-                    llm_verdict = _parse_verdict(text)
-                    llm_rationale = (text or "").strip()
-                    if has_event:
-                        # Event flag biases toward mechanical: never let the LLM
-                        # downgrade an event-backed name to NEEDS_DATA/PASS.
-                        if llm_verdict == "NEEDS_DATA":
-                            verdict = "MECHANICAL_DISLOCATION"
-                        else:
-                            verdict = llm_verdict
-                        source = "event+llm"
-                        rationale = llm_rationale or rationale
-                    else:
-                        verdict = llm_verdict
-                        rationale = llm_rationale
-                        source = "llm"
-                        # Option B: a name with NO universe event_flag, rescued
-                        # by what the WEB found. If web lookup actually ran for
-                        # this triage and the cautious model returned NEEDS_DATA
-                        # while its rationale describes a concrete mechanical
-                        # event, upgrade to MECHANICAL_DISLOCATION. BROKEN_STORY
-                        # is a real reject and is never upgraded.
-                        if (
-                            with_news and web_capable
-                            and llm_verdict == "NEEDS_DATA"
-                        ):
-                            matched = detect_mechanical_event(llm_rationale)
-                            if matched:
-                                verdict = "MECHANICAL_DISLOCATION"
-                                source = "web-event"
-                                rationale = (
-                                    f"Web-detected mechanical event ({matched}); "
-                                    "upgraded from NEEDS_DATA. "
-                                    + (llm_rationale or "")
-                                ).strip()
-                    _log_usage(triage_runner, "sidebar", ok=True, note=f"triage {r.get('ticker')}")
-                except Exception as e:  # noqa: BLE001
-                    errors.append(f"triage {r.get('ticker')}: {e}")
-                    _log_usage(triage_runner, "sidebar", ok=False, note=str(e)[:200])
-                    # On error the deterministic event pre-tag (if any) stands.
-
-            triaged[key].append({
-                "row": r, "side": side, "verdict": verdict,
-                "rationale": rationale, "source": source, "event_date": event_date,
-            })
+    # Reassemble in the ORIGINAL order (longs first by original index, then
+    # shorts) and accumulate errors / usage logs in that same order. Usage
+    # logging happens here on the main thread (serially) so the shared
+    # settings_store log can't race across worker threads.
+    for side, key in (("long", "longs"), ("short", "shorts")):
+        for i in range(len(sel[key])):
+            res = results.get((key, i))
+            if res is None:  # pragma: no cover — every task is submitted
+                continue
+            triaged[key].append(res["entry"])
+            if res.get("error"):
+                errors.append(res["error"])
+            log = res.get("log")
+            if log is not None:
+                runner, ok, note = log
+                _log_usage(runner, "sidebar", ok=ok, note=note)
 
     markdown = ""
     try:
