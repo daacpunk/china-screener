@@ -27,10 +27,10 @@
       <td class="mono">{{ c.ticker }}</td><td>{{ c.name }}</td>
       <td>{% if c.side=='long' %}<span class="tag idio">LONG</span>{% else %}<span class="tag event">SHORT</span>{% endif %}</td>
       <td>{{ c.sector }}</td>
-      <td>{{ '%.2f'|format(c.rank_z) if c.rank_z is not none else '—' }}</td>
-      <td>{{ '%.2f'|format(c.peer_relative_z) if c.peer_relative_z is not none else '—' }}</td>
-      <td>{{ '%.1f'|format(c.rsi) if c.rsi is not none else '—' }}</td>
-      <td>{{ '%.3f'|format(c.reversion_score) if c.side=='long' and c.reversion_score is not none else ('%.3f'|format(c.fade_score) if c.fade_score is not none else '—') }}</td>
+      <td>{{ '%.2f'|format(c.get('rank_z')) if c.get('rank_z') is not none else '—' }}</td>
+      <td>{{ '%.2f'|format(c.get('peer_relative_z')) if c.get('peer_relative_z') is not none else '—' }}</td>
+      <td>{{ '%.1f'|format(c.get('rsi')) if c.get('rsi') is not none else '—' }}</td>
+      <td>{{ '%.3f'|format(c.get('reversion_score')) if c.get('side')=='long' and c.get('reversion_score') is not none else ('%.3f'|format(c.get('fade_score')) if c.get('fade_score') is not none else '—') }}</td>
       <td>{% if c.dislocation_type=='IDIOSYNCRATIC' %}<span class="tag idio">idiosyncratic</span>{% else %}<span class="tag sector">sector/macro</span>{% endif %}</td>
       <td>{{ vtag(c.verdict) }}</td>
       <td>{{ stag(c.source, c.event_date) }}</td>
