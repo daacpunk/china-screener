@@ -111,6 +111,20 @@ _Fundamentals template_: `FF_ITEM(ANN,0,,,RF)`. Periodicity options: `ANN, QTR, 
 
 > **Classification note:** `FG_FACTSET_SECTOR` / `FG_FACTSET_IND` are the **verified-working** classification fields for this user's entitlement. `FG_GICS_INDUSTRY` is from the reference library (GICS variants returned no data in this entitlement) and is kept for completeness.
 
+## Formula index — Corporate actions / events
+
+| Key | Label | Family | FQL template |
+|-----|-------|--------|--------------|
+| `earnings_date_next` | Next earnings/report date (**optional**, event field) | price | `FE_REP_DT_NEXT(0D)` |
+| `ex_dividend_date` | Ex-dividend date (**optional**, event field) | corporate_actions | `FCA_EVENT_DATE(0,"CASH_DIST","EXDATE","YYYYMMDD")` |
+
+> **Event-date fields (user-tested).** `earnings_date_next` returns a date value; `ex_dividend_date` returns `YYYYMMDD` (e.g. `20260526`). They are OPTIONAL per-ticker pulls used for deterministic MECHANICAL_DISLOCATION tagging in the research note.
+>
+> **`FCA_EVENT_DATE` quoting.** Inside `=FDS(...)` the nested string args need **doubled** double-quotes (same escaping `=FDS` uses for any embedded string). The emitted cell must be:
+> ```
+> =FDS("9988-HK","FCA_EVENT_DATE(0,""CASH_DIST"",""EXDATE"",""YYYYMMDD"")")
+> ```
+
 ## Estimates functions
 
 ### FE_ESTIMATE

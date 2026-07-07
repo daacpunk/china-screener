@@ -30,7 +30,7 @@ def test_canonical_is_valid_app_dictionary():
         assert "fql_template" in val and val["fql_template"], key
         assert "label" in val and "notes" in val, key
         assert val.get("family") in {"price", "fundamentals", "estimates",
-                                      "identifiers"}, key
+                                      "identifiers", "corporate_actions"}, key
         assert val.get("fds_compatible") is True, key
 
 

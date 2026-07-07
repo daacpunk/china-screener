@@ -318,6 +318,7 @@ def generate_note(
     with_news: bool = False,
     asof: Any = None,
     fallback_providers: Optional[List[LLMProvider]] = None,
+    web_provider: Optional[LLMProvider] = None,
 ) -> Dict[str, Any]:
     """Orchestrate select -> per-name catalyst triage -> note synthesis.
 
@@ -325,10 +326,19 @@ def generate_note(
     With provider=None / unavailable returns the candidate selection with
     markdown="" and a clear "set a key" error — NEVER raises.
 
+    SPLIT PROVIDER (mirrors the weekly note): the NOTE SYNTHESIS always runs on
+    the main ``provider`` (the chosen strong model — Anthropic/DeepSeek). The
+    per-name CATALYST TRIAGE routes to ``web_provider`` when it is supplied AND
+    web-capable (Perplexity); otherwise it falls back to the main ``provider``
+    ONLY when that is itself web-capable; otherwise no web runs (deterministic /
+    event-only tagging + a soft notice). This lets the user pick Claude/DeepSeek
+    for synthesis while catalysts still fire via Perplexity when a key is set.
+
     ``with_news`` enables web-grounded catalyst lookup (Option A): the per-name
     triage prompt instructs a web-capable provider (Perplexity) to find WHY a
-    ticker moved instead of defaulting to NEEDS_DATA. If with_news is requested
-    but the provider is not web-capable, a soft ``notice`` is returned (no crash).
+    ticker moved instead of defaulting to NEEDS_DATA. It defaults on when EITHER
+    ``provider`` or ``web_provider`` is web-capable. If with_news is requested
+    but NEITHER is web-capable, a soft ``notice`` is returned (no crash).
 
     Deterministic event tagging (Option C): any candidate row whose
     ``event_flag`` is truthy is pre-tagged MECHANICAL_DISLOCATION (source=event)
@@ -353,11 +363,37 @@ def generate_note(
         }
 
     fallback_providers = fallback_providers or []
-    web_capable = is_web_capable(provider)
+
+    # SPLIT PROVIDER routing. The triage step prefers a dedicated web-capable
+    # ``web_provider`` (Perplexity); else it uses the main ``provider`` only when
+    # that is itself web-capable; else there is no web runner and triage is
+    # deterministic/event-only. The synthesis step below ALWAYS uses ``provider``.
+    def _avail(p: Optional[LLMProvider]) -> bool:
+        return p is not None and bool(getattr(p, "available", False))
+
+    web_provider_capable = _avail(web_provider) and is_web_capable(web_provider)
+    provider_web_capable = is_web_capable(provider)
+    if web_provider_capable:
+        web_runner: Optional[LLMProvider] = web_provider
+    elif provider_web_capable:
+        web_runner = provider
+    else:
+        web_runner = None
+    # ``web_capable`` reflects whether the triage step can actually ground in web
+    # search for THIS run (either provider carried the web capability).
+    web_capable = web_runner is not None
+
     notice = ""
     if with_news and not web_capable:
-        notice = ("Live catalyst lookup needs a Perplexity provider; current "
-                  "provider has no web access — using deterministic event tags only.")
+        synth_name = getattr(provider, "name", "") or "the chosen model"
+        notice = (
+            "Live catalyst lookup needs a Perplexity key; add one to enable web "
+            f"catalysts (synthesis ran on {synth_name})."
+        )
+    # Fallbacks are only meaningful when the web runner IS the main provider; a
+    # dedicated Perplexity web provider should retry on itself, not on the
+    # synthesis fallbacks (mirrors the weekly note).
+    triage_fallbacks = fallback_providers if web_runner is provider else []
 
     errors: List[str] = []
     triaged: Dict[str, List[Dict[str, Any]]] = {"longs": [], "shorts": []}
@@ -377,18 +413,25 @@ def generate_note(
                     "within window — mechanical/technical dislocation likely."
                 )
 
+            # The triage runner is the split web runner when one exists
+            # (Perplexity or a web-capable synthesis provider), else the main
+            # provider for deterministic (non-web) classification of non-event
+            # names. Web grounding only actually happens when ``web_capable``.
+            triage_runner = web_runner if web_runner is not None else provider
+            triage_with_news = bool(with_news) and web_capable
+
             # Run the LLM when it can add value: either there's no event pre-tag,
             # or web lookup is on (web context can refine WHICH event / add color).
             run_llm = (not has_event) or (with_news and web_capable)
-            if run_llm:
+            if run_llm and triage_runner is not None:
                 try:
-                    # Triage: retry on the SAME provider first (web behavior
+                    # Triage: retry on the SAME runner first (web behavior
                     # depends on Perplexity); only fall back if it stays
                     # overloaded — a non-web fallback answer is acceptable.
                     text, _used = complete_with_fallback(
-                        provider,
-                        build_catalyst_prompt(r, side, with_news=with_news),
-                        fallback_providers=fallback_providers,
+                        triage_runner,
+                        build_catalyst_prompt(r, side, with_news=triage_with_news),
+                        fallback_providers=triage_fallbacks,
                         section="triage",
                         max_tokens=300,
                     )
@@ -426,10 +469,10 @@ def generate_note(
                                     "upgraded from NEEDS_DATA. "
                                     + (llm_rationale or "")
                                 ).strip()
-                    _log_usage(provider, "sidebar", ok=True, note=f"triage {r.get('ticker')}")
+                    _log_usage(triage_runner, "sidebar", ok=True, note=f"triage {r.get('ticker')}")
                 except Exception as e:  # noqa: BLE001
                     errors.append(f"triage {r.get('ticker')}: {e}")
-                    _log_usage(provider, "sidebar", ok=False, note=str(e)[:200])
+                    _log_usage(triage_runner, "sidebar", ok=False, note=str(e)[:200])
                     # On error the deterministic event pre-tag (if any) stands.
 
             triaged[key].append({

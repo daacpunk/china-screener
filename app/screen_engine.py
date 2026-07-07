@@ -295,6 +295,84 @@ def _event_flag(event_date, asof: pd.Timestamp, window_days: int) -> bool:
     return 0 <= delta <= window_days
 
 
+def _coerce_dt(v) -> Optional[pd.Timestamp]:
+    """Coerce a value to a pd.Timestamp, or None if not parseable/blank.
+
+    Robust to the raw shapes the two FactSet event pulls can arrive in even when
+    they were NOT pre-decoded by ``data_ingest`` (e.g. a raw dump handed straight
+    to ``run_screen``): an 8-digit ``YYYYMMDD`` calendar int/float/str (from
+    ``FCA_EVENT_DATE(...,"YYYYMMDD")``) or an Excel/FactSet-Julian serial day.
+    """
+    if v is None or (isinstance(v, float) and pd.isna(v)):
+        return None
+    s = str(v).strip()
+    if s == "" or s.lower() in ("nan", "none", "nat"):
+        return None
+    # Numeric YYYYMMDD (e.g. 20260526 / 20260526.0) or Excel serial — decode
+    # BEFORE the generic parser, which would read a bare int as nanoseconds.
+    if not isinstance(v, (pd.Timestamp, datetime)):
+        num = pd.to_numeric(s, errors="coerce")
+        if pd.notna(num):
+            n = float(num)
+            iv = int(round(n))
+            if 19000101 <= iv <= 99991231:
+                ts = pd.to_datetime(str(iv), format="%Y%m%d", errors="coerce")
+                if pd.notna(ts):
+                    return ts
+            if 20000 <= n <= 80000:
+                ts = pd.to_datetime(n, unit="D", origin="1899-12-30",
+                                    errors="coerce")
+                if pd.notna(ts):
+                    return ts
+    try:
+        ts = pd.to_datetime(v, errors="coerce")
+    except Exception:
+        return None
+    return ts if pd.notna(ts) else None
+
+
+def _select_event_date(earnings_date, ex_dividend_date, asof: pd.Timestamp,
+                       window_days: int):
+    """Pick the NEAREST relevant corporate event from the two pulled dates and
+    decide whether it is in-window around ``asof``.
+
+    Rule (reuses the existing ``event_window_days`` param as the half-window):
+      * an EX-DIVIDEND date is mechanical the day the stock trades ex, so it is
+        relevant when it falls within ``window_days`` on EITHER side of as-of
+        (most-recent past ex-date or an imminent one).
+      * a NEXT-EARNINGS date is relevant when it is upcoming within
+        ``window_days`` (0..window ahead) — matching the legacy ``_event_flag``.
+    Among the in-window candidates the one closest (by absolute day distance) to
+    as-of wins. Returns ``(event_date, in_window)``; ``event_date`` is the chosen
+    date (a Timestamp) or None when neither date parses, and ``in_window`` is
+    True only when a candidate falls inside its window.
+    """
+    ex = _coerce_dt(ex_dividend_date)
+    earn = _coerce_dt(earnings_date)
+    if ex is None and earn is None:
+        return None, False
+    try:
+        w = int(window_days)
+    except Exception:
+        w = 7
+
+    candidates = []  # (abs_distance, in_window, date)
+    if ex is not None:
+        d = (ex - asof).days
+        candidates.append((abs(d), abs(d) <= w, ex))
+    if earn is not None:
+        d = (earn - asof).days
+        candidates.append((abs(d), 0 <= d <= w, earn))
+
+    # Prefer an in-window candidate; among those pick the nearest. If none is
+    # in-window, still surface the nearest date (event_flag stays False).
+    in_win = [c for c in candidates if c[1]]
+    pool = in_win if in_win else candidates
+    pool.sort(key=lambda c: c[0])
+    _dist, is_in, chosen = pool[0]
+    return chosen, bool(is_in)
+
+
 def _has_event(event_date) -> bool:
     """True if a usable (parseable, non-null) event date is present."""
     if event_date is None or (isinstance(event_date, float) and pd.isna(event_date)):
@@ -430,6 +508,25 @@ def run_screen(
                         dump_name_map[str(tkr).strip()] = s
                         break
 
+    # Per-ticker event dates pulled from the FactSet data dump (FE_REP_DT_NEXT /
+    # FCA_EVENT_DATE). First non-null per ticker. These feed deterministic
+    # MECHANICAL_DISLOCATION tagging via _select_event_date below. Absent columns
+    # -> empty maps -> current behavior (no events).
+    def _first_dt_map(col: str) -> Dict[str, pd.Timestamp]:
+        m: Dict[str, pd.Timestamp] = {}
+        if col not in prices.columns:
+            return m
+        for tkr, g in prices.groupby("ticker"):
+            for v in g[col].tolist():
+                ts = _coerce_dt(v)
+                if ts is not None:
+                    m[str(tkr).strip()] = ts
+                    break
+        return m
+
+    dump_earnings_map = _first_dt_map("earnings_date")
+    dump_exdiv_map = _first_dt_map("ex_dividend_date")
+
     uni = universe.copy()
     uni.columns = [str(c).strip().lower() for c in uni.columns]
     # normalise expected universe columns
@@ -487,9 +584,26 @@ def run_screen(
                             "reason": "ADV unknown (excluded by policy)"})
             continue
 
+        # Event date: prefer a universe-supplied event_date (legacy path); else
+        # derive it from the two pulled FactSet event dates for this ticker.
         ev = umeta.get("event_date")
+        tkr_key = str(tkr).strip()
+        earn_dt = dump_earnings_map.get(tkr_key)
+        exdiv_dt = dump_exdiv_map.get(tkr_key)
         if _has_event(ev):
+            # Legacy universe event_date wins; keep the original future-window rule.
+            event_flag = _event_flag(ev, asof, p["event_window_days"])
+            event_date_out = ev
             event_present_any = True
+        elif earn_dt is not None or exdiv_dt is not None:
+            # New pulls: pick the nearest relevant event and its in-window flag.
+            event_date_out, event_flag = _select_event_date(
+                earn_dt, exdiv_dt, asof, p["event_window_days"])
+            if _has_event(event_date_out):
+                event_present_any = True
+        else:
+            event_flag = False
+            event_date_out = ev  # blank/NaN -> unchanged, backward-compatible
         # Prefer the universe name; fall back to the data-dump name. Never
         # overwrite a good universe name with a blank.
         uni_name = umeta.get("name")
@@ -506,8 +620,8 @@ def run_screen(
             "index_weight": _safe_float(umeta.get("index_weight")),
             "adv_usd_20d": adv_val,
             "adv_unknown": adv_unknown,
-            "event_flag": _event_flag(ev, asof, p["event_window_days"]),
-            "event_date": ev,
+            "event_flag": bool(event_flag),
+            "event_date": event_date_out,
         }
         row.update(metrics)
         rows.append(row)

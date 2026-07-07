@@ -51,7 +51,14 @@
     "next_earnings": {
       "label": "Next earnings/report date (OPTIONAL event field)",
       "fql_template": "FE_REP_DT_NEXT(0D)",
-      "notes": "OPTIONAL. Next scheduled earnings/report date for event-calendar flagging; may vary by entitlement. Event flagging also works from a user-supplied column."
+      "family": "price",
+      "notes": "OPTIONAL. Next scheduled earnings/report date for event-calendar flagging; user-tested. Returns a date (serial or date value). Event flagging also works from a user-supplied column."
+    },
+    "ex_dividend_date": {
+      "label": "Ex-dividend date (OPTIONAL event field)",
+      "fql_template": "FCA_EVENT_DATE(0,\"CASH_DIST\",\"EXDATE\",\"YYYYMMDD\")",
+      "family": "corporate_actions",
+      "notes": "OPTIONAL. FactSet Corporate Actions ex-dividend date; user-tested. Returns YYYYMMDD (e.g. 20260526). Inside =FDS(...) the nested string args need DOUBLED double-quotes: =FDS(<ticker>,\"FCA_EVENT_DATE(0,\"\"CASH_DIST\"\",\"\"EXDATE\"\",\"\"YYYYMMDD\"\")\"). Used for deterministic mechanical-dislocation event tagging."
     },
     "market_cap": {
       "label": "Market capitalization (company, current)",

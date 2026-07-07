@@ -6,6 +6,8 @@ key-gated and crash-proof; export paths degrade gracefully on empty markdown.
 """
 from __future__ import annotations
 
+from typing import Optional
+
 import markdown as md
 from fastapi import APIRouter, Form, Request
 from fastapi.responses import HTMLResponse, Response
@@ -16,11 +18,36 @@ from .. import screen_engine as se
 from .. import settings_store as ss
 from ..llm import analysis as la
 from ..llm import research_notes as rn
+from ..llm.base import LLMProvider
 from ..llm.registry import build_provider
+from ..llm.research_notes import is_web_capable
 from .common import base_ctx, df_to_records, run_active_screen, templates
 from .routes_results import _SIDEBAR_CACHE
 
 router = APIRouter()
+
+
+def resolve_web_provider() -> Optional[LLMProvider]:
+    """Build a PERPLEXITY provider for the per-name web (catalyst) triage,
+    independent of the chosen synthesis provider (mirrors routes_weekly).
+
+    Returns a built Perplexity provider when a Perplexity API key exists AND the
+    Perplexity provider config is enabled; otherwise None. The returned provider
+    is sanity-checked with ``is_web_capable``. Never raises.
+    """
+    try:
+        key = ss.get_api_key("perplexity")
+        if not key:
+            return None
+        cfg = ss.get_provider_config("perplexity")
+        if not cfg.get("enabled"):
+            return None
+        prov = build_provider("perplexity", key, cfg.get("model") or "")
+        if prov is None or not is_web_capable(prov):
+            return None
+        return prov
+    except Exception:  # noqa: BLE001 — web provider resolution must never crash
+        return None
 
 
 def build_fallback_providers(primary_name: str) -> list:
@@ -112,11 +139,17 @@ def analysis_page(request: Request):
     meta = res.get("meta", {}) or {}
     stale = _staleness(meta)
     note_provider = ss.get_section_provider("sidebar")
-    note_web_default = (str(note_provider).lower() == "perplexity")
+    # A dedicated Perplexity web provider fires the catalyst triage independently
+    # of the chosen synthesis model. Default the web checkbox on when EITHER the
+    # chosen synthesis provider is Perplexity OR a Perplexity key is set.
+    web_provider = resolve_web_provider()
+    perplexity_web_ready = web_provider is not None
+    note_web_default = (str(note_provider).lower() == "perplexity") or perplexity_web_ready
     ctx = base_ctx(
         request, "analysis", empty=empty,
         providers=providers, any_key=any_key,
         sidebar=sidebar, note_web_default=note_web_default,
+        perplexity_web_ready=perplexity_web_ready,
         **stale,
     )
     return templates.TemplateResponse(request, "analysis.html", ctx)
@@ -148,6 +181,14 @@ def _generate_note(request: Request, provider: str, max_longs: int,
     stale = _staleness(meta)
     prov = _resolve_note_provider(provider)
     fallbacks = build_fallback_providers(getattr(prov, "name", "")) if prov else []
+    # The section picker chooses the SYNTHESIS model; the web catalyst triage
+    # always routes to Perplexity when a Perplexity key is set (split provider).
+    web_provider = resolve_web_provider()
+    # Default with_news on when EITHER the synthesis provider or the dedicated
+    # Perplexity web provider can ground catalysts in live web search.
+    wn = _truthy(with_news) if str(with_news).strip() != "" else (
+        is_web_capable(prov) or is_web_capable(web_provider)
+    )
     out = rn.generate_note(
         prov,
         df_to_records(res["master"]),
@@ -157,9 +198,10 @@ def _generate_note(request: Request, provider: str, max_longs: int,
         max_longs=max(0, int(max_longs)),
         max_shorts=max(0, int(max_shorts)),
         idio_only=_truthy(idio_only),
-        with_news=_truthy(with_news),
+        with_news=wn,
         asof=stale["asof"],
         fallback_providers=fallbacks,
+        web_provider=web_provider,
     )
     note_id = None
     try:

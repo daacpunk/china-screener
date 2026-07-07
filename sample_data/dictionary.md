@@ -39,7 +39,21 @@ Canonical Excel add-in form:
 | `sector` | FactSet sector (point-in-time) | `FG_FACTSET_SECTOR` |
 | `sub_industry` | FactSet industry (point-in-time) | `FG_FACTSET_IND` |
 | `index_weight` | Index weight in benchmark (**optional**) | `FG_INDEX_WEIGHT("MSCI CHINA",0D)` |
-| `next_earnings` | Next earnings/report date (**optional**) | `FE_REP_DT_NEXT(0D)` |
+| `next_earnings` | Next earnings/report date (**optional**, event field) | `FE_REP_DT_NEXT(0D)` |
+| `ex_dividend_date` | Ex-dividend date (**optional**, event field) | `FCA_EVENT_DATE(0,"CASH_DIST","EXDATE","YYYYMMDD")` |
+
+> **Event-date fields (deterministic MECHANICAL_DISLOCATION tagging).** Both
+> `next_earnings` (returns a date) and `ex_dividend_date` (returns `YYYYMMDD`,
+> e.g. `20260526`) are OPTIONAL identity/event columns pulled per ticker in the
+> main-screen template (default ON, backward-compatible toggle). They feed the
+> screen engine's event-window logic so ex-div / earnings names auto-tag as a
+> mechanical dislocation in the research note even without web search.
+>
+> **`FCA_EVENT_DATE` quoting.** Inside `=FDS(...)` the nested string args need
+> **doubled** double-quotes, matching how `=FDS` escapes embedded strings:
+> ```
+> =FDS("9988-HK","FCA_EVENT_DATE(0,""CASH_DIST"",""EXDATE"",""YYYYMMDD"")")
+> ```
 
 ## Confirmed =FDS fundamentals / estimates / identifiers (authoritative library)
 

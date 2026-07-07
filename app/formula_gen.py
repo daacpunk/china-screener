@@ -211,6 +211,76 @@ def _company_name_fql(formulas: dict) -> str:
     return "FG_COMPANY_NAME"
 
 
+def _fds_escape(template: str) -> str:
+    """Escape a raw FQL template for embedding as the SECOND string arg of
+    ``=FDS(<id>,"<template>")``.
+
+    Inside a quoted =FDS field string, any nested double-quote must be DOUBLED
+    (the same convention the add-in / the P_-with-string fields use). A template
+    stored in the dictionary as ``FCA_EVENT_DATE(0,"CASH_DIST","EXDATE","YYYYMMDD")``
+    therefore emits as ``FCA_EVENT_DATE(0,""CASH_DIST"",""EXDATE"",""YYYYMMDD"")``.
+    Templates with no embedded quotes (e.g. ``FE_REP_DT_NEXT(0D)``) are returned
+    unchanged.
+    """
+    return str(template).replace('"', '""')
+
+
+def _dict_template(formulas: dict, key: str, default: str) -> str:
+    """Full FQL template (with args) for a metric key, from the active dictionary;
+    falls back to ``default`` when the key is absent. Unlike ``_fql_root`` this
+    keeps the argument list intact (needed for the event-date fields)."""
+    entry = (formulas or {}).get(key) or {}
+    tmpl = entry.get("fql_template") if isinstance(entry, dict) else None
+    return tmpl or default
+
+
+def _earnings_template(formulas: dict) -> str:
+    """Full next-earnings template, preferring the dictionary entry."""
+    for key in ("next_earnings", "earnings_date_next", "earnings_date", "report_date"):
+        if key in (formulas or {}):
+            return _dict_template(formulas, key, "FE_REP_DT_NEXT(0D)")
+    return "FE_REP_DT_NEXT(0D)"
+
+
+def _ex_div_template(formulas: dict) -> str:
+    """Full ex-dividend template, preferring the dictionary entry."""
+    for key in ("ex_dividend_date", "ex_div_date", "exdate"):
+        if key in (formulas or {}):
+            return _dict_template(
+                formulas, key, 'FCA_EVENT_DATE(0,"CASH_DIST","EXDATE","YYYYMMDD")'
+            )
+    return 'FCA_EVENT_DATE(0,"CASH_DIST","EXDATE","YYYYMMDD")'
+
+
+def _event_date_formula(ticker_or_cell: str, template: str) -> str:
+    """Single-cell =FDS(...,"<template>") for an event-date field.
+
+    ``ticker_or_cell`` may be a literal ticker (embedded as "9988-HK") or a bare
+    cell reference (e.g. A2). The nested ``template`` is escaped with doubled
+    double-quotes so any embedded string args round-trip inside the =FDS field.
+    """
+    tc = str(ticker_or_cell)
+    esc = _fds_escape(template)
+    if re.fullmatch(r"\$?[A-Z]{1,3}\$?\d+", tc):
+        return f'=FDS({tc},"{esc}")'
+    return f'=FDS("{tc}","{esc}")'
+
+
+def earnings_date_formula(ticker_or_cell: str, dictionary: dict) -> str:
+    """Single-cell next-earnings =FDS(...) using the dictionary template
+    (default ``FE_REP_DT_NEXT(0D)``)."""
+    formulas = (dictionary or {}).get("formulas", {})
+    return _event_date_formula(ticker_or_cell, _earnings_template(formulas))
+
+
+def ex_dividend_formula(ticker_or_cell: str, dictionary: dict) -> str:
+    """Single-cell ex-dividend =FDS(...) using the dictionary template, emitting
+    the doubled-quote form, e.g.
+    ``=FDS("9988-HK","FCA_EVENT_DATE(0,""CASH_DIST"",""EXDATE"",""YYYYMMDD"")")``."""
+    formulas = (dictionary or {}).get("formulas", {})
+    return _event_date_formula(ticker_or_cell, _ex_div_template(formulas))
+
+
 def company_name_formula(ticker_or_cell: str, dictionary: dict) -> str:
     """Single-cell =FDS(...,"FG_COMPANY_NAME") for one ticker.
 
@@ -237,6 +307,7 @@ def method_a_spill_formulas(
     ticker_cell: str = "A2",
     include_event: bool = False,
     include_name: bool = False,
+    include_events: bool = False,
 ) -> Dict[str, str]:
     """Return ONE spilling range FDS formula per series, referencing a ticker CELL.
 
@@ -275,6 +346,11 @@ def method_a_spill_formulas(
         ev_fql = _event_fql(formulas)
         # Single-value next-event date (NOT a spill).
         out["event"] = f'=FDS({ticker_cell},"{ev_fql}(0)")'
+    if include_events:
+        # Two verified single-value event dates (NOT spills), using the full
+        # dictionary templates with correct doubled-quote escaping.
+        out["earnings_date"] = earnings_date_formula(ticker_cell, dictionary)
+        out["ex_dividend_date"] = ex_dividend_formula(ticker_cell, dictionary)
     if include_name:
         # Single-value company name (NOT a spill). No date arg.
         out["name"] = company_name_formula(ticker_cell, dictionary)
@@ -361,6 +437,7 @@ def build_formula_workbook(
     include_date: bool = False,
     include_event: bool = False,
     include_name: bool = True,
+    include_events: bool = True,
     batch_note: str = "",
 ) -> bytes:
     """Build the formula workbook as xlsx bytes.
@@ -396,6 +473,18 @@ def build_formula_workbook(
              '=FDS(...,"FG_COMPANY_NAME") per ticker (no date arg). Tab 3 reads it '
              'so the screen shows "Company Name (TICKER)". It is optional and does '
              'not affect the price/volume pull.'],
+        ]
+    if include_events:
+        instr += [
+            [""],
+            ['Two OPTIONAL event-date columns are included per ticker (single '
+             'values, no spill): "earnings_date" via FE_REP_DT_NEXT(0D) and '
+             '"ex_dividend_date" via FCA_EVENT_DATE. Ex-div returns YYYYMMDD '
+             '(e.g. 20260526). Inside =FDS the nested strings use DOUBLED quotes:'],
+            ['  =FDS(A2,"FCA_EVENT_DATE(0,""CASH_DIST"",""EXDATE"",""YYYYMMDD"")")'],
+            ['Tab 3 decodes both to real dates and flags a MECHANICAL_DISLOCATION '
+             'when an ex-div / earnings date falls in the screen event window. '
+             'They do NOT affect the price/volume pull and are backward-compatible.'],
         ]
     instr += [
         [""],
@@ -512,6 +601,8 @@ def build_formula_workbook(
                 header = ["ticker", "date", "close", "volume"]
                 if include_event:
                     header.append("next_event")
+                if include_events:
+                    header += ["earnings_date", "ex_dividend_date"]
                 if include_name:
                     header.append("company_name")
                 ws.append(header)
@@ -520,16 +611,23 @@ def build_formula_workbook(
                     dictionary, lookback=lookback,
                     price_metric=price_metric, volume_metric=volume_metric,
                     ticker_cell="A2", include_event=include_event,
-                    include_name=include_name)
+                    include_name=include_name, include_events=include_events)
                 ws.cell(row=2, column=1, value=t)  # A2 = ticker literal
                 # Force TEXT storage so '=' is inert until the macro activates it.
-                # Company name / event are appended AFTER B/C/D so the spill-
-                # activation macro (which targets columns 2/3/4) is untouched.
+                # Company name / event dates are appended AFTER B/C/D so the
+                # spill-activation macro (which targets columns 2/3/4) is
+                # untouched.
                 cells = [(2, "date"), (3, "close"), (4, "volume")]
                 next_col = 5
                 if include_event:
                     # single next-event date value (not a spill).
                     cells.append((next_col, "event"))
+                    next_col += 1
+                if include_events:
+                    # two single-value event-date cells (not spills).
+                    cells.append((next_col, "earnings_date"))
+                    next_col += 1
+                    cells.append((next_col, "ex_dividend_date"))
                     next_col += 1
                 if include_name:
                     # single company-name value (not a spill).
@@ -542,6 +640,11 @@ def build_formula_workbook(
                 if include_event:
                     widths.append((extra_col, 30))
                     extra_col += 1
+                if include_events:
+                    widths.append((extra_col, 24))
+                    extra_col += 1
+                    widths.append((extra_col, 40))
+                    extra_col += 1
                 if include_name:
                     widths.append((extra_col, 34))
                 for col, w in widths:
@@ -553,6 +656,8 @@ def build_formula_workbook(
             ws = wb.create_sheet("AllTickers")
             header = (["ticker", "date", "close", "volume"] if include_date
                       else ["ticker", "close", "volume"])
+            if include_events:
+                header += ["earnings_date", "ex_dividend_date"]
             if include_name:
                 header.append("company_name")
             ws.append(header)
@@ -567,6 +672,11 @@ def build_formula_workbook(
                         row_vals = [t, g["date_formula"], g["close_formula"], g["volume_formula"]]
                     else:
                         row_vals = [t, g["close_formula"], g["volume_formula"]]
+                    if include_events:
+                        # Emit the two event dates only on the first row of each
+                        # ticker block (single values; Tab 3 forward-fills).
+                        row_vals.append(earnings_date_formula(t, dictionary) if i == 0 else None)
+                        row_vals.append(ex_dividend_formula(t, dictionary) if i == 0 else None)
                     if include_name:
                         # Emit the name FDS only on the first row of each ticker
                         # block (one point-in-time value; Tab 3 forward-fills).
@@ -574,12 +684,17 @@ def build_formula_workbook(
                     ws.append(row_vals)
             if include_date:
                 widths = [(1, 14), (2, 24), (3, 30), (4, 32)]
-                name_col = 5
+                extra_col = 5
             else:
                 widths = [(1, 14), (2, 30), (3, 32)]
-                name_col = 4
+                extra_col = 4
+            if include_events:
+                widths.append((extra_col, 24))
+                extra_col += 1
+                widths.append((extra_col, 40))
+                extra_col += 1
             if include_name:
-                widths.append((name_col, 34))
+                widths.append((extra_col, 34))
             for col, w in widths:
                 ws.column_dimensions[get_column_letter(col)].width = w
         else:
@@ -587,6 +702,10 @@ def build_formula_workbook(
                 safe = _safe_sheet_name(t)
                 ws = wb.create_sheet(safe)
                 header = ["date", "close", "volume"] if include_date else ["close", "volume"]
+                base_ncol = 3 if include_date else 2
+                event_col = base_ncol + 1  # first extra column after price/vol block
+                if include_events:
+                    header += ["earnings_date", "ex_dividend_date"]
                 if include_name:
                     header.append("company_name")
                 ws.append(header)
@@ -598,7 +717,6 @@ def build_formula_workbook(
                                      price_metric=price_metric,
                                      volume_metric=volume_metric,
                                      include_date=include_date)
-                name_col = 4 if include_date else 3
                 for g in grid:
                     r = g["row"]
                     if include_date:
@@ -608,13 +726,26 @@ def build_formula_workbook(
                     else:
                         ws.cell(row=r, column=1, value=g["close_formula"])
                         ws.cell(row=r, column=2, value=g["volume_formula"])
+                extra_col = event_col
+                if include_events:
+                    # Two single-value event dates in row 2 (this sheet's ticker).
+                    ws.cell(row=2, column=extra_col,
+                            value=earnings_date_formula(t, dictionary))
+                    ws.cell(row=2, column=extra_col + 1,
+                            value=ex_dividend_formula(t, dictionary))
+                    extra_col += 2
                 if include_name:
                     # Single company-name value in row 2 (this sheet's ticker).
-                    ws.cell(row=2, column=name_col,
+                    ws.cell(row=2, column=extra_col,
                             value=company_name_formula(t, dictionary))
                 widths = [(1, 22), (2, 30), (3, 32)] if include_date else [(1, 30), (2, 32)]
+                wcol = event_col
+                if include_events:
+                    widths.append((wcol, 24))
+                    widths.append((wcol + 1, 40))
+                    wcol += 2
                 if include_name:
-                    widths.append((name_col, 34))
+                    widths.append((wcol, 34))
                 for col, w in widths:
                     ws.column_dimensions[get_column_letter(col)].width = w
     else:
@@ -623,6 +754,8 @@ def build_formula_workbook(
             ws = wb.create_sheet(safe)
             hdr = ["ticker_cell", "date_col_B", "relative_price_C",
                    "relative_volume_D", "explicit_price_E"]
+            if include_events:
+                hdr += ["earnings_date", "ex_dividend_date"]
             if include_name:
                 hdr.append("company_name")
             ws.append(hdr)
@@ -636,12 +769,22 @@ def build_formula_workbook(
                 ws.cell(row=r, column=3, value=g["relative_formula"])
                 ws.cell(row=r, column=4, value=g["relative_volume_formula"])
                 ws.cell(row=r, column=5, value=g["explicit_date_formula"])
-            if include_name:
-                # Column F, single company-name value referencing the ticker cell.
-                ws.cell(row=2, column=6, value=company_name_formula("$A$2", dictionary))
+            # Extra columns start at F (col 6), after the offset-grid columns.
+            extra_col = 6
             widths = [(1, 14), (2, 14), (3, 34), (4, 34), (5, 34)]
+            if include_events:
+                # Single-value event dates referencing the ticker cell $A$2.
+                ws.cell(row=2, column=extra_col,
+                        value=earnings_date_formula("$A$2", dictionary))
+                ws.cell(row=2, column=extra_col + 1,
+                        value=ex_dividend_formula("$A$2", dictionary))
+                widths.append((extra_col, 24))
+                widths.append((extra_col + 1, 40))
+                extra_col += 2
             if include_name:
-                widths.append((6, 34))
+                # Single company-name value referencing the ticker cell.
+                ws.cell(row=2, column=extra_col, value=company_name_formula("$A$2", dictionary))
+                widths.append((extra_col, 34))
             for col, w in widths:
                 ws.column_dimensions[get_column_letter(col)].width = w
 
@@ -669,6 +812,7 @@ def build_formula_workbooks_batched(
     include_date: bool = False,
     include_event: bool = False,
     include_name: bool = True,
+    include_events: bool = True,
     batch_size: int = 75,
 ) -> List[tuple]:
     """Split ``tickers`` into chunks of ``batch_size`` and build one workbook per
@@ -691,7 +835,8 @@ def build_formula_workbooks_batched(
             start=start, end=end, freq=freq, layout=layout,
             price_metric=price_metric, volume_metric=volume_metric,
             include_date=include_date, include_event=include_event,
-            include_name=include_name, batch_note=note,
+            include_name=include_name, include_events=include_events,
+            batch_note=note,
         )
         fname = (f"factset_formulas_method_{method}_batch_"
                  f"{idx:0{width}d}_of_{total:0{width}d}.xlsx")

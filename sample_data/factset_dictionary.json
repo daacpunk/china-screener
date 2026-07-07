@@ -358,6 +358,20 @@
       "notes": "Point-in-time FactSet industry classification — the verified-working classification field for this user's entitlement (preferred over GICS).",
       "family": "identifiers",
       "fds_compatible": true
+    },
+    "earnings_date_next": {
+      "label": "Next earnings/report date (OPTIONAL event field)",
+      "fql_template": "FE_REP_DT_NEXT(0D)",
+      "notes": "OPTIONAL. FactSet Estimates next scheduled earnings/report date; user-tested. Returns a date value. Used for deterministic event-calendar (mechanical-dislocation) tagging.",
+      "family": "price",
+      "fds_compatible": true
+    },
+    "ex_dividend_date": {
+      "label": "Ex-dividend date (OPTIONAL event field)",
+      "fql_template": "FCA_EVENT_DATE(0,\"CASH_DIST\",\"EXDATE\",\"YYYYMMDD\")",
+      "notes": "OPTIONAL. FactSet Corporate Actions ex-dividend date; user-tested. Returns YYYYMMDD (e.g. 20260526). Inside =FDS(...) the nested string args need DOUBLED double-quotes: =FDS(<ticker>,\"FCA_EVENT_DATE(0,\"\"CASH_DIST\"\",\"\"EXDATE\"\",\"\"YYYYMMDD\"\")\"). Used for deterministic mechanical-dislocation event tagging.",
+      "family": "corporate_actions",
+      "fds_compatible": true
     }
   },
   "estimate_item_keywords": {

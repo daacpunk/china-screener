@@ -54,6 +54,7 @@
       <button class="btn" type="submit">Generate research note</button>
       <button class="btn ghost" type="button" hx-get="/analysis/notes" hx-target="#note-out" hx-swap="innerHTML">Past notes</button>
     </div>
+    <p class="help" style="margin-top:6px">Live web catalysts always use Perplexity when a Perplexity key is set{% if not perplexity_web_ready %} <span class="muted">(no Perplexity key detected — add one in <a href="/settings">Settings</a> for catalysts)</span>{% endif %}. The provider above chooses the synthesis model.</p>
   </form>
   <div id="note-spin" class="htmx-indicator muted">Selecting candidates &amp; triaging…</div>
   <div id="note-out"></div>

@@ -20,6 +20,12 @@ _VOLUME_ALIASES = ["volume", "vol", "p_volume", "turnover", "trd_volume"]
 _DATE_ALIASES = ["date", "p_date", "asof", "as_of", "trade_date"]
 _NAME_ALIASES = ["company_name", "company name", "fg_company_name", "name",
                  "company", "security", "security_name", "description"]
+_EARNINGS_ALIASES = ["earnings_date", "earnings date", "next_earnings",
+                     "next earnings", "earnings_date_next", "fe_rep_dt_next",
+                     "next_event", "next event", "report_date", "report date"]
+_EX_DIV_ALIASES = ["ex_dividend_date", "ex dividend date", "ex_div_date",
+                   "ex-dividend date", "exdate", "ex_date", "ex-date",
+                   "fca_event_date", "ex_dividend", "ex dividend"]
 _TICKER_ALIASES = [
     "ticker", "symbol", "fsym_id", "id", "sec_id", "request_id",
     "ric", "bbg", "bloomberg", "sedol", "isin", "code", "stock code",
@@ -304,6 +310,8 @@ def _read_multisheet_spill(content: bytes, filename: str):
         s_price = _find_col(scols, _PRICE_ALIASES)
         s_vol = _find_col(scols, _VOLUME_ALIASES)
         s_name = _find_col([c for c in scols if c != s_tkr], _NAME_ALIASES)
+        s_earn = _find_col([c for c in scols if c != s_tkr], _EARNINGS_ALIASES)
+        s_exdiv = _find_col([c for c in scols if c != s_tkr], _EX_DIV_ALIASES)
         if not s_price:
             continue  # not a price sheet
         sheet_count += 1
@@ -346,7 +354,19 @@ def _read_multisheet_spill(content: bytes, filename: str):
                 if nm_val:
                     break
         out["name"] = nm_val
-        frames.append(out[["ticker", "date", "close", "volume", "name"]])
+        # Decode the two single-value event dates (first non-blank in the sheet).
+        def _first_event(col):
+            if not col or col not in sdf.columns:
+                return None
+            for v in sdf[col].tolist():
+                dts = _decode_event_date(v)
+                if dts is not None:
+                    return dts
+            return None
+        out["earnings_date"] = _first_event(s_earn)
+        out["ex_dividend_date"] = _first_event(s_exdiv)
+        frames.append(out[["ticker", "date", "close", "volume", "name",
+                           "earnings_date", "ex_dividend_date"]])
 
     # Require it to actually look like a multi-ticker spill workbook.
     if sheet_count < 1 or not frames:
@@ -402,6 +422,84 @@ def _attach_name_from_dump(tidy: pd.DataFrame, src: pd.DataFrame,
     return tidy
 
 
+def _decode_event_date(v: Any) -> pd.Timestamp | None:
+    """Decode ONE event-date cell to a ``pd.Timestamp`` (or None).
+
+    Handles the three shapes the two FactSet event pulls can arrive in:
+      * ``FCA_EVENT_DATE(...,"YYYYMMDD")`` -> an 8-digit int/float/str like
+        ``20260526`` (or a stringified float ``20260526.0``).
+      * ``FE_REP_DT_NEXT(0D)`` -> a real date/datetime, a date string, or an
+        Excel/FactSet-Julian serial (days from 1899-12-30, ~33000..55000).
+      * blank / FactSet error placeholder (``#N/A`` etc.) -> None.
+    Never raises.
+    """
+    if v is None:
+        return None
+    try:
+        s = str(v).strip()
+    except Exception:
+        return None
+    if not s or s.lower() in ("nan", "none", "null", "nat"):
+        return None
+    if s.upper() in {e.upper() for e in FACTSET_ERRORS} or s.startswith("#"):
+        return None
+    # Already a datetime-like object.
+    if isinstance(v, (pd.Timestamp, )) or hasattr(v, "year") and not isinstance(v, (int, float)):
+        ts = pd.to_datetime(v, errors="coerce")
+        return ts if pd.notna(ts) else None
+    # Numeric: distinguish a YYYYMMDD calendar int from an Excel serial.
+    num = pd.to_numeric(s, errors="coerce")
+    if pd.notna(num):
+        n = float(num)
+        iv = int(round(n))
+        # YYYYMMDD (e.g. 20260526): 8 digits in a plausible year range.
+        if 19000101 <= iv <= 99991231:
+            ts = pd.to_datetime(str(iv), format="%Y%m%d", errors="coerce")
+            if pd.notna(ts):
+                return ts
+        # Excel / FactSet-Julian serial day (1899-12-30 origin).
+        if 20000 <= n <= 80000:
+            ts = pd.to_datetime(n, unit="D", origin="1899-12-30", errors="coerce")
+            if pd.notna(ts):
+                return ts
+    # Fall back to a general date-string parse.
+    ts = pd.to_datetime(s, errors="coerce")
+    return ts if pd.notna(ts) else None
+
+
+def _attach_event_dates_from_dump(tidy: pd.DataFrame, src: pd.DataFrame,
+                                  ticker_col: str, earnings_col: str | None,
+                                  ex_div_col: str | None) -> pd.DataFrame:
+    """Attach per-ticker ``earnings_date`` / ``ex_dividend_date`` columns to the
+    tidy price frame, decoded to real dates (first non-blank value per ticker).
+
+    Backward-compatible: when neither event column is present, ``tidy`` is
+    returned unchanged (no new columns). Never raises.
+    """
+    if ticker_col not in getattr(src, "columns", []):
+        return tidy
+    try:
+        tk = src[ticker_col].astype(str).str.strip()
+        out = tidy
+        for col, target in ((earnings_col, "earnings_date"),
+                            (ex_div_col, "ex_dividend_date")):
+            if not col or col not in src.columns:
+                continue
+            decoded = src[col].map(_decode_event_date)
+            mapping: Dict[str, pd.Timestamp] = {}
+            for t, dts in zip(tk, decoded):
+                if not t or t.lower() in ("nan", "none", ""):
+                    continue
+                if dts is not None and t not in mapping:
+                    mapping[t] = dts
+            if mapping:
+                out = out.copy()
+                out[target] = out["ticker"].astype(str).str.strip().map(mapping)
+        return out
+    except Exception:
+        return tidy
+
+
 def _reconstruct_dates(n: int) -> pd.Series:
     """Descending business days from today for n rows (row 0 = latest)."""
     if n <= 0:
@@ -435,6 +533,9 @@ def parse_prices(content: bytes, filename: str = "") -> Tuple[pd.DataFrame, Dict
     # Company-name column from the data dump (optional). Exclude the ticker
     # column itself so we never mistake the identifier for the name.
     name_col = _find_col([c for c in cols if c != ticker_col], _NAME_ALIASES)
+    # Optional per-ticker event-date columns (earnings + ex-dividend).
+    earnings_col = _find_col([c for c in cols if c != ticker_col], _EARNINGS_ALIASES)
+    ex_div_col = _find_col([c for c in cols if c != ticker_col], _EX_DIV_ALIASES)
 
     # Spill per-ticker sheet uploaded directly: the ticker literal sits only in
     # the first data row (A2) while close/volume spill down many rows below it.
@@ -514,6 +615,9 @@ def parse_prices(content: bytes, filename: str = "") -> Tuple[pd.DataFrame, Dict
     # screen can label names even when the universe file lacked a name column.
     if ticker_col:
         tidy = _attach_name_from_dump(tidy, df, ticker_col, name_col)
+        # Attach decoded per-ticker event dates when present (backward-compatible;
+        # adds columns only when the dump carries them).
+        tidy = _attach_event_dates_from_dump(tidy, df, ticker_col, earnings_col, ex_div_col)
 
     report = build_quality_report(tidy, factset_errs)
     report["date_reconstructed"] = bool(date_reconstructed)
