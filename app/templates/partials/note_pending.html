@@ -12,7 +12,7 @@
    polling stops and the report is shown. #}
 <div id="note-poll"
      hx-get="/analysis/note/status?job={{ job_id }}"
-     hx-trigger="load delay:2s"
+     hx-trigger="every 2s"
      hx-target="#note-poll-inner"
      hx-swap="innerHTML">
   <div id="note-poll-inner">

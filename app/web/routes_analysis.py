@@ -274,9 +274,10 @@ def analysis_note_status(request: Request, job: str = ""):
     stale = _staleness(meta)
     rec = jobs.get_job(job)
     if rec is None:
-        # Unknown/expired: replace the whole poller (stops polling) via OOB swap.
+        # Unknown/expired: replace the whole poller (stops polling). The OOB
+        # element self-targets by its own id=note-poll with hx-swap-oob="true".
         return HTMLResponse(
-            "<div id='note-poll' hx-swap-oob='outerHTML:#note-poll'>"
+            "<div id='note-poll' hx-swap-oob='true'>"
             "<div class='note info'>This note request expired — please regenerate.</div>"
             "</div>"
         )
@@ -289,19 +290,20 @@ def analysis_note_status(request: Request, job: str = ""):
         )
     if status == "error":
         emsg = rec.get("error") or "generation failed"
-        # Replace the whole poller (removes trigger -> stops polling) via OOB.
+        # Replace the whole poller (removes trigger -> stops polling).
         return HTMLResponse(
-            "<div id='note-poll' hx-swap-oob='outerHTML:#note-poll'>"
+            "<div id='note-poll' hx-swap-oob='true'>"
             f"<div class='note error'>Research note generation failed: {emsg}</div>"
             "</div>"
         )
-    # done: render the final note and REPLACE the whole #note-poll via an OOB
-    # swap so the poll trigger is removed and the report is shown. The normal
-    # (targeted) response body is empty; the OOB fragment carries the note.
+    # done: replace the whole #note-poll (removing the poll trigger -> stops
+    # polling) with the final report. hx-swap-oob="true" self-targets by the
+    # element's own id. HTMX places OOB fragments regardless of the primary
+    # target, so the report reliably lands in the DOM.
     data = rec.get("result") or {}
     note_html = _render_note(request, data, stale).body.decode("utf-8")
     return HTMLResponse(
-        f"<div id='note-poll' hx-swap-oob='outerHTML:#note-poll'>{note_html}</div>"
+        f"<div id='note-poll' hx-swap-oob='true'>{note_html}</div>"
     )
 
 

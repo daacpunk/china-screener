@@ -130,10 +130,10 @@ def test_post_note_with_provider_returns_pending_partial(temp_db, monkeypatch):
     # Pending partial: has the poller with a job id, and NO rendered note yet.
     assert "note-poll" in r.text
     assert "/analysis/note/status?job=" in r.text
-    # Single self-re-arming poll trigger (not 'load, every 2s' which silently
-    # stops polling after an outerHTML self-replacement in HTMX 1.9.x).
-    assert 'hx-trigger="load delay:2s"' in r.text
-    assert 'every 2s' not in r.text
+    # Repeating poll trigger on the STABLE outer #note-poll (verified in a real
+    # browser: 'load delay' fires only ONCE and stops polling; 'every 2s' on an
+    # element that is never self-replaced during polling repeats reliably).
+    assert 'hx-trigger="every 2s"' in r.text
     # Stable outer poller: trigger swaps the INNER content, never itself.
     assert 'hx-target="#note-poll-inner"' in r.text
     assert "note-poll-inner" in r.text
