@@ -224,3 +224,30 @@ def test_status_error_returns_clean_error_no_poller(temp_db, monkeypatch):
     assert "hx-swap-oob" in r.text
     assert "hx-trigger" not in r.text
     assert "failed" in r.text.lower()
+
+
+def test_save_note_handles_nat_nan_numpy_timestamp(tmp_path):
+    """Regression: candidates with pandas NaT / NaN / numpy / Timestamp must not
+    crash save_note (previously raised 'NaTType is not JSON serializable' and
+    silently prevented notes from persisting)."""
+    import json as _json
+    import pandas as pd
+    import numpy as np
+    from app import notes_store as ns
+    dbp = str(tmp_path / "notes.db")
+    ns.init(dbp)
+    cands = [{
+        "ticker": "X", "name": "Xco", "side": "long",
+        "event_date": pd.NaT, "rsi": float("nan"),
+        "rank_z": np.float64(-4.2), "ex_dividend_date": pd.Timestamp("2026-05-26"),
+        "verdict": "MECHANICAL_DISLOCATION",
+    }]
+    nid = ns.save_note(pd.NaT, "deepseek", cands, "# body", db_path=dbp)
+    assert isinstance(nid, int) and nid > 0
+    row = ns.get_note(nid, db_path=dbp)
+    c = _json.loads(row["candidates_json"])[0]  # must be valid JSON
+    assert c["event_date"] is None
+    assert c["rsi"] is None
+    assert c["rank_z"] == -4.2
+    assert c["ex_dividend_date"].startswith("2026-05-26")
+    assert len(ns.list_notes(db_path=dbp)) == 1
