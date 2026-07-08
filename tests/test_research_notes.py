@@ -495,6 +495,151 @@ def test_generate_note_worker_raise_still_yields_candidate():
     assert out["markdown"]
 
 
+# --- Completeness guarantee: every selected candidate gets a subsection ------
+#
+# The synthesis model (esp. faster ones) often omits PASS/REJECT names even
+# though instructed to write one subsection per candidate. generate_note now
+# runs a deterministic COMPLETENESS PASS that appends a fallback subsection for
+# any omitted candidate, and builds the WHOLE note deterministically when
+# synthesis returns empty. These tests lock that guarantee in.
+
+
+def test_missing_candidates_returns_omitted_in_order_with_base_ticker_match():
+    triaged = {
+        "longs": [
+            {"row": {"ticker": "AAA"}, "side": "long", "verdict": "NEEDS_DATA"},
+            {"row": {"ticker": "BBB"}, "side": "long", "verdict": "NEEDS_DATA"},
+            {"row": {"ticker": "3360-HK"}, "side": "long", "verdict": "NEEDS_DATA"},
+            {"row": {"ticker": "DDD"}, "side": "long", "verdict": "NEEDS_DATA"},
+        ],
+        "shorts": [
+            {"row": {"ticker": "YYY"}, "side": "short", "verdict": "NEEDS_DATA"},
+            {"row": {"ticker": "ZZZ"}, "side": "short", "verdict": "NEEDS_DATA"},
+        ],
+    }
+    # Markdown mentions only AAA and 3360 (base-number of 3360-HK).
+    md = "### AAA long\nsome text\n### Company (3360) short\nmore text"
+    missing = rn._missing_candidates(md, triaged)
+    tickers = [m["row"]["ticker"] for m in missing]
+    # AAA present; 3360-HK present via base-number match; the other 4 missing
+    # in original longs-then-shorts order.
+    assert tickers == ["BBB", "DDD", "YYY", "ZZZ"]
+
+
+class OnlyFirstLongProvider(LLMProvider):
+    """Triage returns MECHANICAL; note SYNTHESIS writes ONLY the first long
+    (uses a distinctive long ticker prefix) and omits every other name."""
+    name = "fake"
+
+    def __init__(self, *a, **k):
+        super().__init__("fake-key", "fake-model")
+
+    @property
+    def available(self):
+        return True
+
+    def complete(self, prompt, **opts):
+        # Note-synthesis prompts contain the labeled-parts instruction; triage
+        # prompts contain the VERDICT instruction. Distinguish on that.
+        if "**Recommendation:**" in prompt:
+            # Synthesis: mention ONLY the first long ticker (L00), omit the rest.
+            return (
+                "Research note as of 2026-07-08.\n\n"
+                "## Long candidates\n\n"
+                "### Long0 (L00) — LONG candidate\n"
+                "- **Recommendation:** LONG\n"
+                "- **Setup:** oversold reversion.\n"
+            )
+        return (
+            "Index rebalance and forced flow; mechanical.\n"
+            "VERDICT: MECHANICAL_DISLOCATION"
+        )
+
+
+def test_generate_note_backfills_every_omitted_candidate():
+    oversold, overbought = _wide_universe(3, 3)
+    out = rn.generate_note(
+        OnlyFirstLongProvider(), oversold + overbought, oversold, overbought,
+        params={}, max_longs=3, max_shorts=3, idio_only=True, asof="2026-07-08",
+    )
+    md = out["markdown"]
+    # Every selected ticker appears in the final markdown.
+    for c in out["candidates"]:
+        assert c["ticker"] in md, f"{c['ticker']} missing from note"
+    # The omitted names were backfilled under an Additional candidates section.
+    assert "## Additional candidates" in md
+    # First long (mentioned by synthesis) is NOT double-written in backfill.
+    assert md.count("### Long0 (L00)") == 1
+
+
+class EmptySynthProvider(LLMProvider):
+    """Triage MECHANICAL; note synthesis returns an EMPTY string."""
+    name = "fake"
+
+    def __init__(self, *a, **k):
+        super().__init__("fake-key", "fake-model")
+
+    @property
+    def available(self):
+        return True
+
+    def complete(self, prompt, **opts):
+        if "**Recommendation:**" in prompt:
+            return ""  # synthesis produced nothing
+        return (
+            "Index rebalance and forced flow; mechanical.\n"
+            "VERDICT: MECHANICAL_DISLOCATION"
+        )
+
+
+def test_generate_note_empty_synthesis_builds_full_deterministic_note():
+    oversold, overbought = _wide_universe(2, 2)
+    out = rn.generate_note(
+        EmptySynthProvider(), oversold + overbought, oversold, overbought,
+        params={}, max_longs=2, max_shorts=2, idio_only=True, asof="2026-07-08",
+    )
+    md = out["markdown"]
+    assert md  # not empty despite synthesis returning ""
+    # Full deterministic note: as-of line + grouped sections + every ticker.
+    assert "2026-07-08" in md
+    assert "## Long candidates" in md and "## Short candidates" in md
+    for c in out["candidates"]:
+        assert c["ticker"] in md, f"{c['ticker']} missing from note"
+
+
+def test_render_candidate_fallback_recommendation_and_na_safe():
+    # MECHANICAL_DISLOCATION long -> LONG; short -> SHORT.
+    long_mech = {"row": {"ticker": "AAA", "name": "Alpha", "rank_z": -2.4,
+                         "rsi": 24.0, "peer_relative_z": -1.9,
+                         "dislocation_type": "IDIOSYNCRATIC"},
+                 "side": "long", "verdict": "MECHANICAL_DISLOCATION",
+                 "rationale": "ex-dividend", "source": "web-event"}
+    s = rn._render_candidate_fallback(long_mech)
+    assert "Alpha (AAA)" in s and "LONG candidate" in s
+    assert "**Recommendation:** LONG" in s
+    assert "Med/High" in s  # web-event source
+
+    short_mech = dict(long_mech, side="short")
+    assert "**Recommendation:** SHORT" in rn._render_candidate_fallback(short_mech)
+
+    # NEEDS_DATA and BROKEN_STORY -> PASS.
+    nd = dict(long_mech, verdict="NEEDS_DATA", rationale="", source="llm")
+    s_nd = rn._render_candidate_fallback(nd)
+    assert "**Recommendation:** PASS" in s_nd
+    assert "No specific catalyst identified." in s_nd
+    assert "**Conviction:** Low" in s_nd
+
+    bs = dict(long_mech, verdict="BROKEN_STORY")
+    assert "**Recommendation:** PASS" in rn._render_candidate_fallback(bs)
+
+    # n/a-safe: missing/None numeric fields never raise and render "n/a".
+    empty = {"row": {"ticker": "XXX", "rank_z": None, "rsi": "bad",
+                     "peer_relative_z": None, "dislocation_type": None},
+             "side": "long", "verdict": "NEEDS_DATA"}
+    s_empty = rn._render_candidate_fallback(empty)
+    assert "n/a" in s_empty and "XXX" in s_empty
+
+
 def test_generate_note_event_flag_mechanical_under_concurrency():
     """An event-flagged name still tags MECHANICAL_DISLOCATION source=event
     under the concurrent path (no web, LLM not called for the event name)."""

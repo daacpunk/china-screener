@@ -232,6 +232,119 @@ def _verdict_block(c: Dict[str, Any]) -> str:
     )
 
 
+def _render_candidate_fallback(entry: Dict[str, Any]) -> str:
+    """Deterministic markdown subsection for ONE candidate from its triage data.
+
+    Built entirely from the ``triaged`` entry (row + side + verdict + rationale +
+    source) — NO LLM. Guarantees that every selected candidate can be written up
+    even when the synthesis model omits it. Mirrors the note's labeled structure
+    (Recommendation / Setup / Catalyst & timing / Risks / Conviction) and reuses
+    the "Company Name (TICKER)" label helper. n/a-safe; never raises.
+    """
+    row = entry.get("row", {}) or {}
+    side = str(entry.get("side") or "").lower()
+    verdict = str(entry.get("verdict") or "NEEDS_DATA").upper()
+    rationale = (entry.get("rationale") or "").strip()
+    source = entry.get("source")
+
+    def f(x, nd=2):
+        try:
+            return f"{float(x):.{nd}f}"
+        except Exception:
+            return "n/a"
+
+    try:
+        label = _name_ticker_label(row) or str(row.get("ticker") or "").strip()
+    except Exception:
+        label = str(row.get("ticker") or "").strip()
+    if not label:
+        label = "(unknown)"
+    side_word = "SHORT" if side == "short" else "LONG"
+
+    # Recommendation: MECHANICAL_DISLOCATION => tradeable per side; else PASS.
+    if verdict == "MECHANICAL_DISLOCATION":
+        rec = side_word
+    else:
+        rec = "PASS"
+
+    # Setup: plain-English signal line from the row.
+    dtype = row.get("dislocation_type")
+    if dtype == "IDIOSYNCRATIC":
+        dtype_txt = "idiosyncratic"
+    elif dtype:
+        dtype_txt = "sector/macro"
+    else:
+        dtype_txt = "n/a"
+    setup = (
+        f"1-wk/1-mo z {f(row.get('rank_z'))}, RSI {f(row.get('rsi'), 1)}, "
+        f"peer-relative z {f(row.get('peer_relative_z'))} ({dtype_txt})."
+    )
+
+    # Catalyst & timing: triage rationale if present; include source for
+    # mechanical dislocations for provenance.
+    if rationale:
+        catalyst = rationale
+    else:
+        catalyst = "No specific catalyst identified."
+    if verdict == "MECHANICAL_DISLOCATION" and source:
+        catalyst = f"{catalyst} (source: {source})"
+
+    # Risks: honest line keyed off the verdict.
+    if verdict == "MECHANICAL_DISLOCATION":
+        risks = "Move may extend before reverting; confirm the mechanical driver."
+    elif verdict == "BROKEN_STORY":
+        risks = "Fundamental deterioration — reversion may not hold."
+    else:  # NEEDS_DATA and anything else
+        risks = "Catalyst unconfirmed — do not act without confirmation."
+
+    # Conviction: simple deterministic heuristic.
+    if verdict == "MECHANICAL_DISLOCATION":
+        conviction = "Med/High" if source in ("event", "web-event") else "Med"
+    else:  # NEEDS_DATA / BROKEN_STORY
+        conviction = "Low"
+
+    return (
+        f"### {label} — {side_word} candidate\n"
+        f"- **Recommendation:** {rec}\n"
+        f"- **Setup:** {setup}\n"
+        f"- **Catalyst & timing:** {catalyst}\n"
+        f"- **Risks:** {risks}\n"
+        f"- **Conviction:** {conviction}\n"
+    )
+
+
+def _missing_candidates(
+    markdown: str, triaged: Dict[str, List[Dict[str, Any]]]
+) -> List[Dict[str, Any]]:
+    """Return triage entries whose ticker does NOT appear in ``markdown``.
+
+    Case-insensitive substring match on the ticker string; also tries the bare
+    numeric/base ticker (the part before the first ``-`` or ``.``) so e.g.
+    ``3360-HK`` is considered present when the markdown mentions ``3360``.
+    Returned in the original longs-then-shorts order. n/a-safe; never raises.
+    """
+    hay = (markdown or "").lower()
+    missing: List[Dict[str, Any]] = []
+    for key in ("longs", "shorts"):
+        for entry in triaged.get(key, []) or []:
+            row = entry.get("row", {}) or {}
+            ticker = str(row.get("ticker") or "").strip()
+            if not ticker:
+                # No ticker to match on — treat as missing so it still gets
+                # written up deterministically.
+                missing.append(entry)
+                continue
+            tl = ticker.lower()
+            present = tl in hay
+            if not present:
+                base = re.split(r"[-.]", tl, 1)[0]
+                if base and base != tl and base in hay:
+                    present = True
+            if not present:
+                missing.append(entry)
+    return missing
+
+
 def build_note_prompt(candidates_with_triage: Dict[str, List[Dict[str, Any]]], asof: Any) -> str:
     """Assemble the full structured research note in markdown.
 
@@ -246,9 +359,16 @@ def build_note_prompt(candidates_with_triage: Dict[str, List[Dict[str, Any]]], a
     shorts = candidates_with_triage.get("shorts", [])
     long_lines = "\n".join(_verdict_block(c) for c in longs) or "(none)"
     short_lines = "\n".join(_verdict_block(c) for c in shorts) or "(none)"
+    total = len(longs) + len(shorts)
     return (
         f"{_METHODOLOGY}\n\n"
         f"You are an equity strategist writing a STRUCTURED research note, as of {asof}.\n"
+        f"There are EXACTLY {total} candidate(s) below ({len(longs)} long, "
+        f"{len(shorts)} short). You MUST output EXACTLY ONE subsection per "
+        "candidate — one for EVERY name listed, INCLUDING those to be marked "
+        "PASS/REJECT (BROKEN_STORY or NEEDS_DATA). Count them and do NOT omit, "
+        "merge, or skip ANY candidate; the total number of subsections must equal "
+        f"{total}.\n"
         "Start the note with a top line stating the as-of date. Then, for EACH "
         "candidate below, write a markdown subsection with these labeled parts:\n"
         "- **Recommendation:** LONG, SHORT, or PASS\n"
@@ -588,6 +708,50 @@ def generate_note(
     except Exception as e:  # noqa: BLE001
         errors.append(f"note: {e}")
         _log_usage(provider, "sidebar", ok=False, note=str(e)[:200])
+
+    # COMPLETENESS PASS — the deterministic guarantee. The synthesis model
+    # (esp. faster ones) often under-follows the "one subsection per candidate"
+    # instruction and silently omits PASS/REJECT names. All the data we need is
+    # already in ``triaged``, so we detect which selected candidates are missing
+    # from the synthesized markdown and APPEND a deterministic subsection for
+    # each. This runs even when synthesis errored / returned empty.
+    try:
+        missing = _missing_candidates(markdown, triaged)
+    except Exception:  # noqa: BLE001 — never let the guarantee crash the note
+        missing = []
+    if missing:
+        if (markdown or "").strip():
+            # Non-empty synthesis: append only the omitted names.
+            extra = "\n\n".join(
+                _render_candidate_fallback(e) for e in missing
+            )
+            markdown = (
+                markdown.rstrip()
+                + "\n\n## Additional candidates\n\n"
+                + extra
+                + "\n"
+            )
+        else:
+            # Synthesis failed / empty but we have triaged candidates: build the
+            # ENTIRE note deterministically so the user still gets a full note.
+            parts: List[str] = [f"Research note as of {asof}."]
+            long_subs = [
+                _render_candidate_fallback(e) for e in triaged.get("longs", [])
+            ]
+            short_subs = [
+                _render_candidate_fallback(e) for e in triaged.get("shorts", [])
+            ]
+            if long_subs:
+                parts.append(
+                    "## Long candidates (oversold-reversion)\n\n"
+                    + "\n\n".join(long_subs)
+                )
+            if short_subs:
+                parts.append(
+                    "## Short candidates (overbought-fade)\n\n"
+                    + "\n\n".join(short_subs)
+                )
+            markdown = "\n\n".join(parts) + "\n"
 
     # Attach triage verdict + provenance to the candidate summary for
     # display/persistence (candidates_json is free-form; no schema change).
