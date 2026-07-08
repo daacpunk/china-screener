@@ -5,7 +5,7 @@
    GET /analysis/note/status while the job is still running. #}
 <div id="note-poll"
      hx-get="/analysis/note/status?job={{ job_id }}"
-     hx-trigger="load delay:2s, every 2s"
+     hx-trigger="load delay:2s"
      hx-target="#note-poll"
      hx-swap="outerHTML">
   <div class="note-generating">
