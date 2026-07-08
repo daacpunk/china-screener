@@ -187,16 +187,22 @@ def _note_job(prov, master, oversold, overbought, params, max_longs, max_shorts,
         web_provider=web_provider,
     )
     note_id = None
-    try:
-        note_id = ns.save_note(out.get("asof"), out.get("provider"),
-                               out.get("candidates"), out.get("markdown"))
-    except Exception:  # noqa: BLE001 — persistence must never crash the job
-        note_id = None
+    save_error = None
+    # Only persist when there's an actual note body (the no-provider fast path
+    # returns candidates + a set-a-key message and should NOT create a row).
+    if out.get("markdown"):
+        try:
+            note_id = ns.save_note(out.get("asof"), out.get("provider"),
+                                   out.get("candidates"), out.get("markdown"))
+        except Exception as e:  # noqa: BLE001 — persistence must never crash the job
+            note_id = None
+            save_error = f"{e.__class__.__name__}: {e}"
     html = md.markdown(out["markdown"], extensions=["tables"]) if out.get("markdown") else ""
     return {
         "note_id": note_id, "html": html, "candidates": out.get("candidates") or [],
         "error": out.get("error"), "provider": out.get("provider"),
         "asof": out.get("asof"), "notice": out.get("notice"),
+        "save_error": save_error,
     }
 
 
@@ -208,6 +214,7 @@ def _render_note(request: Request, data: dict, stale: dict) -> HTMLResponse:
             "candidates": data.get("candidates") or [],
             "error": data.get("error"), "provider": data.get("provider"),
             "asof": data.get("asof"), "notice": data.get("notice"),
+            "save_error": data.get("save_error"),
         },
         **stale,
     })

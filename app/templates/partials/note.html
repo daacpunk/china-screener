@@ -14,6 +14,9 @@
 {% if note.notice %}
 <div class="note info" style="font-size:12px">{{ note.notice }}</div>
 {% endif %}
+{% if note.save_error %}
+<div class="note error" style="font-size:12px">Note generated but could not be saved to history: {{ note.save_error }}</div>
+{% endif %}
 
 {% macro stag(s, ed) %}{% if s=='event' %}<span class="tag event">event{% if ed %} {{ ed }}{% endif %}</span>{% elif s=='event+llm' %}<span class="tag event">event+web{% if ed %} {{ ed }}{% endif %}</span>{% elif s=='web-event' %}<span class="tag event">web-event</span>{% elif s=='llm' %}<span class="tag sector">web/LLM</span>{% else %}—{% endif %}{% endmacro %}
 
