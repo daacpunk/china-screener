@@ -274,22 +274,35 @@ def analysis_note_status(request: Request, job: str = ""):
     stale = _staleness(meta)
     rec = jobs.get_job(job)
     if rec is None:
+        # Unknown/expired: replace the whole poller (stops polling) via OOB swap.
         return HTMLResponse(
+            "<div id='note-poll' hx-swap-oob='outerHTML:#note-poll'>"
             "<div class='note info'>This note request expired — please regenerate.</div>"
+            "</div>"
         )
     status = rec.get("status")
     if status == "running":
-        return templates.TemplateResponse(request, "partials/note_pending.html", {
-            "job_id": job, **stale,
-        })
+        # Still running: swap ONLY the inner spinner; the outer #note-poll (with
+        # its poll trigger) stays put and keeps polling reliably.
+        return templates.TemplateResponse(
+            request, "partials/note_pending_inner.html", {}
+        )
     if status == "error":
         emsg = rec.get("error") or "generation failed"
+        # Replace the whole poller (removes trigger -> stops polling) via OOB.
         return HTMLResponse(
+            "<div id='note-poll' hx-swap-oob='outerHTML:#note-poll'>"
             f"<div class='note error'>Research note generation failed: {emsg}</div>"
+            "</div>"
         )
-    # done
+    # done: render the final note and REPLACE the whole #note-poll via an OOB
+    # swap so the poll trigger is removed and the report is shown. The normal
+    # (targeted) response body is empty; the OOB fragment carries the note.
     data = rec.get("result") or {}
-    return _render_note(request, data, stale)
+    note_html = _render_note(request, data, stale).body.decode("utf-8")
+    return HTMLResponse(
+        f"<div id='note-poll' hx-swap-oob='outerHTML:#note-poll'>{note_html}</div>"
+    )
 
 
 @router.post("/analysis/note", response_class=HTMLResponse)

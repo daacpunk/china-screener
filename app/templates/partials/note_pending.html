@@ -1,15 +1,21 @@
-{# Polling partial for background research-note generation.
-   Self-targets and swaps outerHTML so that when the status route returns the
-   FINAL note (which has no poller), it REPLACES this whole element and polling
-   stops. Rendered both by POST /analysis/note (kickoff) and by
-   GET /analysis/note/status while the job is still running. #}
+{# Background research-note polling partial (STABLE outer poller pattern).
+
+   The OUTER #note-poll element carries the poll trigger and is NEVER replaced
+   while running — it swaps only its INNER content (#note-poll-inner). This is
+   far more reliable in HTMX 1.9.x than a self-replacing (outerHTML) poller,
+   which can silently stop polling after the first swap.
+
+   While the job runs, GET /analysis/note/status returns just the spinner inner
+   HTML (note_pending_inner.html) which swaps into #note-poll-inner. When the
+   job finishes, the status route returns the final note wrapped with an
+   hx-swap-oob that REPLACES the whole #note-poll (removing the trigger) so
+   polling stops and the report is shown. #}
 <div id="note-poll"
      hx-get="/analysis/note/status?job={{ job_id }}"
      hx-trigger="load delay:2s"
-     hx-target="#note-poll"
-     hx-swap="outerHTML">
-  <div class="note-generating">
-    <span class="spinner" aria-hidden="true"></span>
-    <span>Generating research note (this can take a minute for many names + web search)…</span>
+     hx-target="#note-poll-inner"
+     hx-swap="innerHTML">
+  <div id="note-poll-inner">
+    {% include "partials/note_pending_inner.html" %}
   </div>
 </div>

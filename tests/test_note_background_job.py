@@ -134,6 +134,9 @@ def test_post_note_with_provider_returns_pending_partial(temp_db, monkeypatch):
     # stops polling after an outerHTML self-replacement in HTMX 1.9.x).
     assert 'hx-trigger="load delay:2s"' in r.text
     assert 'every 2s' not in r.text
+    # Stable outer poller: trigger swaps the INNER content, never itself.
+    assert 'hx-target="#note-poll-inner"' in r.text
+    assert "note-poll-inner" in r.text
     assert "Body text here" not in r.text
 
 
@@ -160,7 +163,9 @@ def test_status_unknown_job_returns_expired(temp_db, monkeypatch):
     r = client.get("/analysis/note/status?job=bogus-id")
     assert r.status_code == 200
     assert "expired" in r.text.lower()
-    assert "note-poll" not in r.text
+    # Polling must STOP: OOB-replaces the poller and carries no live poll trigger.
+    assert "hx-swap-oob" in r.text
+    assert "hx-get" not in r.text and "hx-trigger" not in r.text
 
 
 def test_status_running_returns_pending_with_poller(temp_db, monkeypatch):
@@ -169,8 +174,10 @@ def test_status_running_returns_pending_with_poller(temp_db, monkeypatch):
     jid = jobs.start_job(lambda: (time.sleep(2.0) or {}))
     r = client.get(f"/analysis/note/status?job={jid}")
     assert r.status_code == 200
-    assert "note-poll" in r.text
-    assert f"/analysis/note/status?job={jid}" in r.text
+    # Running: returns ONLY the inner spinner (swapped into #note-poll-inner);
+    # the stable outer #note-poll poller stays in the DOM and keeps polling.
+    assert "note-generating" in r.text
+    assert "hx-swap-oob" not in r.text  # not a stop signal
 
 
 def test_status_done_returns_final_note_no_poller(temp_db, monkeypatch):
@@ -191,8 +198,10 @@ def test_status_done_returns_final_note_no_poller(temp_db, monkeypatch):
     assert rec and rec["status"] == "done"
     r = client.get(f"/analysis/note/status?job={jid}")
     assert r.status_code == 200
-    # Final note: rendered markdown + candidate table, and NO poller.
-    assert "note-poll" not in r.text
+    # Final note: rendered markdown + candidate table, delivered via an OOB swap
+    # that REPLACES the poller (removing the live trigger -> polling stops).
+    assert "hx-swap-oob" in r.text
+    assert "hx-trigger" not in r.text
     assert "Selected candidates" in r.text
     assert "Body text here" in r.text
 
@@ -211,5 +220,7 @@ def test_status_error_returns_clean_error_no_poller(temp_db, monkeypatch):
         time.sleep(0.01)
     r = client.get(f"/analysis/note/status?job={jid}")
     assert r.status_code == 200
-    assert "note-poll" not in r.text
+    # Error: OOB-replaces the poller (stops polling), no live trigger.
+    assert "hx-swap-oob" in r.text
+    assert "hx-trigger" not in r.text
     assert "failed" in r.text.lower()
