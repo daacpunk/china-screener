@@ -36,6 +36,7 @@ from __future__ import annotations
 import re
 from typing import Any, Dict, List, Optional, Tuple
 
+from . import metrics as wmetrics
 from ..llm.base import LLMProvider
 from ..llm.research_notes import _log_usage, is_web_capable
 from ..llm.resilience import complete_with_fallback
@@ -94,6 +95,37 @@ def _vol(v: Any) -> str:
         return f"{float(v) * 100:.1f}%"
     except (TypeError, ValueError):
         return "—"
+
+
+def fmt_dollars(x: Any) -> str:
+    """Compact human dollar formatting with a neutral "$" label (#4):
+    $1.2b / $85m / $950k / $120. None / non-finite -> "\u2014".
+
+    Uses one decimal place for the b/m/k scales (e.g. $1.2b, $85.0m -> $85m: a
+    trailing ".0" is trimmed), and no decimals below 1,000. Pure, never raises."""
+    try:
+        if x is None:
+            return "\u2014"
+        v = float(x)
+    except (TypeError, ValueError):
+        return "\u2014"
+    import math as _m
+    if not _m.isfinite(v):
+        return "\u2014"
+    neg = v < 0
+    a = abs(v)
+    if a >= 1e9:
+        s = f"{a / 1e9:.1f}b"
+    elif a >= 1e6:
+        s = f"{a / 1e6:.1f}m"
+    elif a >= 1e3:
+        s = f"{a / 1e3:.1f}k"
+    else:
+        s = f"{a:.0f}"
+    # Trim a trailing ".0" on the scaled forms ($85.0m -> $85m).
+    if s.endswith(("b", "m", "k")) and s[:-1].endswith(".0"):
+        s = s[:-3] + s[-1]
+    return f"-${s}" if neg else f"${s}"
 
 
 def _md_table(headers: List[str], rows: List[List[str]]) -> str:
@@ -267,6 +299,7 @@ def render_fundamentals_table(metrics: Dict[str, Any]) -> str:
         rows.append([
             str(sym),
             _pct(m.get("ret_1w")),
+            fmt_dollars(m.get("advv_20d")),
             _ratio(m.get("fwd_pe")),
             (f"{rev_dir} {_pct(mom.get('revision_pct'))}"
              if mom.get("revision_pct") is not None else rev_dir),
@@ -279,7 +312,7 @@ def render_fundamentals_table(metrics: Dict[str, Any]) -> str:
     return (
         "\n### Fundamentals & attribution (notable movers)\n"
         + _md_table(
-            ["Symbol", "1W", "Fwd P/E", "EPS rev (4wk)", "Disp",
+            ["Symbol", "1W", "$ADV", "Fwd P/E", "EPS rev (4wk)", "Disp",
              "Sector", "Attribution"],
             rows,
         )
@@ -306,15 +339,17 @@ def render_metric_tables(metrics: Dict[str, Any]) -> str:
     parts.append("### Movers & shakers\n")
     parts.append("**Top gainers (1W)**\n")
     parts.append(_md_table(
-        ["Symbol", "1W", "vs HSI", "Vol x"],
+        ["Symbol", "1W", "vs HSI", "Vol x", "$ADV"],
         [[str(r.get("symbol")), _pct(r.get("ret_1w")), _pct(r.get("rel_1w")),
-          _ratio(r.get("vol_ratio"))] for r in movers.get("gainers_1w", [])],
+          _ratio(r.get("vol_ratio")), fmt_dollars(r.get("advv_20d"))]
+         for r in movers.get("gainers_1w", [])],
     ))
     parts.append("\n**Top losers (1W)**\n")
     parts.append(_md_table(
-        ["Symbol", "1W", "vs HSI", "Vol x"],
+        ["Symbol", "1W", "vs HSI", "Vol x", "$ADV"],
         [[str(r.get("symbol")), _pct(r.get("ret_1w")), _pct(r.get("rel_1w")),
-          _ratio(r.get("vol_ratio"))] for r in movers.get("losers_1w", [])],
+          _ratio(r.get("vol_ratio")), fmt_dollars(r.get("advv_20d"))]
+         for r in movers.get("losers_1w", [])],
     ))
     parts.append("\n**Biggest volume shifts (week avg vs 20D ADV)**\n")
     parts.append(_md_table(
@@ -334,10 +369,22 @@ def render_metric_tables(metrics: Dict[str, Any]) -> str:
     lead = movers.get("rel_leaders", [])
     lag = movers.get("rel_laggards", [])
     parts.append(_md_table(
-        ["Symbol", "vs HSI 1W", "1W"],
-        [[str(r.get("symbol")), _pct(r.get("rel_1w")), _pct(r.get("ret_1w"))]
+        ["Symbol", "vs HSI 1W", "1W", "Beta", "Alpha (1W)"],
+        [[str(r.get("symbol")), _pct(r.get("rel_1w")), _pct(r.get("ret_1w")),
+          _num(r.get("beta_60d")), _pct(r.get("alpha_1w"))]
          for r in (lead + lag)],
     ))
+    # Beta-adjusted alpha leaders / laggards (risk-adjusted vs own market
+    # sensitivity). Rendered only when any alpha is available.
+    a_lead = movers.get("alpha_leaders", [])
+    a_lag = movers.get("alpha_laggards", [])
+    if any(r.get("alpha_1w") is not None for r in (a_lead + a_lag)):
+        parts.append("\n**Alpha leaders / laggards (1W, beta-adjusted vs HSI)**\n")
+        parts.append(_md_table(
+            ["Symbol", "Alpha (1W)", "1W", "Beta"],
+            [[str(r.get("symbol")), _pct(r.get("alpha_1w")), _pct(r.get("ret_1w")),
+              _num(r.get("beta_60d"))] for r in (a_lead + a_lag)],
+        ))
 
     # Opportunities / gaps
     parts.append("\n### Opportunities & gaps\n")
@@ -376,6 +423,103 @@ def render_metric_tables(metrics: Dict[str, Any]) -> str:
     if fund_tbl:
         parts.append(fund_tbl)
     return "\n".join(parts)
+
+
+# ---------------------------------------------------------------------------
+# #1 Market internals + #6 Sector scoreboard rendering (pure, None-safe)
+# ---------------------------------------------------------------------------
+def _name_labels(metrics: Dict[str, Any], syms: List[str], cap: int = 6) -> str:
+    """Render 'Company Name (TICKER)' labels for up to ``cap`` symbols, then a
+    '+N more' tail. '' when the list is empty. None-safe."""
+    per = metrics.get("per_ticker") or {}
+    syms = list(syms or [])
+    shown = syms[:cap]
+    labels = []
+    for s in shown:
+        rec = per.get(s) or {"symbol": s}
+        labels.append(_descriptor(rec))
+    out = ", ".join(labels)
+    extra = len(syms) - len(shown)
+    if extra > 0:
+        out += f" +{extra} more"
+    return out
+
+
+def render_market_internals(metrics: Dict[str, Any]) -> str:
+    """The '## Market internals' section body (#1): A/D counts + breadth ratio,
+    up/down dollar volume, new highs/lows, and a bolded divergence line when
+    present. Returns '' when no breadth data is available (e.g. an old snapshot
+    with no valid returns). Never raises."""
+    b = metrics.get("breadth") or {}
+    n_valid = b.get("n_valid") or 0
+    if not n_valid:
+        return ""
+    adv = b.get("advancers") or 0
+    dec = b.get("decliners") or 0
+    flat = b.get("flat") or 0
+    br = b.get("breadth_ratio")
+    br_txt = (f"{float(br) * 100:.0f}%" if br is not None else "—")
+    lines: List[str] = []
+    lines.append(
+        f"- **Advance / decline:** {adv} up, {dec} down, {flat} flat "
+        f"of {n_valid} names \u2014 breadth ratio {br_txt}."
+    )
+    up_dv = b.get("up_dollar_vol")
+    down_dv = b.get("down_dollar_vol")
+    if up_dv is not None or down_dv is not None:
+        lines.append(
+            f"- **Up / down volume:** {fmt_dollars(up_dv)} traded in advancing "
+            f"names vs {fmt_dollars(down_dv)} in declining names."
+        )
+    highs = b.get("new_highs") or []
+    lows = b.get("new_lows") or []
+    if highs:
+        lines.append(f"- **New highs ({len(highs)}):** {_name_labels(metrics, highs)}.")
+    if lows:
+        lines.append(f"- **New lows ({len(lows)}):** {_name_labels(metrics, lows)}.")
+    div = b.get("divergence")
+    if div:
+        lines.append(f"- **{div}**")
+    return "\n".join(lines).strip()
+
+
+def _rotation_tag(sec: Dict[str, Any]) -> str:
+    """Delta / rotation cell for the scoreboard: the rotation tag with its rank
+    move when the sector rotated >= the threshold, else an em-dash. None-safe."""
+    rot = sec.get("rotation")
+    prev = sec.get("prev_rank")
+    rank = sec.get("rank")
+    if rot and prev is not None and rank is not None:
+        return f"{rot} ({prev}\u2192{rank})"
+    if rot:
+        return str(rot)
+    return "—"
+
+
+def render_sector_scoreboard(metrics: Dict[str, Any]) -> str:
+    """The '## Sector scoreboard' section body (#6): Sector | 1W med | YTD med |
+    Breadth (a/d) | Δ (rotation tag). Returns '' when no sector data (an old
+    snapshot without a sector column). Never raises."""
+    sr = metrics.get("sector_rotation") or {}
+    sectors = sr.get("sectors") or []
+    if not sectors:
+        return ""
+    rows: List[List[str]] = []
+    for s in sectors:
+        rows.append([
+            str(s.get("sector") or "—"),
+            _pct(s.get("ret_1w_med")),
+            _pct(s.get("ret_ytd_med")),
+            f"{s.get('adv') or 0}/{s.get('dec') or 0}",
+            _rotation_tag(s),
+        ])
+    body = _md_table(
+        ["Sector", "1W med", "YTD med", "Breadth (a/d)", "Δ"], rows,
+    )
+    note = sr.get("note")
+    if note:
+        body += f"_Rotation tags: {note}._\n"
+    return body
 
 
 def _staleness_banner(metrics: Dict[str, Any]) -> str:
@@ -488,15 +632,65 @@ def render_grouped_movers(metrics: Dict[str, Any]) -> str:
 # ---------------------------------------------------------------------------
 # Key takeaways (AI-generated; deterministic fallback)
 # ---------------------------------------------------------------------------
+def _breadth_context_line(metrics: Dict[str, Any]) -> str:
+    """One grounded sentence summarizing breadth for the prompts / deterministic
+    takeaways. '' when no breadth data."""
+    b = metrics.get("breadth") or {}
+    if not (b.get("n_valid") or 0):
+        return ""
+    br = b.get("breadth_ratio")
+    br_txt = f"{float(br) * 100:.0f}%" if br is not None else "n/a"
+    txt = (f"Breadth {b.get('advancers', 0)}/{b.get('decliners', 0)} up/down "
+           f"(ratio {br_txt})")
+    up_dv, down_dv = b.get("up_dollar_vol"), b.get("down_dollar_vol")
+    if up_dv is not None or down_dv is not None:
+        txt += (f", {fmt_dollars(up_dv)} traded up vs {fmt_dollars(down_dv)} "
+                "down")
+    if b.get("divergence"):
+        txt += f". {b.get('divergence')}"
+    else:
+        txt += "."
+    return txt
+
+
+def _sector_context_line(metrics: Dict[str, Any]) -> str:
+    """One grounded sentence: top sector leader + laggard + any rotation tag. ''
+    when no sector data."""
+    sr = metrics.get("sector_rotation") or {}
+    sectors = sr.get("sectors") or []
+    ranked = [s for s in sectors if s.get("ret_1w_med") is not None]
+    if not ranked:
+        return ""
+    lead = ranked[0]
+    lag = ranked[-1]
+    txt = (f"Sector leader {lead.get('sector')} ({_pct(lead.get('ret_1w_med'))} "
+           f"1W median), laggard {lag.get('sector')} "
+           f"({_pct(lag.get('ret_1w_med'))})")
+    rots = [f"{s.get('sector')} {s.get('rotation')}"
+            for s in sectors if s.get("rotation")]
+    if rots:
+        txt += ". Rotation: " + "; ".join(rots)
+    txt += "."
+    return txt
+
+
 def build_takeaways_prompt(metrics: Dict[str, Any]) -> str:
     """Prompt for the KEY TAKEAWAYS box. Grounded ONLY in computed numbers (the
-    grouped movers + HSI + attribution counts + extremes). Forbids invention."""
+    grouped movers + HSI + attribution counts + extremes + breadth + sector
+    rotation). Forbids invention."""
     asof = metrics.get("asof") or "the as-of date"
     hsi = metrics.get("hsi") or {}
     grouped = render_grouped_movers(metrics)
     spec, total = _count_specific(metrics)
+    breadth_line = _breadth_context_line(metrics)
+    sector_line = _sector_context_line(metrics)
     hsi_line = (f"HSI {_pct(hsi.get('ret_1w'))} on the week, {_pct(hsi.get('ret_ytd'))} "
                 f"YTD, short trend {hsi.get('trend') or 'n/a'}.")
+    extra_ctx = ""
+    if breadth_line:
+        extra_ctx += f"\nMarket breadth (computed): {breadth_line}\n"
+    if sector_line:
+        extra_ctx += f"Sector scoreboard (computed): {sector_line}\n"
     return (
         "You are an equity strategist writing the KEY TAKEAWAYS box at the TOP of "
         f"a weekly one-pager for a Hang Seng (HSI) universe, as of {asof}.\n\n"
@@ -518,11 +712,17 @@ def build_takeaways_prompt(metrics: Dict[str, Any]) -> str:
         "Refer to each name by its COMPANY NAME with the "
         "ticker in parentheses, e.g. 'Some Company (9636-HK)', not bare codes and "
         "not the sector in the parentheses. "
-        "Reference the HSI figure ONCE. Do NOT invent tickers, prices, news, or "
+        "Reference the HSI figure ONCE. Where the data supports it, you MAY also "
+        "cite MARKET BREADTH (e.g. a narrow tape / hidden strength divergence, or "
+        "whether dollar volume flowed with the winners or the losers) and the "
+        "SECTOR SCOREBOARD (which sector led/lagged, and any 'rotation in/out' "
+        "tag) from the computed context below \u2014 but only when it adds signal. "
+        "Do NOT invent tickers, prices, news, or "
         "catalysts \u2014 every number must come from below; never fabricate a "
         "valuation, momentum or watch fact the figures do not support. Output ONLY "
         "the bullets, each starting with '- '.\n\n"
-        f"HSI: {hsi_line}\n\n"
+        f"HSI: {hsi_line}\n"
+        f"{extra_ctx}\n"
         f"Grouped movers (computed):\n{grouped}\n"
     )
 
@@ -625,6 +825,39 @@ def render_takeaways_deterministic(metrics: Dict[str, Any]) -> str:
     if watch:
         bullets.append(watch)
 
+    # (6) Market breadth line (when breadth present) — lead with any divergence.
+    b = metrics.get("breadth") or {}
+    if (b.get("n_valid") or 0):
+        br = b.get("breadth_ratio")
+        br_txt = f"{float(br) * 100:.0f}%" if br is not None else "n/a"
+        if b.get("divergence"):
+            bullets.append(f"Breadth: {b.get('divergence')} "
+                           f"({b.get('advancers', 0)} up / {b.get('decliners', 0)} "
+                           f"down, ratio {br_txt}).")
+        else:
+            bullets.append(
+                f"Breadth: {b.get('advancers', 0)} names up vs "
+                f"{b.get('decliners', 0)} down (ratio {br_txt}) \u2014 the tape's "
+                "internals under the index move."
+            )
+
+    # (7) Sector leader / laggard line (when the scoreboard has data).
+    sr = metrics.get("sector_rotation") or {}
+    ranked = [s for s in (sr.get("sectors") or [])
+              if s.get("ret_1w_med") is not None]
+    if ranked:
+        lead = ranked[0]
+        lag = ranked[-1]
+        sent = (f"Sectors: {lead.get('sector')} led "
+                f"({_pct(lead.get('ret_1w_med'))} 1W median) and "
+                f"{lag.get('sector')} lagged ({_pct(lag.get('ret_1w_med'))})")
+        rots = [f"{s.get('sector')} {s.get('rotation')}"
+                for s in ranked if s.get("rotation")]
+        if rots:
+            sent += "; rotation: " + ", ".join(rots)
+        sent += "."
+        bullets.append(sent)
+
     if not bullets:
         bullets.append("Not enough loaded data to synthesize takeaways this week.")
     return "\n".join(f"- {b}" for b in bullets)
@@ -650,6 +883,18 @@ _GLOSSARY_TERMS: List[Tuple[str, str]] = [
      "window (relative performance)."),
     ("EPS revision", "the change in the consensus FY1 EPS estimate over the past "
      "~4 weeks (up = upgrades, down = cuts)."),
+    ("beta", "how much the stock tends to move for a given index move: beta 1.5 "
+     "means it typically swings 1.5x the HSI (estimated from ~60 days of daily "
+     "returns)."),
+    ("alpha (1W)", "the part of the week's move NOT explained by the market: the "
+     "stock's 1W return minus beta times the HSI's 1W return \u2014 positive alpha "
+     "beat what its market sensitivity alone predicted."),
+    ("$ADV", "average daily dollar volume over the trailing 20 days (price x "
+     "shares traded); a rough gauge of how much can be traded without moving the "
+     "price \u2014 a big move on thin $ADV is harder to trade at size."),
+    ("breadth", "how many names rose vs fell on the week; breadth ratio = "
+     "advancers / (advancers + decliners). Low breadth while the index rises "
+     "means gains are concentrated in a few names (a narrow tape)."),
 ]
 
 
@@ -796,11 +1041,45 @@ def render_catalysts_deterministic(metrics: Dict[str, Any]) -> str:
 # ---------------------------------------------------------------------------
 # Prompt builders (pure)
 # ---------------------------------------------------------------------------
+def _mover_data_lines(metrics: Dict[str, Any]) -> str:
+    """Per-name grounded data lines for the highlighted movers, carrying $ADV
+    (advv_20d), beta and alpha alongside the 1W move, so the model can apply the
+    tradeability caveat and alpha language. Deduped over gainers+losers+extremes.
+    '' when no movers. None-safe."""
+    movers = metrics.get("movers") or {}
+    per = metrics.get("per_ticker") or {}
+    pool: List[Dict[str, Any]] = []
+    seen: set = set()
+    for grp in ("gainers_1w", "losers_1w", "extremes"):
+        for r in movers.get(grp, []) or []:
+            sym = r.get("symbol")
+            if sym and sym not in seen:
+                seen.add(sym)
+                pool.append(r)
+    lines: List[str] = []
+    for r in pool:
+        sym = r.get("symbol")
+        m = per.get(sym, {}) or {}
+        advv = r.get("advv_20d")
+        if advv is None:
+            advv = m.get("advv_20d")
+        thin = (advv is not None and advv < wmetrics.THIN_ADV_DOLLARS)
+        thin_txt = " [THIN: below $25m ADV]" if thin else ""
+        lines.append(
+            f"- {_descriptor(r)}: 1W {_pct(r.get('ret_1w'))}, "
+            f"$ADV {fmt_dollars(advv)}{thin_txt}, "
+            f"beta {_num(r.get('beta_60d') if r.get('beta_60d') is not None else m.get('beta_60d'))}, "
+            f"alpha(1W) {_pct(r.get('alpha_1w') if r.get('alpha_1w') is not None else m.get('alpha_1w'))}."
+        )
+    return "\n".join(lines)
+
+
 def build_observations_prompt(metrics: Dict[str, Any]) -> str:
     asof = metrics.get("asof") or "the as-of date"
     grouped = render_grouped_movers(metrics)
     tables = render_metric_tables(metrics)
     spec, total = _count_specific(metrics)
+    data_lines = _mover_data_lines(metrics)
     return (
         "You are an equity strategist writing the WHAT MOVED AND WHY section of a "
         f"weekly one-pager for a Hang Seng (HSI) universe, as of {asof}. Write for "
@@ -832,6 +1111,17 @@ def build_observations_prompt(metrics: Dict[str, Any]) -> str:
         "follow-through (weak conviction / possible churn), or a large price move "
         "WITHOUT volume confirmation (thin, less reliable). Say plainly whether the "
         "volume supports or questions the move.\n"
+        "- TRADEABILITY CAVEAT: for any highlighted mover whose $ADV (dollar 20D "
+        "average daily volume) is below $25m \u2014 marked [THIN] in the per-name "
+        "data \u2014 add a short caveat that it is thin: a large move on thin "
+        "liquidity is harder to trade at size. Use the given $ADV number; do not "
+        "invent one.\n"
+        "- ALPHA LANGUAGE: for the lead names, use the beta / alpha(1W) figures. "
+        "Alpha is the part of the move NOT explained by the market (return minus "
+        "beta times the HSI move). When a name's 1W return is LARGE but its "
+        "alpha(1W) is SMALL, say the move was mostly BETA / market-explained, NOT "
+        "stock-specific; when alpha is large, the name genuinely out/underperformed "
+        "its market sensitivity.\n"
         "- Translate attribution into plain English: 'stock-specific' means it "
         "moved differently from its sector peers; 'sector-driven' means it moved "
         "with them.\n"
@@ -844,6 +1134,9 @@ def build_observations_prompt(metrics: Dict[str, Any]) -> str:
         "Grouped movers (already computed -- rewrite into flowing prose + bullets, "
         "do not just copy):\n"
         f"{grouped}\n\n"
+        "Per-name liquidity & risk-adjusted data ($ADV, beta, alpha \u2014 use for "
+        "the tradeability caveat and alpha language):\n"
+        f"{data_lines or '(none)'}\n\n"
         "Full computed tables for reference (figures only):\n"
         f"{tables}\n"
     )
@@ -973,6 +1266,12 @@ def _no_key_markdown(metrics: Dict[str, Any]) -> str:
         parts += ["## What moved and why", "", grouped.strip(), ""]
     if catalysts.strip():
         parts += ["## Catalysts", "", catalysts.strip(), ""]
+    internals = render_market_internals(metrics)
+    if internals.strip():
+        parts += ["## Market internals", "", internals.strip(), ""]
+    scoreboard = render_sector_scoreboard(metrics)
+    if scoreboard.strip():
+        parts += ["## Sector scoreboard", "", scoreboard.strip(), ""]
     parts += [glossary, ""]
     parts += ["## Computed metrics", "", tables]
     return "\n".join(parts)
@@ -1004,6 +1303,15 @@ def _assemble(
         parts += ["## Catalysts (web)", "", catalysts.strip(), ""]
     if hsi_commentary.strip():
         parts += ["## HSI macro view", "", hsi_commentary.strip(), ""]
+    # Market internals (breadth / up-down $vol / new highs-lows / divergence) and
+    # the sector scoreboard sit AFTER the macro view, BEFORE the glossary. Both
+    # omit themselves when their underlying data is absent.
+    internals = render_market_internals(metrics)
+    if internals.strip():
+        parts += ["## Market internals", "", internals.strip(), ""]
+    scoreboard = render_sector_scoreboard(metrics)
+    if scoreboard.strip():
+        parts += ["## Sector scoreboard", "", scoreboard.strip(), ""]
     # Inline glossary so every term used above has a plain-English definition.
     parts += [render_glossary(), ""]
     # Always append the deterministic data tables for auditability.

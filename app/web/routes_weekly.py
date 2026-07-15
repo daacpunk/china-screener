@@ -377,12 +377,31 @@ def weekly_data_clear():
 # ---------------------------------------------------------------------------
 # (d) Generate note + view / export
 # ---------------------------------------------------------------------------
+def _prev_note_metrics() -> Optional[Dict[str, Any]]:
+    """Load the MOST RECENT saved weekly note's metrics (for sector-rotation
+    history, #6). Returns the metrics dict or None when there is no prior note.
+    Never raises \u2014 rotation history is best-effort."""
+    try:
+        recent = wnotes.list_notes(limit=1)
+        if not recent:
+            return None
+        rec = wnotes.get_note(int(recent[0]["id"]))
+        if not rec:
+            return None
+        return rec.get("metrics") or None
+    except Exception:  # noqa: BLE001 — must never break note generation
+        return None
+
+
 def _build_note(provider_name: str = "", with_news: Optional[bool] = None) -> Dict[str, Any]:
     """Compute metrics from the active snapshot, resolve provider, generate the
     note. Never raises. Returns the note dict (exporter-shaped)."""
     snap = wsnap.get_active()
     data = snap.get("data", {}) if snap else {}
-    metrics = wmetrics.compute_weekly_metrics(data or {}, _universe_sectors())
+    prev_metrics = _prev_note_metrics()
+    metrics = wmetrics.compute_weekly_metrics(
+        data or {}, _universe_sectors(), prev_note_metrics=prev_metrics,
+    )
     provider = _resolve_note_provider(provider_name)
     fallbacks = build_fallback_providers(getattr(provider, "name", "")) if provider else []
     web_provider = resolve_web_provider()

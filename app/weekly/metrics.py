@@ -75,6 +75,24 @@ ANOMALY_PRICE = 0.03        # |1W return| under 3%
 OUTSIZED_SPIKE = 3.0
 N_SIDE = 5                  # top5 gainers + bottom5 losers
 
+# ----- Phase D-3 Wave 1 params -----
+# Thin-liquidity caveat threshold (dollar 20D ADV below which a highlighted mover
+# is flagged as harder to trade at size). LOCKED default $25m.
+THIN_ADV_DOLLARS = 25_000_000
+# Breadth advance/decline dead-band: names within +/- this 1W return count "flat".
+BREADTH_FLAT = 0.001
+# New-high / new-low detection tolerance: latest >= max*(1-tol) counts as a new
+# high; latest <= min*(1+tol) counts as a new low.
+NEW_EXTREME_TOL = 0.001
+# Realized-beta estimation window + minimum overlapping observations, plus the
+# sanity clip applied to the OLS slope.
+BETA_WINDOW = 60
+BETA_MIN_OBS = 40
+BETA_CLIP_LOW = -3.0
+BETA_CLIP_HIGH = 5.0
+# Sector-rotation rank-change threshold for a "rotation in / out" tag.
+ROTATION_RANK_DELTA = 3
+
 # Valuation-vs-sector descriptor thresholds (forward P/E vs BROAD-SECTOR median):
 #   cheap  if fwd_pe <  CHEAP_MULT * sector_median
 #   rich   if fwd_pe >  RICH_MULT  * sector_median
@@ -193,6 +211,86 @@ def _volume_trend(volume: pd.Series) -> Dict[str, Optional[float]]:
         if max_day is not None:
             out["max_spike_ratio"] = _f(max_day / adv)
     return out
+
+
+def _dollar_liquidity(close: pd.Series, volume: pd.Series) -> Dict[str, Optional[float]]:
+    """Dollar-liquidity metrics from the aligned close & volume series (#4).
+
+    Builds a daily dollar-volume series (close * volume) over the shared dates and
+    returns:
+      * advv_20d          - mean daily dollar volume over the SAME trailing-20d
+                            window used for the share-volume ADV (the 20 bars just
+                            before this week when the series is long enough, else
+                            the trailing 20 across whatever is available).
+      * week_dollar_vol   - sum of daily dollar volume over the last 5 trading days.
+      * dollar_spike_ratio- max single-day dollar volume in the last 5 td divided
+                            by advv_20d (None when advv_20d is falsy).
+    NaN-safe; never raises. Missing volume -> all None."""
+    out: Dict[str, Optional[float]] = {
+        "advv_20d": None, "week_dollar_vol": None, "dollar_spike_ratio": None,
+    }
+    c = close.dropna()
+    v = volume.dropna()
+    if c.shape[0] < 1 or v.shape[0] < 1:
+        return out
+    # Align close & volume on their shared dates, chronological.
+    dv = (c * v).dropna()
+    if dv.shape[0] < 1:
+        return out
+    dv = dv.sort_index()
+    week = dv.tail(W_1W)
+    if dv.shape[0] >= W_1W + ADV_20:
+        adv_base = dv.iloc[-(W_1W + ADV_20):-W_1W]
+    else:
+        adv_base = dv.tail(ADV_20)
+    advv = _f(adv_base.mean()) if adv_base.shape[0] else None
+    week_sum = _f(week.sum()) if week.shape[0] else None
+    week_max = _f(week.max()) if week.shape[0] else None
+    out["advv_20d"] = advv
+    out["week_dollar_vol"] = week_sum
+    if advv and advv > 0 and week_max is not None:
+        out["dollar_spike_ratio"] = _f(week_max / advv)
+    return out
+
+
+def realized_beta(stock_daily_returns: Any, hsi_daily_returns: Any) -> Optional[float]:
+    """OLS slope (realized beta) of stock daily returns vs HSI daily returns (#3).
+
+    Accepts pandas Series (date-indexed) or plain sequences of daily simple
+    returns. When both are date-indexed Series they are ALIGNED by date and only
+    the trailing ``BETA_WINDOW`` overlapping observations are used; needs at least
+    ``BETA_MIN_OBS`` overlapping points. beta = cov(stock,hsi)/var(hsi) with a
+    var>0 guard, clipped to [BETA_CLIP_LOW, BETA_CLIP_HIGH]. Returns None when
+    inputs are too short / degenerate. Pure, NaN-safe, never raises."""
+    try:
+        s = stock_daily_returns
+        h = hsi_daily_returns
+        if isinstance(s, pd.Series) and isinstance(h, pd.Series):
+            df = pd.concat([s.rename("s"), h.rename("h")], axis=1).dropna()
+            df = df.tail(BETA_WINDOW)
+            sv = df["s"].to_numpy(dtype="float64")
+            hv = df["h"].to_numpy(dtype="float64")
+        else:
+            sv = np.asarray(list(s), dtype="float64")
+            hv = np.asarray(list(h), dtype="float64")
+            m = np.isfinite(sv) & np.isfinite(hv)
+            sv, hv = sv[m], hv[m]
+            if sv.shape[0] > BETA_WINDOW:
+                sv = sv[-BETA_WINDOW:]
+                hv = hv[-BETA_WINDOW:]
+        if sv.shape[0] < BETA_MIN_OBS or hv.shape[0] < BETA_MIN_OBS:
+            return None
+        var = float(np.var(hv, ddof=1))
+        if not math.isfinite(var) or var <= 0:
+            return None
+        cov = float(np.cov(sv, hv, ddof=1)[0, 1])
+        beta = cov / var
+        if not math.isfinite(beta):
+            return None
+        beta = max(BETA_CLIP_LOW, min(BETA_CLIP_HIGH, beta))
+        return _f(beta)
+    except Exception:  # noqa: BLE001 — pure module must never raise
+        return None
 
 
 def _return_z(close: pd.Series, ret_1w: Optional[float]) -> Optional[float]:
@@ -389,6 +487,7 @@ def _ticker_metrics(
     hsi: Dict[str, Any],
     fundamentals: Optional[Dict[str, Any]] = None,
     sector_fallback: Optional[str] = None,
+    hsi_returns: Optional[pd.Series] = None,
 ) -> Dict[str, Any]:
     close = _series(records, "close")
     volume = _series(records, "volume")
@@ -407,12 +506,25 @@ def _ticker_metrics(
         elevated = bool(vol20 >= ELEVATED_RATIO * vol60)
 
     vt = _volume_trend(volume)
+    dl = _dollar_liquidity(close, volume)
 
     # HSI-relative (headline 1W & YTD): stock minus HSI over the same window.
     h1w = hsi.get("ret_1w")
     hytd = hsi.get("ret_ytd")
     rel_1w = _f(r1w - h1w) if (r1w is not None and h1w is not None) else None
     rel_ytd = _f(rytd - hytd) if (rytd is not None and hytd is not None) else None
+
+    # ----- Beta-adjusted relative performance (#3) -----
+    # Realized beta of the stock's daily returns vs the HSI daily returns over the
+    # trailing 60 td; alpha_1w = ret_1w - beta * HSI 1W return. None when either
+    # the beta or the required 1W returns are missing.
+    beta_60d = None
+    alpha_1w = None
+    if hsi_returns is not None and hsi_returns.shape[0] >= BETA_MIN_OBS:
+        stock_rets = close.dropna().pct_change().dropna()
+        beta_60d = realized_beta(stock_rets, hsi_returns)
+    if beta_60d is not None and r1w is not None and h1w is not None:
+        alpha_1w = _f(r1w - beta_60d * h1w)
 
     # Momentum: 1M & 3M return + risk-adjusted = 3M return / 20D annualized vol.
     risk_adj_mom = None
@@ -445,6 +557,9 @@ def _ticker_metrics(
         "week_avg_vol": vt["week_avg_vol"], "adv_20d": vt["adv_20d"],
         "vol_ratio": vt["vol_ratio"],
         "max_day_vol": vt["max_day_vol"], "max_spike_ratio": vt["max_spike_ratio"],
+        "advv_20d": dl["advv_20d"], "week_dollar_vol": dl["week_dollar_vol"],
+        "dollar_spike_ratio": dl["dollar_spike_ratio"],
+        "beta_60d": beta_60d, "alpha_1w": alpha_1w,
         "mom_1m": r1m, "mom_3m": r3m, "risk_adj_mom": risk_adj_mom,
         "z_1w": z_1w,
         "latest_close": latest_close,
@@ -468,6 +583,156 @@ def _ticker_metrics(
         # watchlist can read ret_sigma directly.
         "ret_sigma": z_1w,
     }
+
+
+# ---------------------------------------------------------------------------
+# #1 Market breadth & internals (PURE, NaN-safe)
+# ---------------------------------------------------------------------------
+def breadth_metrics(
+    per_ticker: Dict[str, Any],
+    hsi_ret_1w: Optional[float] = None,
+    new_highs: Optional[List[str]] = None,
+    new_lows: Optional[List[str]] = None,
+) -> Dict[str, Any]:
+    """Advance/decline internals over the names with a valid 1W return (#1).
+
+    Counts advancers (ret_1w > +BREADTH_FLAT), decliners (< -BREADTH_FLAT) and
+    flat (between); breadth_ratio = adv/(adv+dec) (None when denom 0). Sums
+    week_dollar_vol across advancing vs declining names (up/down dollar volume).
+    New highs/lows are passed in (computed by the caller where the full price
+    series is available). Compares breadth to the HSI 1W move to flag a narrow
+    tape / hidden-strength divergence. Pure, NaN-safe, never raises."""
+    per_ticker = per_ticker or {}
+    adv = dec = flat = 0
+    up_dv = 0.0
+    down_dv = 0.0
+    up_dv_seen = down_dv_seen = False
+    for m in per_ticker.values():
+        if not isinstance(m, dict):
+            continue
+        r = _f(m.get("ret_1w"))
+        if r is None:
+            continue
+        dv = _f(m.get("week_dollar_vol"))
+        if r > BREADTH_FLAT:
+            adv += 1
+            if dv is not None:
+                up_dv += dv
+                up_dv_seen = True
+        elif r < -BREADTH_FLAT:
+            dec += 1
+            if dv is not None:
+                down_dv += dv
+                down_dv_seen = True
+        else:
+            flat += 1
+    n_valid = adv + dec + flat
+    denom = adv + dec
+    breadth_ratio = _f(adv / denom) if denom > 0 else None
+
+    divergence = None
+    if breadth_ratio is not None and hsi_ret_1w is not None:
+        h = _f(hsi_ret_1w)
+        if h is not None:
+            if h > 0.002 and breadth_ratio < 0.40:
+                divergence = ("Narrow tape: index up but breadth negative \u2014 "
+                              "gains concentrated in few names.")
+            elif h < -0.002 and breadth_ratio > 0.60:
+                divergence = ("Hidden strength: index down but most names "
+                              "advanced.")
+    return {
+        "advancers": adv, "decliners": dec, "flat": flat, "n_valid": n_valid,
+        "breadth_ratio": breadth_ratio,
+        "new_highs": list(new_highs or []), "new_lows": list(new_lows or []),
+        "up_dollar_vol": (_f(up_dv) if up_dv_seen else None),
+        "down_dollar_vol": (_f(down_dv) if down_dv_seen else None),
+        "divergence": divergence,
+    }
+
+
+# ---------------------------------------------------------------------------
+# #6 Sector rotation scoreboard (PURE, NaN-safe)
+# ---------------------------------------------------------------------------
+def sector_rotation(
+    per_ticker: Dict[str, Any],
+    prev_sectors: Optional[List[Dict[str, Any]]] = None,
+) -> Dict[str, Any]:
+    """Group names by factset_sector; per sector compute median 1W & YTD return,
+    count, and within-sector advancers/decliners; rank sectors by median 1W
+    return descending (rank 1 = best) (#6).
+
+    ``prev_sectors`` is the prior note's ``sector_rotation['sectors']`` list (same
+    shape) or None. When present, each sector's prior rank is mapped and a
+    rotation tag is set: "rotation in" when prev_rank - rank >= ROTATION_RANK_DELTA,
+    "rotation out" when rank - prev_rank >= ROTATION_RANK_DELTA, else None.
+    Returns {"sectors": [...], "note": "no history yet" | None}. Pure, NaN-safe,
+    never raises."""
+    per_ticker = per_ticker or {}
+    groups: Dict[str, Dict[str, List[float]]] = {}
+    for m in per_ticker.values():
+        if not isinstance(m, dict):
+            continue
+        sec = m.get("sector")
+        if not sec or not str(sec).strip():
+            continue
+        sec = str(sec).strip()
+        g = groups.setdefault(sec, {"r1w": [], "rytd": []})
+        r1w = _f(m.get("ret_1w"))
+        rytd = _f(m.get("ret_ytd"))
+        if r1w is not None:
+            g["r1w"].append(r1w)
+        if rytd is not None:
+            g["rytd"].append(rytd)
+
+    sectors: List[Dict[str, Any]] = []
+    for sec, g in groups.items():
+        r1w_list = g["r1w"]
+        rytd_list = g["rytd"]
+        med_1w = _f(float(np.median(r1w_list))) if r1w_list else None
+        med_ytd = _f(float(np.median(rytd_list))) if rytd_list else None
+        adv = sum(1 for x in r1w_list if x > BREADTH_FLAT)
+        dec = sum(1 for x in r1w_list if x < -BREADTH_FLAT)
+        sectors.append({
+            "sector": sec, "ret_1w_med": med_1w, "ret_ytd_med": med_ytd,
+            "n": len(r1w_list), "adv": adv, "dec": dec,
+            "rank": None, "prev_rank": None, "rotation": None,
+        })
+
+    # Rank by median 1W return desc (rank 1 = best). Sectors with no valid median
+    # sort to the bottom (stable).
+    def _rank_key(s: Dict[str, Any]) -> float:
+        v = s.get("ret_1w_med")
+        return v if v is not None else float("-inf")
+    sectors.sort(key=_rank_key, reverse=True)
+    for i, s in enumerate(sectors, start=1):
+        s["rank"] = i
+
+    note: Optional[str] = None
+    if prev_sectors:
+        prev_rank_map: Dict[str, int] = {}
+        for ps in prev_sectors:
+            if not isinstance(ps, dict):
+                continue
+            name = ps.get("sector")
+            pr = ps.get("rank")
+            if name and pr is not None:
+                try:
+                    prev_rank_map[str(name).strip()] = int(pr)
+                except (TypeError, ValueError):
+                    continue
+        for s in sectors:
+            pr = prev_rank_map.get(s["sector"])
+            s["prev_rank"] = pr
+            if pr is not None:
+                delta = pr - s["rank"]
+                if delta >= ROTATION_RANK_DELTA:
+                    s["rotation"] = "rotation in"
+                elif -delta >= ROTATION_RANK_DELTA:
+                    s["rotation"] = "rotation out"
+    else:
+        note = "no history yet"
+
+    return {"sectors": sectors, "note": note}
 
 
 def _rank(rows: List[Dict[str, Any]], key: str, *, reverse: bool,
@@ -496,6 +761,8 @@ _MOVER_KEYS = (
     "fwd_pe", "sector_median_fwd_pe", "valuation_vs_sector",
     "eps_revision_dir", "eps_revision_pct",
     "ret_sigma", "z_1w",
+    "advv_20d", "week_dollar_vol", "dollar_spike_ratio",
+    "beta_60d", "alpha_1w",
 )
 
 
@@ -517,6 +784,7 @@ def compute_weekly_metrics(
     snapshot: Dict[str, Any],
     universe_sectors: Optional[Dict[str, str]] = None,
     attribution_params: Optional[Dict[str, float]] = None,
+    prev_note_metrics: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """Compute all Phase D weekly metrics from a snapshot dict. Never raises.
 
@@ -524,6 +792,10 @@ def compute_weekly_metrics(
     optional 3rd Sector column; used as a fallback when the template's
     FG_FACTSET_SECTOR pull is missing. ``attribution_params`` overrides the
     sector-vs-stock-specific bands (see ``attribution.PARAMS``).
+
+    ``prev_note_metrics`` (optional) is the PREVIOUS saved weekly note's metrics
+    dict; its ``sector_rotation['sectors']`` list is used to compute rotation
+    tags (#6). None -> the scoreboard reports "no history yet".
 
     Backward compatible: an old price/volume-only snapshot has no
     ``fundamentals`` key, so valuation/momentum come back None and the rest of
@@ -536,20 +808,41 @@ def compute_weekly_metrics(
     universe_sectors = universe_sectors or {}
 
     hsi = _hsi_metrics(hsi_records)
+    # HSI daily-return series (for realized beta). Empty when HSI absent.
+    hsi_close = _series(hsi_records, "close")
+    hsi_returns = hsi_close.dropna().pct_change().dropna()
+    if hsi_returns.shape[0] < 1:
+        hsi_returns = None
 
     per_ticker: Dict[str, Dict[str, Any]] = {}
     rows: List[Dict[str, Any]] = []
+    new_highs: List[str] = []
+    new_lows: List[str] = []
     for tkr, recs in tickers.items():
         try:
             m = _ticker_metrics(
                 recs, str(tkr), hsi,
                 fundamentals=fundamentals_all.get(str(tkr)),
                 sector_fallback=universe_sectors.get(str(tkr)),
+                hsi_returns=hsi_returns,
             )
         except Exception:  # noqa: BLE001 — pure module must never raise
             m = {"symbol": str(tkr), "n_bars": 0}
         per_ticker[str(tkr)] = m
         rows.append(m)
+        # New high / low: latest close vs the name's own full-series max / min.
+        try:
+            cc = _series(recs, "close").dropna()
+            if cc.shape[0] >= 2:
+                latest = float(cc.iloc[-1])
+                hi = float(cc.max())
+                lo = float(cc.min())
+                if hi > 0 and latest >= hi * (1.0 - NEW_EXTREME_TOL):
+                    new_highs.append(str(tkr))
+                elif lo > 0 and latest <= lo * (1.0 + NEW_EXTREME_TOL):
+                    new_lows.append(str(tkr))
+        except Exception:  # noqa: BLE001
+            pass
 
     # ----- Valuation anchor: broad-sector median forward P/E -----
     # Group every name by its broad FactSet sector, compute the median fwd P/E
@@ -572,6 +865,9 @@ def compute_weekly_metrics(
     # "Stretched to extremes": largest |1W-return sigma| vs each name's OWN
     # trailing weekly-return history -> mean-reversion watchlist.
     extremes = _rank(rows, "ret_sigma", reverse=True, abs_val=True)
+    # Beta-adjusted alpha leaders / laggards (#3): top/bottom 5 by alpha_1w.
+    alpha_leaders = _rank(rows, "alpha_1w", reverse=True)
+    alpha_laggards = _rank(rows, "alpha_1w", reverse=False)
 
     # ----- Opportunities / gaps -----
     dislocations: List[Dict[str, Any]] = []
@@ -661,7 +957,23 @@ def compute_weekly_metrics(
         "rel_leaders": [_mover_entry(r) for r in rel_leaders],
         "rel_laggards": [_mover_entry(r) for r in rel_laggards],
         "extremes": [_mover_entry(r) for r in extremes],
+        "alpha_leaders": [_mover_entry(r) for r in alpha_leaders],
+        "alpha_laggards": [_mover_entry(r) for r in alpha_laggards],
     }
+
+    # ----- #1 Market breadth & internals + #6 Sector rotation scoreboard -----
+    breadth = breadth_metrics(
+        per_ticker, hsi_ret_1w=hsi.get("ret_1w"),
+        new_highs=new_highs, new_lows=new_lows,
+    )
+    prev_sectors = None
+    if prev_note_metrics:
+        try:
+            prev_sectors = ((prev_note_metrics.get("sector_rotation") or {})
+                            .get("sectors"))
+        except Exception:  # noqa: BLE001
+            prev_sectors = None
+    rotation = sector_rotation(per_ticker, prev_sectors)
 
     n_full = sum(1 for r in rows if (r.get("n_bars") or 0) >= W_3M)
     n_fund = sum(1 for r in rows if r.get("has_fundamentals"))
@@ -688,5 +1000,7 @@ def compute_weekly_metrics(
         "opportunities": opportunities,
         "attribution": attribution,
         "catalyst_names": catalyst,
+        "breadth": breadth,
+        "sector_rotation": rotation,
         "meta": meta,
     }
