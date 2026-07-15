@@ -93,6 +93,27 @@ BETA_CLIP_HIGH = 5.0
 # Sector-rotation rank-change threshold for a "rotation in / out" tag.
 ROTATION_RANK_DELTA = 3
 
+# ----- Phase D-3 Wave 2 params: dispersion & correlation regime (#2) -----
+# Correlation-regime thresholds on the average off-diagonal 20-day daily-return
+# correlation across names. These are the PRIMARY classifier; dispersion is the
+# tiebreaker (see ``regime_metrics``). Tunable defaults (LOCKED):
+HIGH_CORR = 0.5     # avg pairwise corr at/above -> "macro-driven" leaning
+LOW_CORR = 0.25     # avg pairwise corr at/below -> "idiosyncratic" leaning
+# Correlation-matrix build controls: use the last N daily returns; a name needs
+# at least MIN of those N aligned days to be included; need >= MIN_NAMES usable
+# names for either statistic to be meaningful.
+REGIME_CORR_WINDOW = 20
+REGIME_CORR_MIN_DAYS = 15
+REGIME_MIN_NAMES = 5
+# Dispersion tiebreaker: rather than a fragile fixed % threshold, dispersion is
+# classified RELATIVE to the observed cross-sectional dispersion using a simple
+# scale anchor. A 1W cross-sectional stdev at/above this is "high" dispersion,
+# at/below the low anchor is "low" dispersion. Defaults chosen for a weekly HSI
+# tape (1W return stdev): ~3%+ across names is a wide, stock-picker's spread;
+# <=1.5% is a tight, everything-moves-together spread.
+REGIME_DISP_HIGH = 0.03
+REGIME_DISP_LOW = 0.015
+
 # Valuation-vs-sector descriptor thresholds (forward P/E vs BROAD-SECTOR median):
 #   cheap  if fwd_pe <  CHEAP_MULT * sector_median
 #   rich   if fwd_pe >  RICH_MULT  * sector_median
@@ -735,6 +756,151 @@ def sector_rotation(
     return {"sectors": sectors, "note": note}
 
 
+# ---------------------------------------------------------------------------
+# #2 Cross-sectional dispersion & correlation regime (PURE, NaN-safe)
+# ---------------------------------------------------------------------------
+REGIME_TAG_MACRO = "Macro-driven tape - alpha scarce, stock-picking harder"
+REGIME_TAG_IDIO = "Idiosyncratic tape - stock-picking rewarded"
+REGIME_TAG_MIXED = "Mixed tape"
+
+
+def _regime_tag(avg_corr: Optional[float],
+                dispersion: Optional[float]) -> str:
+    """Classify the tape from average pairwise correlation (primary) and
+    cross-sectional dispersion (tiebreaker). See ``regime_metrics`` docstring
+    for the exact rule. Pure; never raises."""
+    c = _f(avg_corr)
+    d = _f(dispersion)
+    if c is not None:
+        # Correlation is the primary signal.
+        if c >= HIGH_CORR:
+            return REGIME_TAG_MACRO
+        if c <= LOW_CORR:
+            # Low correlation leans idiosyncratic, but require a genuinely wide
+            # spread to CALL it idiosyncratic; a low-corr yet tight tape is mixed.
+            if d is not None and d >= REGIME_DISP_HIGH:
+                return REGIME_TAG_IDIO
+            if d is not None and d <= REGIME_DISP_LOW:
+                # low corr but everything barely moved -> not a stock-picker's
+                # tape either; treat as macro-ish (nothing to pick).
+                return REGIME_TAG_MACRO
+            return REGIME_TAG_MIXED
+        # Middle correlation band -> dispersion tiebreaker.
+        if d is not None and d <= REGIME_DISP_LOW:
+            return REGIME_TAG_MACRO
+        if d is not None and d >= REGIME_DISP_HIGH:
+            return REGIME_TAG_IDIO
+        return REGIME_TAG_MIXED
+    # No correlation available -> dispersion-only read.
+    if d is not None:
+        if d >= REGIME_DISP_HIGH:
+            return REGIME_TAG_IDIO
+        if d <= REGIME_DISP_LOW:
+            return REGIME_TAG_MACRO
+    return REGIME_TAG_MIXED
+
+
+def regime_metrics(
+    per_ticker: Dict[str, Any],
+    daily_returns_by_ticker: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    """Cross-sectional dispersion + average pairwise correlation regime (#2).
+
+    Two statistics, both NaN-safe (None when there is not enough data):
+
+      * ``xsec_dispersion_1w`` \u2014 the SAMPLE standard deviation (ddof=1) of
+        every valid 1W return across names. Requires >= REGIME_MIN_NAMES (5)
+        valid 1W returns, else None. A wide spread = a stock-picker's tape.
+
+      * ``avg_pairwise_corr_20d`` \u2014 the mean of the OFF-DIAGONAL entries
+        (upper triangle, diagonal excluded) of the Pearson correlation matrix of
+        the last ``REGIME_CORR_WINDOW`` (20) daily returns across names. Built
+        from ``daily_returns_by_ticker`` (ticker -> date-indexed pandas Series
+        of daily simple returns, as already computed for beta). Names are
+        aligned on their common dates; a name is dropped when it has fewer than
+        ``REGIME_CORR_MIN_DAYS`` (15) of the 20 aligned days. Requires >=
+        REGIME_MIN_NAMES (5) usable names, else None. High = names move together
+        (macro-driven); low = they move independently (idiosyncratic).
+
+    Classification (``tag``) \u2014 correlation is PRIMARY, dispersion the
+    tiebreaker; see ``_regime_tag``.
+
+    Returns {"xsec_dispersion_1w", "avg_pairwise_corr_20d", "tag", "n_names"}
+    where ``n_names`` is the number of names used in the correlation matrix (0
+    when correlation could not be computed). Pure, NaN-safe, never raises.
+    """
+    try:
+        per_ticker = per_ticker or {}
+        daily_returns_by_ticker = daily_returns_by_ticker or {}
+
+        # ----- Cross-sectional 1W dispersion (sample stdev, ddof=1) -----
+        r1w_vals: List[float] = []
+        for m in per_ticker.values():
+            if not isinstance(m, dict):
+                continue
+            r = _f(m.get("ret_1w"))
+            if r is not None:
+                r1w_vals.append(r)
+        dispersion: Optional[float] = None
+        if len(r1w_vals) >= REGIME_MIN_NAMES:
+            sd = float(np.std(np.asarray(r1w_vals, dtype="float64"), ddof=1))
+            dispersion = _f(sd)
+
+        # ----- Average pairwise 20D correlation -----
+        avg_corr: Optional[float] = None
+        n_names = 0
+        series_map: Dict[str, pd.Series] = {}
+        for tkr, rs in daily_returns_by_ticker.items():
+            try:
+                if isinstance(rs, pd.Series):
+                    s = rs.dropna()
+                else:
+                    s = pd.Series(list(rs), dtype="float64").dropna()
+            except Exception:  # noqa: BLE001
+                continue
+            if s.shape[0] >= 1:
+                series_map[str(tkr)] = s
+        if len(series_map) >= 2:
+            try:
+                mat = pd.concat(series_map, axis=1).sort_index()
+                # Last 20 rows across the union of dates.
+                mat = mat.tail(REGIME_CORR_WINDOW)
+                # Drop names with < REGIME_CORR_MIN_DAYS non-NaN obs in window.
+                counts = mat.count()
+                keep = [c for c in mat.columns
+                        if int(counts.get(c, 0)) >= REGIME_CORR_MIN_DAYS]
+                mat = mat[keep]
+                n_names = mat.shape[1]
+                if n_names >= REGIME_MIN_NAMES:
+                    # pandas .corr() is pairwise-complete + NaN-safe; average the
+                    # upper triangle excluding the diagonal.
+                    cm = mat.corr().to_numpy(dtype="float64")
+                    k = cm.shape[0]
+                    if k >= 2:
+                        iu = np.triu_indices(k, k=1)
+                        offdiag = cm[iu]
+                        offdiag = offdiag[np.isfinite(offdiag)]
+                        if offdiag.size >= 1:
+                            avg_corr = _f(float(np.mean(offdiag)))
+            except Exception:  # noqa: BLE001
+                avg_corr = None
+
+        tag = _regime_tag(avg_corr, dispersion)
+        return {
+            "xsec_dispersion_1w": dispersion,
+            "avg_pairwise_corr_20d": avg_corr,
+            "tag": tag,
+            "n_names": int(n_names),
+        }
+    except Exception:  # noqa: BLE001 \u2014 pure module must never raise
+        return {
+            "xsec_dispersion_1w": None,
+            "avg_pairwise_corr_20d": None,
+            "tag": REGIME_TAG_MIXED,
+            "n_names": 0,
+        }
+
+
 def _rank(rows: List[Dict[str, Any]], key: str, *, reverse: bool,
           n: int = N_SIDE, abs_val: bool = False) -> List[Dict[str, Any]]:
     """Top-``n`` rows by ``key`` (None values excluded). Stable, NaN-safe."""
@@ -818,6 +984,10 @@ def compute_weekly_metrics(
     rows: List[Dict[str, Any]] = []
     new_highs: List[str] = []
     new_lows: List[str] = []
+    # Per-ticker daily simple-return Series (date-indexed), reused for the
+    # correlation regime (#2). Computed once here so we do not rebuild the price
+    # series a second time.
+    daily_returns_by_ticker: Dict[str, pd.Series] = {}
     for tkr, recs in tickers.items():
         try:
             m = _ticker_metrics(
@@ -830,6 +1000,13 @@ def compute_weekly_metrics(
             m = {"symbol": str(tkr), "n_bars": 0}
         per_ticker[str(tkr)] = m
         rows.append(m)
+        # Daily-return series for the regime correlation matrix (#2).
+        try:
+            dr = _series(recs, "close").dropna().pct_change().dropna()
+            if dr.shape[0] >= 1:
+                daily_returns_by_ticker[str(tkr)] = dr
+        except Exception:  # noqa: BLE001
+            pass
         # New high / low: latest close vs the name's own full-series max / min.
         try:
             cc = _series(recs, "close").dropna()
@@ -975,6 +1152,9 @@ def compute_weekly_metrics(
             prev_sectors = None
     rotation = sector_rotation(per_ticker, prev_sectors)
 
+    # ----- #2 Cross-sectional dispersion & correlation regime -----
+    regime = regime_metrics(per_ticker, daily_returns_by_ticker)
+
     n_full = sum(1 for r in rows if (r.get("n_bars") or 0) >= W_3M)
     n_fund = sum(1 for r in rows if r.get("has_fundamentals"))
     n_fwd_pe = sum(1 for r in rows if r.get("fwd_pe") is not None)
@@ -1002,5 +1182,6 @@ def compute_weekly_metrics(
         "catalyst_names": catalyst,
         "breadth": breadth,
         "sector_rotation": rotation,
+        "regime": regime,
         "meta": meta,
     }

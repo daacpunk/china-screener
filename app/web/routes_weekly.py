@@ -23,6 +23,7 @@ from fastapi.responses import HTMLResponse, RedirectResponse, Response
 from .. import data_ingest as di
 from .. import exporters
 from .. import settings_store as ss
+from ..weekly import history as whist
 from ..weekly import ingest as wing
 from ..weekly import metrics as wmetrics
 from ..weekly import note as wnote
@@ -393,6 +394,37 @@ def _prev_note_metrics() -> Optional[Dict[str, Any]]:
         return None
 
 
+def _attach_hit_rate(metrics: Dict[str, Any], snap_data: Dict[str, Any]) -> None:
+    """Attach the #5 hit-rate scorecard to ``metrics['hit_rate']`` IN PLACE,
+    reading prior notes' persisted metrics and measuring realized moves from the
+    CURRENT snapshot's price series. Best-effort: any failure leaves metrics
+    untouched (the note still renders). Never raises.
+
+    ``current_tickers_series`` is built from the same ``{ticker:[{date,close}]}``
+    that feeds ``compute_weekly_metrics`` so realized moves are measured from a
+    prior note's as-of date to the latest close. Because it is stored in
+    ``metrics`` BEFORE rendering, it is both rendered now AND persisted into
+    metrics_json for future runs."""
+    try:
+        current_asof = metrics.get("asof")
+        prior = whist.load_prior_note_metrics(limit=8, exclude_asof=current_asof)
+        tickers = (snap_data or {}).get("tickers") or {}
+        # Chronological [{date, close}] per ticker (drop volume; close is enough).
+        current_series: Dict[str, Any] = {}
+        for tkr, recs in tickers.items():
+            series = []
+            for r in (recs or []):
+                if isinstance(r, dict) and r.get("date") is not None:
+                    series.append({"date": r.get("date"), "close": r.get("close")})
+            if series:
+                current_series[str(tkr)] = series
+        metrics["hit_rate"] = whist.evaluate_hit_rate(
+            prior, current_series, current_asof=current_asof,
+        )
+    except Exception:  # noqa: BLE001 — must never break note generation
+        pass
+
+
 def _build_note(provider_name: str = "", with_news: Optional[bool] = None) -> Dict[str, Any]:
     """Compute metrics from the active snapshot, resolve provider, generate the
     note. Never raises. Returns the note dict (exporter-shaped)."""
@@ -402,6 +434,9 @@ def _build_note(provider_name: str = "", with_news: Optional[bool] = None) -> Di
     metrics = wmetrics.compute_weekly_metrics(
         data or {}, _universe_sectors(), prev_note_metrics=prev_metrics,
     )
+    # #5 Hit-rate scorecard: attach BEFORE rendering so note.py can render it and
+    # it is persisted in metrics_json for future runs.
+    _attach_hit_rate(metrics, data or {})
     provider = _resolve_note_provider(provider_name)
     fallbacks = build_fallback_providers(getattr(provider, "name", "")) if provider else []
     web_provider = resolve_web_provider()

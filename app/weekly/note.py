@@ -452,8 +452,11 @@ def render_market_internals(metrics: Dict[str, Any]) -> str:
     with no valid returns). Never raises."""
     b = metrics.get("breadth") or {}
     n_valid = b.get("n_valid") or 0
+    regime_line = render_regime_line(metrics)
     if not n_valid:
-        return ""
+        # No breadth data, but a regime read may still exist (>=5 names) — emit
+        # just the regime line so the section is not lost.
+        return f"- **{regime_line}**" if regime_line else ""
     adv = b.get("advancers") or 0
     dec = b.get("decliners") or 0
     flat = b.get("flat") or 0
@@ -480,6 +483,71 @@ def render_market_internals(metrics: Dict[str, Any]) -> str:
     div = b.get("divergence")
     if div:
         lines.append(f"- **{div}**")
+    # #2 Dispersion & correlation regime: one line at the end of internals.
+    if regime_line:
+        lines.append(f"- **{regime_line}**")
+    return "\n".join(lines).strip()
+
+
+def render_regime_line(metrics: Dict[str, Any]) -> str:
+    """ONE plain-English line describing the cross-sectional dispersion &
+    correlation regime (#2), e.g.:
+
+      "Regime: Idiosyncratic tape - stock-picking rewarded (1W dispersion 4.8%,
+       avg 20D pairwise corr 0.18)."
+
+    Returns '' when no regime tag is available (an old snapshot / too few
+    names). The two numbers are shown when present, otherwise dropped. Never
+    raises."""
+    reg = metrics.get("regime") or {}
+    tag = reg.get("tag")
+    if not tag:
+        return ""
+    disp = reg.get("xsec_dispersion_1w")
+    corr = reg.get("avg_pairwise_corr_20d")
+    bits: List[str] = []
+    if disp is not None:
+        bits.append(f"1W dispersion {_pct(disp).lstrip('+')}")
+    if corr is not None:
+        try:
+            bits.append(f"avg 20D pairwise corr {float(corr):.2f}")
+        except (TypeError, ValueError):
+            pass
+    tail = f" ({', '.join(bits)})" if bits else ""
+    return f"Regime: {tag}{tail}."
+
+
+def render_scorecard(metrics: Dict[str, Any], cap: int = 6) -> str:
+    """The '### Scorecard - how prior calls played out' block (#5).
+
+    Lists up to ``cap`` evaluated names as 'Company Name (TICKER): flagged {ret}
+    on {asof} -> since {ret} [OK/miss]' plus the summary line. When there is
+    insufficient history (nothing evaluable), prints the honest one-liner only.
+    Returns '' when the hit_rate metrics are entirely absent. Never raises."""
+    hr = metrics.get("hit_rate") or {}
+    if not hr:
+        return ""
+    lines: List[str] = ["### Scorecard - how prior calls played out", ""]
+    evaluated = hr.get("evaluated") or []
+    n_eval = hr.get("n_evaluated") or 0
+    if n_eval and evaluated:
+        per = metrics.get("per_ticker") or {}
+        for e in evaluated[:cap]:
+            sym = e.get("symbol")
+            rec = per.get(sym) or {"symbol": sym}
+            mark = "OK" if e.get("hit") else "miss"
+            lines.append(
+                f"- {_descriptor(rec)}: flagged {_pct(e.get('flag_ret'))} on "
+                f"{e.get('flagged_on')} \u2192 since {_pct(e.get('since_ret'))} "
+                f"[{mark}]"
+            )
+        extra = len(evaluated) - min(len(evaluated), cap)
+        if extra > 0:
+            lines.append(f"- \u2026 and {extra} more evaluated.")
+        lines.append("")
+    summary = hr.get("summary")
+    if summary:
+        lines.append(f"_{summary}_")
     return "\n".join(lines).strip()
 
 
@@ -674,6 +742,15 @@ def _sector_context_line(metrics: Dict[str, Any]) -> str:
     return txt
 
 
+def _scorecard_context_line(metrics: Dict[str, Any]) -> str:
+    """One grounded sentence: the hit-rate summary. '' when there is nothing
+    evaluated (insufficient history is NOT surfaced to takeaways). None-safe."""
+    hr = metrics.get("hit_rate") or {}
+    if not hr or not (hr.get("n_evaluated") or 0):
+        return ""
+    return str(hr.get("summary") or "").strip()
+
+
 def build_takeaways_prompt(metrics: Dict[str, Any]) -> str:
     """Prompt for the KEY TAKEAWAYS box. Grounded ONLY in computed numbers (the
     grouped movers + HSI + attribution counts + extremes + breadth + sector
@@ -686,11 +763,17 @@ def build_takeaways_prompt(metrics: Dict[str, Any]) -> str:
     sector_line = _sector_context_line(metrics)
     hsi_line = (f"HSI {_pct(hsi.get('ret_1w'))} on the week, {_pct(hsi.get('ret_ytd'))} "
                 f"YTD, short trend {hsi.get('trend') or 'n/a'}.")
+    regime_line = render_regime_line(metrics)
+    scorecard_line = _scorecard_context_line(metrics)
     extra_ctx = ""
     if breadth_line:
         extra_ctx += f"\nMarket breadth (computed): {breadth_line}\n"
     if sector_line:
         extra_ctx += f"Sector scoreboard (computed): {sector_line}\n"
+    if regime_line:
+        extra_ctx += f"Dispersion & correlation regime (computed): {regime_line}\n"
+    if scorecard_line:
+        extra_ctx += f"Prior-call scorecard (computed): {scorecard_line}\n"
     return (
         "You are an equity strategist writing the KEY TAKEAWAYS box at the TOP of "
         f"a weekly one-pager for a Hang Seng (HSI) universe, as of {asof}.\n\n"
@@ -858,6 +941,16 @@ def render_takeaways_deterministic(metrics: Dict[str, Any]) -> str:
         sent += "."
         bullets.append(sent)
 
+    # (8) Dispersion & correlation regime line (when a regime read exists).
+    regime_line = render_regime_line(metrics)
+    if regime_line:
+        bullets.append(regime_line)
+
+    # (9) Prior-call scorecard summary (only when something was evaluated).
+    scorecard_line = _scorecard_context_line(metrics)
+    if scorecard_line:
+        bullets.append(f"Scorecard: {scorecard_line}")
+
     if not bullets:
         bullets.append("Not enough loaded data to synthesize takeaways this week.")
     return "\n".join(f"- {b}" for b in bullets)
@@ -895,6 +988,19 @@ _GLOSSARY_TERMS: List[Tuple[str, str]] = [
     ("breadth", "how many names rose vs fell on the week; breadth ratio = "
      "advancers / (advancers + decliners). Low breadth while the index rises "
      "means gains are concentrated in a few names (a narrow tape)."),
+    ("dispersion", "how widely the names' weekly returns are spread out this "
+     "week (the standard deviation of every name's 1W move). Wide dispersion "
+     "means winners and losers diverged a lot \u2014 a stock-picker's tape; tight "
+     "dispersion means most names moved together."),
+    ("pairwise correlation", "how closely the names moved together day-to-day "
+     "over the last ~20 days, averaged across every pair. High correlation "
+     "(near 1) means a macro-driven tape where names rise and fall together and "
+     "stock-picking adds little; low correlation means names moved on their own "
+     "stories."),
+    ("scorecard", "a look-back at the extreme dislocations flagged in prior "
+     "weekly notes: how many have since moved OPPOSITE to the flagged move "
+     "(begun mean-reverting) by at least a quarter of that move. Measurement "
+     "only \u2014 not a trade record."),
 ]
 
 
@@ -1267,8 +1373,14 @@ def _no_key_markdown(metrics: Dict[str, Any]) -> str:
     if catalysts.strip():
         parts += ["## Catalysts", "", catalysts.strip(), ""]
     internals = render_market_internals(metrics)
-    if internals.strip():
-        parts += ["## Market internals", "", internals.strip(), ""]
+    scorecard = render_scorecard(metrics)
+    if internals.strip() or scorecard.strip():
+        parts += ["## Market internals", ""]
+        if internals.strip():
+            parts += [internals.strip(), ""]
+        # #5 Scorecard: how prior flagged calls played out (inside internals).
+        if scorecard.strip():
+            parts += [scorecard.strip(), ""]
     scoreboard = render_sector_scoreboard(metrics)
     if scoreboard.strip():
         parts += ["## Sector scoreboard", "", scoreboard.strip(), ""]
@@ -1307,8 +1419,14 @@ def _assemble(
     # the sector scoreboard sit AFTER the macro view, BEFORE the glossary. Both
     # omit themselves when their underlying data is absent.
     internals = render_market_internals(metrics)
-    if internals.strip():
-        parts += ["## Market internals", "", internals.strip(), ""]
+    scorecard = render_scorecard(metrics)
+    if internals.strip() or scorecard.strip():
+        parts += ["## Market internals", ""]
+        if internals.strip():
+            parts += [internals.strip(), ""]
+        # #5 Scorecard: how prior flagged calls played out (inside internals).
+        if scorecard.strip():
+            parts += [scorecard.strip(), ""]
     scoreboard = render_sector_scoreboard(metrics)
     if scoreboard.strip():
         parts += ["## Sector scoreboard", "", scoreboard.strip(), ""]
