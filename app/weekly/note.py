@@ -239,6 +239,22 @@ def render_fundamentals_table(metrics: Dict[str, Any]) -> str:
     metrics = metrics or {}
     per = metrics.get("per_ticker") or {}
     names = metrics.get("catalyst_names") or []
+    # DISPLAY order only: sort the rows by 1W return DESCENDING (largest gain
+    # first, largest loss last) so the table reads top-down. This does NOT mutate
+    # metrics["catalyst_names"] — other consumers (e.g. the catalyst web-lookup
+    # loop) keep the original selection order. NaN-safe: any ticker with a
+    # missing / None / non-finite ret_1w sorts to the very bottom, after every
+    # valid one, and never crashes.
+    def _ret1w_key(sym: str) -> float:
+        m = per.get(sym, {}) or {}
+        try:
+            v = float(m.get("ret_1w"))
+        except (TypeError, ValueError):
+            return float("-inf")
+        if v != v:  # NaN
+            return float("-inf")
+        return v
+    names = sorted(names, key=_ret1w_key, reverse=True)
     rows: List[List[str]] = []
     any_data = False
     for sym in names:
@@ -280,7 +296,11 @@ def render_metric_tables(metrics: Dict[str, Any]) -> str:
     movers = metrics.get("movers") or {}
     opps = metrics.get("opportunities") or {}
     hsi = metrics.get("hsi") or {}
+    asof = metrics.get("asof") or "unknown"
     parts: List[str] = []
+
+    # As-of reminder for a reader who scrolls straight to the bottom tables.
+    parts.append(f"_All figures below as of {asof}._\n")
 
     # Movers & shakers
     parts.append("### Movers & shakers\n")
@@ -359,12 +379,19 @@ def render_metric_tables(metrics: Dict[str, Any]) -> str:
 
 
 def _staleness_banner(metrics: Dict[str, Any]) -> str:
+    """The prominent as-of block placed right under the note title. Returns a
+    BOLD, standalone 'Data as of:' line so the reader can never miss which date
+    the numbers reflect; when the snapshot is stale, a SECOND line carries the
+    staleness warning (kept distinct from the bold as-of line, not merged into
+    one italic line). Never raises."""
     asof = metrics.get("asof") or "unknown"
     n_stale = metrics.get("n_stale")
+    asof_line = f"**Data as of: {asof}**"
     if metrics.get("stale"):
-        return (f"_As of {asof}_ — ⚠ data is {n_stale} business days old; "
-                "refresh the FactSet pull for a current read.")
-    return f"_As of {asof}_"
+        return (asof_line + "\n\n"
+                f"> \u26a0 Data is {n_stale} business days old; refresh the "
+                "FactSet pull for a current read.")
+    return asof_line
 
 
 # ---------------------------------------------------------------------------
@@ -473,18 +500,28 @@ def build_takeaways_prompt(metrics: Dict[str, Any]) -> str:
     return (
         "You are an equity strategist writing the KEY TAKEAWAYS box at the TOP of "
         f"a weekly one-pager for a Hang Seng (HSI) universe, as of {asof}.\n\n"
-        "Write 3-4 short, punchy bullets that synthesize the week, GROUNDED ONLY "
+        "Write 4-6 short, punchy bullets that synthesize the week, GROUNDED ONLY "
         "in the computed figures below. Cover, where the data supports it: (1) the "
         "dominant pattern \u2014 stock-specific vs sector rotation (the count is "
         f"{spec} of {total} biggest movers stock-specific); (2) the single most "
-        "extreme dislocation by sigma (standard deviations vs the name's own "
-        "history); (3) any genuinely sector-driven names; (4) red flags such as "
-        "big EPS-estimate cuts. Refer to each name by its COMPANY NAME with the "
+        "extreme dislocation by sigma \u2014 and where the data supports it, put that "
+        "dislocation in RISK-ADJUSTED MOMENTUM context (its move relative to the "
+        "name's own typical swing / risk-adjusted 3M momentum), NOT just the raw "
+        "sigma number; (3) any genuinely sector-driven names; (4) a VALUATION ANCHOR "
+        "for at least ONE named mover when available \u2014 whether it screens cheap or "
+        "rich versus its sector on forward P/E; (5) red flags such as big "
+        "EPS-estimate cuts. "
+        "You MUST also include (6) an explicit WATCH ITEM bullet flagging something "
+        "to monitor next week \u2014 e.g. an unresolved EPS cut, a stock-specific "
+        "dislocation with no catalyst yet found, or a sector showing early rotation "
+        "signs; begin it with 'Watch:' so it is unmistakable. "
+        "Refer to each name by its COMPANY NAME with the "
         "ticker in parentheses, e.g. 'Some Company (9636-HK)', not bare codes and "
         "not the sector in the parentheses. "
         "Reference the HSI figure ONCE. Do NOT invent tickers, prices, news, or "
-        "catalysts \u2014 every number must come from below. Output ONLY the bullets, "
-        "each starting with '- '.\n\n"
+        "catalysts \u2014 every number must come from below; never fabricate a "
+        "valuation, momentum or watch fact the figures do not support. Output ONLY "
+        "the bullets, each starting with '- '.\n\n"
         f"HSI: {hsi_line}\n\n"
         f"Grouped movers (computed):\n{grouped}\n"
     )
@@ -537,6 +574,22 @@ def render_takeaways_deterministic(metrics: Dict[str, Any]) -> str:
             "less likely to bounce alone."
         )
 
+    # (3b) Valuation anchor for the top mover, when a fwd-P/E-vs-sector read is
+    # available. Surfaces cheap/rich context so the deterministic path is not
+    # purely momentum-driven. Prefer the top gainer; fall back to the top
+    # extreme so we anchor the most salient name on the page.
+    val_pool = list(g["gainers"]) + list(g["extremes"])
+    val_anchored = next(
+        (r for r in val_pool if _val_anchor(r) and r.get("valuation_vs_sector")),
+        None,
+    )
+    if val_anchored is not None:
+        vs = val_anchored.get("valuation_vs_sector")
+        bullets.append(
+            f"Valuation: {_descriptor(val_anchored)} screens {vs} at forward P/E "
+            f"{_val_anchor(val_anchored)} vs its sector."
+        )
+
     # (4) Red flag: biggest EPS-estimate cut among movers.
     pool = list(movers.get("gainers_1w") or []) + list(movers.get("losers_1w") or [])
     cuts = [r for r in pool
@@ -548,6 +601,29 @@ def render_takeaways_deterministic(metrics: Dict[str, Any]) -> str:
             f"{_pct(worst.get('eps_revision_pct'))} over 4 weeks \u2014 fundamentals "
             "deteriorating, not just price."
         )
+
+    # (5) Watch item: name the least-resolved dislocation to monitor next week.
+    # Prefer an unresolved EPS cut; else the most extreme stock-specific
+    # dislocation with no catalyst yet identified (the catalyst step runs later,
+    # so at this point every dislocation is "unresolved"). Always deterministic.
+    watch = None
+    if cuts:
+        worst_cut = min(cuts, key=lambda r: r.get("eps_revision_pct"))
+        watch = (
+            f"Watch: whether the EPS cut at {_descriptor(worst_cut)} "
+            f"({_pct(worst_cut.get('eps_revision_pct'))} over 4 weeks) keeps "
+            "pressuring the price into next week."
+        )
+    elif g["extremes"]:
+        top = g["extremes"][0]
+        sig = _sigma_str(top)
+        sig_txt = f" ({sig} vs its own history)" if sig else ""
+        watch = (
+            f"Watch: {_descriptor(top)}{sig_txt} is the least-resolved dislocation "
+            "\u2014 no catalyst confirmed yet; monitor for follow-through or reversal."
+        )
+    if watch:
+        bullets.append(watch)
 
     if not bullets:
         bullets.append("Not enough loaded data to synthesize takeaways this week.")
@@ -745,6 +821,17 @@ def build_observations_prompt(metrics: Dict[str, Any]) -> str:
         "- When a valuation anchor is given, state it plainly, e.g. 'trades cheap "
         "at 11.8x vs the sector's ~9x'. Define forward P/E in plain words on first "
         "use.\n"
+        "- ADD DEPTH for the TOP 1-2 names in EACH group (not just return + peer "
+        "attribution): where the figures provide it, weave in the VALUATION-VS-"
+        "SECTOR read (cheap / in line / rich on forward P/E) AND the earnings "
+        "MOMENTUM / REVISION context (EPS estimates revised up or down, and by how "
+        "much) for those lead names, so each group's headline name has a fundamental "
+        "as well as a price story.\n"
+        "- CALL OUT VOLUME CONFIRMATION explicitly for any name where volume "
+        "behavior adds or undercuts conviction: a big volume spike WITHOUT price "
+        "follow-through (weak conviction / possible churn), or a large price move "
+        "WITHOUT volume confirmation (thin, less reliable). Say plainly whether the "
+        "volume supports or questions the move.\n"
         "- Translate attribution into plain English: 'stock-specific' means it "
         "moved differently from its sector peers; 'sector-driven' means it moved "
         "with them.\n"
