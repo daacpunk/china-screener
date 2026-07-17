@@ -120,7 +120,8 @@
       </select></div>
       {% endif %}
       <label class="flex" style="margin:0"><input type="checkbox" name="with_news" value="1" style="width:auto"{% if note_web_default %} checked{% endif %}> Run the live web-catalyst step</label>
-      <button class="btn" type="submit">Generate weekly note</button>
+      <button class="btn" type="submit" name="audience" value="institutional">Generate weekly note</button>
+      <button class="btn ghost" type="submit" name="audience" value="retail">Generate retail-friendly note</button>
     </div>
   </form>
   <p class="help" style="margin-top:6px">Live web catalysts always use Perplexity when a Perplexity key is set{% if not perplexity_web_ready %} <span class="muted">(no Perplexity key detected — add one in <a href="/settings">Settings</a> for catalysts)</span>{% endif %}. The synthesis model above writes the prose.</p>
@@ -136,10 +137,11 @@
 {% if past_notes %}
 <h2>Past weekly notes</h2>
 <div class="card">
-  <table class="data-table"><thead><tr><th>As-of</th><th>Created</th><th>Provider</th><th>Export</th></tr></thead><tbody>
+  <table class="data-table"><thead><tr><th>As-of</th><th>Mode</th><th>Created</th><th>Provider</th><th>Export</th></tr></thead><tbody>
     {% for nt in past_notes %}
     <tr>
       <td><a href="/weekly/note/{{ nt.id }}">{{ nt.asof or 'unknown' }}</a></td>
+      <td>{% if nt.audience == 'retail' %}<span class="tag">retail</span>{% else %}<span class="tag muted">institutional</span>{% endif %}</td>
       <td class="muted">{{ nt.created_at }}</td>
       <td>{{ nt.provider or '—' }}</td>
       <td>

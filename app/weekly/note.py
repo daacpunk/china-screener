@@ -42,6 +42,48 @@ from ..llm.research_notes import _log_usage, is_web_capable
 from ..llm.resilience import complete_with_fallback
 
 TITLE = "Weekly Quant One-Pager"
+TITLE_RETAIL = "Weekly Market Snapshot"
+
+
+def _title(audience: str = "institutional") -> str:
+    """The note title for the given audience. Retail -> the plain-English
+    'Weekly Market Snapshot'; anything else -> the institutional TITLE."""
+    return TITLE_RETAIL if audience == "retail" else TITLE
+
+
+def _headings(audience: str = "institutional") -> Dict[str, str]:
+    """Return the section heading strings for the given audience, keyed by a
+    stable logical name. For the FOUR exporter/test-contract headings
+    ('data_observations', 'catalysts', 'hsi', 'computed') the '##' markdown
+    string is IDENTICAL across modes (tests + exporter/dedup depend on it); the
+    retail voice is carried by the prose + an optional friendly bold subtitle
+    surfaced in _assemble. The non-contract headings ('takeaways',
+    'market_internals', 'sector_scoreboard', 'glossary') swap to the friendly
+    names in retail mode.
+
+    ``sub`` values are the plain-English bold subtitle lines placed as the FIRST
+    body line UNDER a contract heading in retail mode (empty in institutional).
+    """
+    retail = audience == "retail"
+    return {
+        # Non-contract headings: swapped directly in retail mode.
+        "takeaways": "Key Takeaways" if retail else "Key takeaways",
+        "market_internals": ("Market Internals (simple version)" if retail
+                             else "Market internals"),
+        "sector_scoreboard": "Sector Scoreboard" if retail else "Sector scoreboard",
+        "what_moved": ("What Moved and Why" if retail
+                       else "What moved and why"),  # only used by _no_key_markdown
+        # Contract headings: markdown '##' text is IDENTICAL across modes.
+        "data_observations": "Data observations",
+        "catalysts_web": "Catalysts (web)",
+        "catalysts_nokey": "Catalysts",  # no-key path heading (not a contract '##')
+        "hsi": "HSI macro view",
+        "computed": "Computed metrics",
+        # Friendly bold subtitles surfaced under the contract headings (retail).
+        "sub_data_observations": "**What Moved and Why**" if retail else "",
+        "sub_catalysts": "**Catalysts**" if retail else "",
+        "sub_hsi": "**Hang Seng Index \u2013 Bigger Picture**" if retail else "",
+    }
 
 # Characters that show up as FactSet text-pull rendering artifacts (■ etc.).
 # We defensively strip them here too so a name never carries them into the note.
@@ -445,14 +487,20 @@ def _name_labels(metrics: Dict[str, Any], syms: List[str], cap: int = 6) -> str:
     return out
 
 
-def render_market_internals(metrics: Dict[str, Any]) -> str:
+def render_market_internals(metrics: Dict[str, Any],
+                            audience: str = "institutional") -> str:
     """The '## Market internals' section body (#1): A/D counts + breadth ratio,
     up/down dollar volume, new highs/lows, and a bolded divergence line when
     present. Returns '' when no breadth data is available (e.g. an old snapshot
-    with no valid returns). Never raises."""
+    with no valid returns). Never raises.
+
+    Retail mode phrases the bullets in plain English ("267 stocks rose, 184
+    fell, 19 unchanged", "More money traded in advancing stocks ...", "Only 2
+    stocks hit new highs; 12 hit new lows.") \u2014 NO numbers change."""
+    retail = audience == "retail"
     b = metrics.get("breadth") or {}
     n_valid = b.get("n_valid") or 0
-    regime_line = render_regime_line(metrics)
+    regime_line = render_regime_line(metrics, audience)
     if not n_valid:
         # No breadth data, but a regime read may still exist (>=5 names) — emit
         # just the regime line so the section is not lost.
@@ -463,42 +511,85 @@ def render_market_internals(metrics: Dict[str, Any]) -> str:
     br = b.get("breadth_ratio")
     br_txt = (f"{float(br) * 100:.0f}%" if br is not None else "—")
     lines: List[str] = []
-    lines.append(
-        f"- **Advance / decline:** {adv} up, {dec} down, {flat} flat "
-        f"of {n_valid} names \u2014 breadth ratio {br_txt}."
-    )
+    if retail:
+        breadth_note = ""
+        if br is not None:
+            try:
+                breadth_note = (" \u2014 decent but not exceptional breadth"
+                                if float(br) >= 0.5
+                                else " \u2014 more losers than winners")
+            except (TypeError, ValueError):
+                breadth_note = ""
+        lines.append(
+            f"- {adv} stocks rose, {dec} fell, {flat} unchanged of {n_valid} "
+            f"names{breadth_note} (breadth ratio {br_txt})."
+        )
+    else:
+        lines.append(
+            f"- **Advance / decline:** {adv} up, {dec} down, {flat} flat "
+            f"of {n_valid} names \u2014 breadth ratio {br_txt}."
+        )
     up_dv = b.get("up_dollar_vol")
     down_dv = b.get("down_dollar_vol")
     if up_dv is not None or down_dv is not None:
-        lines.append(
-            f"- **Up / down volume:** {fmt_dollars(up_dv)} traded in advancing "
-            f"names vs {fmt_dollars(down_dv)} in declining names."
-        )
+        if retail:
+            lines.append(
+                f"- More money traded in advancing stocks ({fmt_dollars(up_dv)}) "
+                f"than in declining ones ({fmt_dollars(down_dv)})."
+            )
+        else:
+            lines.append(
+                f"- **Up / down volume:** {fmt_dollars(up_dv)} traded in advancing "
+                f"names vs {fmt_dollars(down_dv)} in declining names."
+            )
     highs = b.get("new_highs") or []
     lows = b.get("new_lows") or []
-    if highs:
-        lines.append(f"- **New highs ({len(highs)}):** {_name_labels(metrics, highs)}.")
-    if lows:
-        lines.append(f"- **New lows ({len(lows)}):** {_name_labels(metrics, lows)}.")
+    if retail:
+        if highs or lows:
+            lines.append(
+                f"- Only {len(highs)} stock{'s' if len(highs) != 1 else ''} hit "
+                f"new highs; {len(lows)} hit new lows."
+            )
+    else:
+        if highs:
+            lines.append(f"- **New highs ({len(highs)}):** {_name_labels(metrics, highs)}.")
+        if lows:
+            lines.append(f"- **New lows ({len(lows)}):** {_name_labels(metrics, lows)}.")
     div = b.get("divergence")
     if div:
-        lines.append(f"- **{div}**")
+        lines.append(f"- {div}" if retail else f"- **{div}**")
     # #2 Dispersion & correlation regime: one line at the end of internals.
     if regime_line:
-        lines.append(f"- **{regime_line}**")
+        lines.append(f"- {regime_line}" if retail else f"- **{regime_line}**")
     return "\n".join(lines).strip()
 
 
-def render_regime_line(metrics: Dict[str, Any]) -> str:
+# Plain-English retail translations for the regime tags (jargon -> friendly).
+_REGIME_RETAIL = {
+    wmetrics.REGIME_TAG_MACRO: ("whole-market tape (names mostly rose and fell "
+                                "together, so stock-picking was harder)"),
+    wmetrics.REGIME_TAG_IDIO: ("stock-picking environment (names moved "
+                               "independently rather than as a pack)"),
+    wmetrics.REGIME_TAG_MIXED: ("mixed tape (some names moved together, others "
+                                "on their own stories)"),
+}
+
+
+def render_regime_line(metrics: Dict[str, Any],
+                       audience: str = "institutional") -> str:
     """ONE plain-English line describing the cross-sectional dispersion &
     correlation regime (#2), e.g.:
 
       "Regime: Idiosyncratic tape - stock-picking rewarded (1W dispersion 4.8%,
        avg 20D pairwise corr 0.18)."
 
+    Retail mode swaps the jargon tag for a plain-English description and leads
+    with "Overall character of the market:" \u2014 the same numbers are kept.
+
     Returns '' when no regime tag is available (an old snapshot / too few
     names). The two numbers are shown when present, otherwise dropped. Never
     raises."""
+    retail = audience == "retail"
     reg = metrics.get("regime") or {}
     tag = reg.get("tag")
     if not tag:
@@ -514,20 +605,31 @@ def render_regime_line(metrics: Dict[str, Any]) -> str:
         except (TypeError, ValueError):
             pass
     tail = f" ({', '.join(bits)})" if bits else ""
+    if retail:
+        friendly = _REGIME_RETAIL.get(tag, tag)
+        return f"Overall character of the market: {friendly}{tail}."
     return f"Regime: {tag}{tail}."
 
 
-def render_scorecard(metrics: Dict[str, Any], cap: int = 6) -> str:
+def render_scorecard(metrics: Dict[str, Any], cap: int = 6,
+                     audience: str = "institutional") -> str:
     """The '### Scorecard - how prior calls played out' block (#5).
 
     Lists up to ``cap`` evaluated names as 'Company Name (TICKER): flagged {ret}
     on {asof} -> since {ret} [OK/miss]' plus the summary line. When there is
     insufficient history (nothing evaluable), prints the honest one-liner only.
-    Returns '' when the hit_rate metrics are entirely absent. Never raises."""
+    Returns '' when the hit_rate metrics are entirely absent. Never raises.
+
+    Retail mode swaps the sub-heading to the plain-English
+    'How Previous Extreme Moves Have Played Out' (a body sub-heading, NOT a
+    contract '##'). The evaluated rows + summary numbers are unchanged."""
+    retail = audience == "retail"
     hr = metrics.get("hit_rate") or {}
     if not hr:
         return ""
-    lines: List[str] = ["### Scorecard - how prior calls played out", ""]
+    sub = ("### How Previous Extreme Moves Have Played Out" if retail
+           else "### Scorecard - how prior calls played out")
+    lines: List[str] = [sub, ""]
     evaluated = hr.get("evaluated") or []
     n_eval = hr.get("n_evaluated") or 0
     if n_eval and evaluated:
@@ -751,7 +853,36 @@ def _scorecard_context_line(metrics: Dict[str, Any]) -> str:
     return str(hr.get("summary") or "").strip()
 
 
-def build_takeaways_prompt(metrics: Dict[str, Any]) -> str:
+# Shared RETAIL-TONE instruction block appended to each prompt when
+# audience=="retail". It ONLY changes STYLE — the grounded data/numbers fed in
+# are identical to the institutional prompt.
+_RETAIL_STYLE = (
+    "\n\nAUDIENCE & TONE OVERRIDE (retail-friendly): Write for an everyday retail "
+    "investor, not a professional. Use calm, plain English and explain any term "
+    "the first time it appears. Keep EVERY fact, number, ticker and Company Name "
+    "(TICKER) label EXACTLY as given \u2014 change only the wording, never the data. "
+    "Specific word choices: say a stock 'looks expensive' or 'trades at an "
+    "expensive' valuation instead of 'screens rich'/'trades rich'; 'looks cheap' "
+    "instead of 'screens cheap'; 'company-specific' or 'stock-specific' (or 'its "
+    "own news') instead of 'alpha'/'idiosyncratic'; 'a stock-picker's week' or "
+    "'stock-picking environment (names moved independently rather than as a pack)' "
+    "instead of 'idiosyncratic tape'; 'a broad rotation' or 'the whole industry "
+    "moving together' instead of 'sector rotation'; 'extreme move' instead of "
+    "'dislocation'; 'average daily trading value' instead of '$ADV'; 'very thin' "
+    "or 'extremely thin' instead of the [THIN] tag; phrase a sigma as e.g. 'a "
+    "3.5-standard-deviation move versus its own history' (keep the number). "
+    "Explain forward P/E simply, e.g. 'Forward P/E simply means the current share "
+    "price divided by the average analyst forecast for next year's earnings; "
+    "higher numbers mean investors are paying more for each dollar of expected "
+    "profit.' State red flags PLAINLY and never soften them \u2014 e.g. 'a clear "
+    "warning sign' and 'price and fundamentals are moving in opposite directions.' "
+    "Say 'analysts cut their earnings forecasts by \u2013X%' rather than 'EPS "
+    "estimates cut \u2013X%'. Never add optimism the data does not support."
+)
+
+
+def build_takeaways_prompt(metrics: Dict[str, Any],
+                          audience: str = "institutional") -> str:
     """Prompt for the KEY TAKEAWAYS box. Grounded ONLY in computed numbers (the
     grouped movers + HSI + attribution counts + extremes + breadth + sector
     rotation). Forbids invention."""
@@ -775,6 +906,7 @@ def build_takeaways_prompt(metrics: Dict[str, Any]) -> str:
     if scorecard_line:
         extra_ctx += f"Prior-call scorecard (computed): {scorecard_line}\n"
     return (
+        (
         "You are an equity strategist writing the KEY TAKEAWAYS box at the TOP of "
         f"a weekly one-pager for a Hang Seng (HSI) universe, as of {asof}.\n\n"
         "Write 4-6 short, punchy bullets that synthesize the week, GROUNDED ONLY "
@@ -807,13 +939,20 @@ def build_takeaways_prompt(metrics: Dict[str, Any]) -> str:
         f"HSI: {hsi_line}\n"
         f"{extra_ctx}\n"
         f"Grouped movers (computed):\n{grouped}\n"
+        ) + (_RETAIL_STYLE if audience == "retail" else "")
     )
 
 
-def render_takeaways_deterministic(metrics: Dict[str, Any]) -> str:
+def render_takeaways_deterministic(metrics: Dict[str, Any],
+                                  audience: str = "institutional") -> str:
     """Deterministic KEY TAKEAWAYS bullets, assembled from the computed extremes /
     attribution counts / HSI / EPS cuts. Used when no AI key is available. Never
-    raises; always returns at least one bullet when any data is present."""
+    raises; always returns at least one bullet when any data is present.
+
+    Retail mode keeps the SAME numbers/tickers but swaps the jargon for plain
+    English ("stock-picker's week", "looks expensive", warnings stated plainly).
+    """
+    retail = audience == "retail"
     hsi = metrics.get("hsi") or {}
     movers = metrics.get("movers") or {}
     g = _group_movers(metrics)
@@ -823,18 +962,35 @@ def render_takeaways_deterministic(metrics: Dict[str, Any]) -> str:
     # (1) Market backdrop + dominant pattern.
     if hsi.get("ret_1w") is not None or total:
         trend = hsi.get("trend") or "n/a"
-        market = (f"The market moved {_pct(hsi.get('ret_1w'))} on the week "
-                  f"({_pct(hsi.get('ret_ytd'))} YTD, {trend})")
+        if retail:
+            market = (f"The Hang Seng Index moved {_pct(hsi.get('ret_1w'))} this "
+                      f"week (still {_pct(hsi.get('ret_ytd'))} year-to-date)")
+        else:
+            market = (f"The market moved {_pct(hsi.get('ret_1w'))} on the week "
+                      f"({_pct(hsi.get('ret_ytd'))} YTD, {trend})")
         if total:
             if spec >= total - max(1, total // 4):
-                pat = (f", but this week's movers were mostly company-specific, not "
-                       f"sector rotation \u2014 {spec} of the {total} biggest movers "
-                       "can't be explained by their peers.")
+                if retail:
+                    pat = (f". Almost all the big moves were stock-specific, not "
+                           f"sector-wide \u2014 {spec} of the {total} biggest movers "
+                           "can't be explained by their peers. This was a "
+                           "stock-picker's week, not a broad rotation.")
+                else:
+                    pat = (f", but this week's movers were mostly company-specific, not "
+                           f"sector rotation \u2014 {spec} of the {total} biggest movers "
+                           "can't be explained by their peers.")
             elif spec <= total // 4:
-                pat = ", and this week's moves were largely sector-driven."
+                pat = (". Most of the big moves were driven by whole industries "
+                       "moving together, not company-specific news." if retail
+                       else ", and this week's moves were largely sector-driven.")
             else:
-                pat = (f", with a mix this week \u2014 {spec} of {total} biggest movers "
-                       "were company-specific.")
+                if retail:
+                    pat = (f". It was a mixed week \u2014 {spec} of {total} biggest "
+                           "movers were company-specific, the rest moved with their "
+                           "industry.")
+                else:
+                    pat = (f", with a mix this week \u2014 {spec} of {total} biggest movers "
+                           "were company-specific.")
         else:
             pat = "."
         bullets.append(market + pat)
@@ -844,18 +1000,33 @@ def render_takeaways_deterministic(metrics: Dict[str, Any]) -> str:
         top = g["extremes"][0]
         sig = _sigma_str(top)
         if sig:
-            bullets.append(
-                f"Cleanest dislocation: {_descriptor(top)} {_pct(top.get('ret_1w'))}, "
-                f"{sig} vs its own history \u2014 an extreme that sometimes mean-reverts."
-            )
+            if retail:
+                sig_num = sig.lstrip("+").rstrip("\u03c3")
+                bullets.append(
+                    f"Biggest extreme move: {_descriptor(top)} "
+                    f"{_pct(top.get('ret_1w'))} \u2014 a {sig_num}-standard-deviation "
+                    "move versus its own history, the kind of extreme that "
+                    "sometimes reverses."
+                )
+            else:
+                bullets.append(
+                    f"Cleanest dislocation: {_descriptor(top)} {_pct(top.get('ret_1w'))}, "
+                    f"{sig} vs its own history \u2014 an extreme that sometimes mean-reverts."
+                )
 
     # (3) Genuinely sector-driven names.
     if g["losers_sector"]:
         names = ", ".join(_descriptor(r) for r in g["losers_sector"][:3])
-        bullets.append(
-            f"Genuinely sector-driven: {names} moved with their sector peers, so "
-            "less likely to bounce alone."
-        )
+        if retail:
+            bullets.append(
+                f"The clear industry-driven drop was {names}, which fell along with "
+                "its peer group rather than on its own news."
+            )
+        else:
+            bullets.append(
+                f"Genuinely sector-driven: {names} moved with their sector peers, so "
+                "less likely to bounce alone."
+            )
 
     # (3b) Valuation anchor for the top mover, when a fwd-P/E-vs-sector read is
     # available. Surfaces cheap/rich context so the deterministic path is not
@@ -868,10 +1039,17 @@ def render_takeaways_deterministic(metrics: Dict[str, Any]) -> str:
     )
     if val_anchored is not None:
         vs = val_anchored.get("valuation_vs_sector")
-        bullets.append(
-            f"Valuation: {_descriptor(val_anchored)} screens {vs} at forward P/E "
-            f"{_val_anchor(val_anchored)} vs its sector."
-        )
+        if retail:
+            plain_vs = {"rich": "expensive", "cheap": "cheap"}.get(vs, vs)
+            bullets.append(
+                f"Valuation: {_descriptor(val_anchored)} looks {plain_vs} at a "
+                f"forward P/E of {_val_anchor(val_anchored)} versus its industry."
+            )
+        else:
+            bullets.append(
+                f"Valuation: {_descriptor(val_anchored)} screens {vs} at forward P/E "
+                f"{_val_anchor(val_anchored)} vs its sector."
+            )
 
     # (4) Red flag: biggest EPS-estimate cut among movers.
     pool = list(movers.get("gainers_1w") or []) + list(movers.get("losers_1w") or [])
@@ -879,11 +1057,19 @@ def render_takeaways_deterministic(metrics: Dict[str, Any]) -> str:
             if r.get("eps_revision_dir") == "down" and r.get("eps_revision_pct") is not None]
     if cuts:
         worst = min(cuts, key=lambda r: r.get("eps_revision_pct"))
-        bullets.append(
-            f"Red flag: {_descriptor(worst)} saw analysts cut EPS estimates "
-            f"{_pct(worst.get('eps_revision_pct'))} over 4 weeks \u2014 fundamentals "
-            "deteriorating, not just price."
-        )
+        if retail:
+            bullets.append(
+                f"Clear warning sign: analysts cut their earnings forecasts for "
+                f"{_descriptor(worst)} by {_pct(worst.get('eps_revision_pct'))} over "
+                "the past four weeks \u2014 price and fundamentals are moving in "
+                "opposite directions."
+            )
+        else:
+            bullets.append(
+                f"Red flag: {_descriptor(worst)} saw analysts cut EPS estimates "
+                f"{_pct(worst.get('eps_revision_pct'))} over 4 weeks \u2014 fundamentals "
+                "deteriorating, not just price."
+            )
 
     # (5) Watch item: name the least-resolved dislocation to monitor next week.
     # Prefer an unresolved EPS cut; else the most extreme stock-specific
@@ -892,19 +1078,36 @@ def render_takeaways_deterministic(metrics: Dict[str, Any]) -> str:
     watch = None
     if cuts:
         worst_cut = min(cuts, key=lambda r: r.get("eps_revision_pct"))
-        watch = (
-            f"Watch: whether the EPS cut at {_descriptor(worst_cut)} "
-            f"({_pct(worst_cut.get('eps_revision_pct'))} over 4 weeks) keeps "
-            "pressuring the price into next week."
-        )
+        if retail:
+            watch = (
+                f"Watch next week: whether the cut to earnings forecasts at "
+                f"{_descriptor(worst_cut)} "
+                f"({_pct(worst_cut.get('eps_revision_pct'))} over four weeks) keeps "
+                "weighing on the share price."
+            )
+        else:
+            watch = (
+                f"Watch: whether the EPS cut at {_descriptor(worst_cut)} "
+                f"({_pct(worst_cut.get('eps_revision_pct'))} over 4 weeks) keeps "
+                "pressuring the price into next week."
+            )
     elif g["extremes"]:
         top = g["extremes"][0]
         sig = _sigma_str(top)
-        sig_txt = f" ({sig} vs its own history)" if sig else ""
-        watch = (
-            f"Watch: {_descriptor(top)}{sig_txt} is the least-resolved dislocation "
-            "\u2014 no catalyst confirmed yet; monitor for follow-through or reversal."
-        )
+        if retail:
+            sig_txt = (f" (a {sig.lstrip('+').rstrip(chr(963))}-standard-deviation "
+                       "move versus its own history)") if sig else ""
+            watch = (
+                f"Watch next week: {_descriptor(top)}{sig_txt} is the biggest "
+                "unexplained move so far \u2014 no clear reason found yet; watch for "
+                "follow-through or a reversal."
+            )
+        else:
+            sig_txt = f" ({sig} vs its own history)" if sig else ""
+            watch = (
+                f"Watch: {_descriptor(top)}{sig_txt} is the least-resolved dislocation "
+                "\u2014 no catalyst confirmed yet; monitor for follow-through or reversal."
+            )
     if watch:
         bullets.append(watch)
 
@@ -913,7 +1116,12 @@ def render_takeaways_deterministic(metrics: Dict[str, Any]) -> str:
     if (b.get("n_valid") or 0):
         br = b.get("breadth_ratio")
         br_txt = f"{float(br) * 100:.0f}%" if br is not None else "n/a"
-        if b.get("divergence"):
+        if retail:
+            bullets.append(
+                f"Under the hood: {b.get('advancers', 0)} stocks rose vs "
+                f"{b.get('decliners', 0)} that fell (breadth ratio {br_txt})."
+            )
+        elif b.get("divergence"):
             bullets.append(f"Breadth: {b.get('divergence')} "
                            f"({b.get('advancers', 0)} up / {b.get('decliners', 0)} "
                            f"down, ratio {br_txt}).")
@@ -942,14 +1150,19 @@ def render_takeaways_deterministic(metrics: Dict[str, Any]) -> str:
         bullets.append(sent)
 
     # (8) Dispersion & correlation regime line (when a regime read exists).
-    regime_line = render_regime_line(metrics)
+    regime_line = render_regime_line(metrics, audience)
     if regime_line:
         bullets.append(regime_line)
 
     # (9) Prior-call scorecard summary (only when something was evaluated).
     scorecard_line = _scorecard_context_line(metrics)
     if scorecard_line:
-        bullets.append(f"Scorecard: {scorecard_line}")
+        if retail:
+            bullets.append(
+                f"How past extreme moves played out: {scorecard_line}"
+            )
+        else:
+            bullets.append(f"Scorecard: {scorecard_line}")
 
     if not bullets:
         bullets.append("Not enough loaded data to synthesize takeaways this week.")
@@ -1004,11 +1217,19 @@ _GLOSSARY_TERMS: List[Tuple[str, str]] = [
 ]
 
 
-def render_glossary() -> str:
+def render_glossary(audience: str = "institutional") -> str:
     """A compact glossary rendered as clean markdown PARAGRAPHS (one bold term +
     definition per line). Deliberately NOT a wide table so it can never overflow
-    / fragment the PDF page. Never raises."""
-    lines = [f"### {GLOSSARY_HEADING}", ""]
+    / fragment the PDF page. Never raises.
+
+    Retail mode: heading swaps to the simpler 'Glossary' with a plain-English
+    intro line; the definitions (already plain English) are kept as-is."""
+    retail = audience == "retail"
+    heading = "Glossary" if retail else GLOSSARY_HEADING
+    lines = [f"### {heading}", ""]
+    if retail:
+        lines.append("Plain-English definitions for the terms used above.")
+        lines.append("")
     for term, defn in _GLOSSARY_TERMS:
         lines.append(f"- **{term}** \u2014 {defn}")
     lines.append("")
@@ -1116,31 +1337,53 @@ def collapse_catalysts(raw: str, metrics: Dict[str, Any]) -> str:
     return "\n".join(out).strip()
 
 
-def render_catalysts_deterministic(metrics: Dict[str, Any]) -> str:
+def render_catalysts_deterministic(metrics: Dict[str, Any],
+                                  audience: str = "institutional") -> str:
     """No-web fallback for the catalysts section: we have no news, so collapse ALL
     names into the single 'no catalyst found' line, and flag the sector-driven
-    names as low-confidence inferences from peer behavior."""
+    names as low-confidence inferences from peer behavior.
+
+    Retail mode phrases the same facts in plain English; the ticker list and the
+    inferred set are unchanged."""
+    retail = audience == "retail"
     names = list(metrics.get("catalyst_names") or [])
     per = metrics.get("per_ticker") or {}
     if not names:
         return ""
     bare = [s.split("-")[0] or s for s in names]
-    out = [
-        "No company-specific news catalyst found (no web access this run) for: "
-        + ", ".join(bare)
-        + " \u2014 moves appear driven by flows, momentum, or estimate changes."
-    ]
+    if retail:
+        out = [
+            "No company-specific news was found for the biggest movers ("
+            + ", ".join(bare)
+            + "). These moves appear driven by money flows, momentum, or changes "
+            "in analyst estimates rather than fresh announcements."
+        ]
+    else:
+        out = [
+            "No company-specific news catalyst found (no web access this run) for: "
+            + ", ".join(bare)
+            + " \u2014 moves appear driven by flows, momentum, or estimate changes."
+        ]
     inferred = [s for s in names
                 if (per.get(s, {}).get("attribution") or {}).get("attribution")
                 == "Sector-driven"]
     if inferred:
         out.append("")
-        out.append("_Sector-driven (inferred, low confidence):_")
-        for s in inferred:
-            rec = per.get(s, {})
-            sec = _short_sector(rec) or "its sector"
-            out.append(f"- {s.split('-')[0]} likely moved with broad {sec} pressure.")
-        out.append("_Inferences from peer behavior, not reported news._")
+        if retail:
+            out.append("_A few names look industry-driven (low confidence):_")
+            for s in inferred:
+                rec = per.get(s, {})
+                sec = _short_sector(rec) or "its industry"
+                out.append(f"- {s.split('-')[0]} \u2014 likely moved with the broader "
+                           f"{sec} rather than on its own news.")
+            out.append("_These are guesses from how peers moved, not reported news._")
+        else:
+            out.append("_Sector-driven (inferred, low confidence):_")
+            for s in inferred:
+                rec = per.get(s, {})
+                sec = _short_sector(rec) or "its sector"
+                out.append(f"- {s.split('-')[0]} likely moved with broad {sec} pressure.")
+            out.append("_Inferences from peer behavior, not reported news._")
     return "\n".join(out)
 
 
@@ -1180,13 +1423,15 @@ def _mover_data_lines(metrics: Dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
-def build_observations_prompt(metrics: Dict[str, Any]) -> str:
+def build_observations_prompt(metrics: Dict[str, Any],
+                             audience: str = "institutional") -> str:
     asof = metrics.get("asof") or "the as-of date"
     grouped = render_grouped_movers(metrics)
     tables = render_metric_tables(metrics)
     spec, total = _count_specific(metrics)
     data_lines = _mover_data_lines(metrics)
     return (
+        (
         "You are an equity strategist writing the WHAT MOVED AND WHY section of a "
         f"weekly one-pager for a Hang Seng (HSI) universe, as of {asof}. Write for "
         "a smart generalist, NOT a quant: PLAIN ENGLISH, no jargon left "
@@ -1245,10 +1490,12 @@ def build_observations_prompt(metrics: Dict[str, Any]) -> str:
         f"{data_lines or '(none)'}\n\n"
         "Full computed tables for reference (figures only):\n"
         f"{tables}\n"
+        ) + (_RETAIL_STYLE if audience == "retail" else "")
     )
 
 
-def build_catalyst_prompt(metrics: Dict[str, Any]) -> str:
+def build_catalyst_prompt(metrics: Dict[str, Any],
+                          audience: str = "institutional") -> str:
     asof = metrics.get("asof") or "the as-of date"
     names = metrics.get("catalyst_names") or []
     per = metrics.get("per_ticker") or {}
@@ -1299,6 +1546,7 @@ def build_catalyst_prompt(metrics: Dict[str, Any]) -> str:
         )
     namelist = "\n".join(lines) or "(none)"
     return (
+        (
         "You are an equity strategist. Use LIVE WEB / RECENT-NEWS search to find "
         "the LIKELY catalyst behind each notable move below in a Hang Seng (HSI) "
         f"universe over the week ending {asof}. Let the ATTRIBUTION tag on each "
@@ -1317,10 +1565,12 @@ def build_catalyst_prompt(metrics: Dict[str, Any]) -> str:
         "low confidence)'.\n"
         "Keep each line to one sentence. No headers, no preamble.\n\n"
         f"Notable movers (top gainers, top losers, outsized volume):\n{namelist}\n"
+        ) + (_RETAIL_STYLE if audience == "retail" else "")
     )
 
 
-def build_hsi_prompt(metrics: Dict[str, Any]) -> str:
+def build_hsi_prompt(metrics: Dict[str, Any],
+                     audience: str = "institutional") -> str:
     asof = metrics.get("asof") or "the as-of date"
     hsi = metrics.get("hsi") or {}
     computed = (
@@ -1330,6 +1580,7 @@ def build_hsi_prompt(metrics: Dict[str, Any]) -> str:
         f"{hsi.get('trend') or 'n/a'}."
     )
     return (
+        (
         "You are a macro strategist writing the TOP-DOWN INDEX section of a weekly "
         f"one-pager on the Hang Seng Index (HSI), as of {asof}. Your job is to "
         "INTERPRET the index week at the macro level only.\n\n"
@@ -1343,23 +1594,29 @@ def build_hsi_prompt(metrics: Dict[str, Any]) -> str:
         "the macro/policy/flow drivers; otherwise interpret strictly from the "
         "computed move and do not fabricate news. Plain prose, no headers.\n\n"
         f"{computed}\n"
+        ) + (_RETAIL_STYLE if audience == "retail" else "")
     )
 
 
 # ---------------------------------------------------------------------------
 # Orchestration
 # ---------------------------------------------------------------------------
-def _no_key_markdown(metrics: Dict[str, Any]) -> str:
+def _no_key_markdown(metrics: Dict[str, Any],
+                     audience: str = "institutional") -> str:
     """No-AI-key deliverable: deterministic takeaways box + grouped plain-English
     movers + collapsed (no-web) catalysts + glossary + the always-on metric
-    tables. Must NOT contain the AI-only '## Data observations' heading."""
+    tables. Must NOT contain the AI-only '## Data observations' heading.
+
+    Retail mode swaps the title + the non-contract headings and uses the retail
+    deterministic prose; the tables stay byte-identical."""
+    h = _headings(audience)
     banner = _staleness_banner(metrics)
-    takeaways = render_takeaways_deterministic(metrics)
+    takeaways = render_takeaways_deterministic(metrics, audience)
     grouped = render_grouped_movers(metrics)
-    catalysts = render_catalysts_deterministic(metrics)
-    glossary = render_glossary()
+    catalysts = render_catalysts_deterministic(metrics, audience)
+    glossary = render_glossary(audience)
     tables = render_metric_tables(metrics)
-    parts: List[str] = [f"# {TITLE}", "", banner, ""]
+    parts: List[str] = [f"# {_title(audience)}", "", banner, ""]
     parts += [
         "> Set an AI key in Settings for the AI-written synthesis. The takeaways, "
         "plain-English movers and computed metrics below are generated "
@@ -1367,15 +1624,15 @@ def _no_key_markdown(metrics: Dict[str, Any]) -> str:
         "",
     ]
     if takeaways.strip():
-        parts += ["## Key takeaways", "", takeaways.strip(), ""]
+        parts += [f"## {h['takeaways']}", "", takeaways.strip(), ""]
     if grouped.strip():
-        parts += ["## What moved and why", "", grouped.strip(), ""]
+        parts += [f"## {h['what_moved']}", "", grouped.strip(), ""]
     if catalysts.strip():
-        parts += ["## Catalysts", "", catalysts.strip(), ""]
-    internals = render_market_internals(metrics)
-    scorecard = render_scorecard(metrics)
+        parts += [f"## {h['catalysts_nokey']}", "", catalysts.strip(), ""]
+    internals = render_market_internals(metrics, audience)
+    scorecard = render_scorecard(metrics, audience=audience)
     if internals.strip() or scorecard.strip():
-        parts += ["## Market internals", ""]
+        parts += [f"## {h['market_internals']}", ""]
         if internals.strip():
             parts += [internals.strip(), ""]
         # #5 Scorecard: how prior flagged calls played out (inside internals).
@@ -1383,9 +1640,9 @@ def _no_key_markdown(metrics: Dict[str, Any]) -> str:
             parts += [scorecard.strip(), ""]
     scoreboard = render_sector_scoreboard(metrics)
     if scoreboard.strip():
-        parts += ["## Sector scoreboard", "", scoreboard.strip(), ""]
+        parts += [f"## {h['sector_scoreboard']}", "", scoreboard.strip(), ""]
     parts += [glossary, ""]
-    parts += ["## Computed metrics", "", tables]
+    parts += [f"## {h['computed']}", "", tables]
     return "\n".join(parts)
 
 
@@ -1396,32 +1653,50 @@ def _assemble(
     catalysts: str,
     hsi_commentary: str,
     notice: str,
+    audience: str = "institutional",
 ) -> str:
     """New reading order: Key takeaways box -> What moved and why (grouped) ->
     Catalysts (collapsed) -> HSI macro view (deduped) -> Glossary -> Computed
     metrics. The exact heading strings '## Data observations', '## Catalysts
     (web)', '## HSI macro view', '## Computed metrics' are preserved (tests +
-    exporter contract)."""
+    exporter contract) in BOTH modes.
+
+    Retail mode: the title + the NON-contract headings ('Key takeaways',
+    'Market internals', 'Sector scoreboard') swap to their friendly names; the
+    FOUR contract '##' headings stay verbatim, with a friendly bold subtitle
+    line prepended as the FIRST body line so the friendly section name is still
+    surfaced visually without breaking the exporter/dedup contract."""
+    h = _headings(audience)
+
+    def _body(sub: str, text: str) -> List[str]:
+        """Section body: optional friendly bold subtitle (retail) then the text."""
+        if sub:
+            return [sub, "", text.strip(), ""]
+        return [text.strip(), ""]
+
     banner = _staleness_banner(metrics)
-    parts: List[str] = [f"# {TITLE}", "", banner, ""]
+    parts: List[str] = [f"# {_title(audience)}", "", banner, ""]
     if notice:
         parts += [f"> {notice}", ""]
     if takeaways.strip():
-        parts += ["## Key takeaways", "", takeaways.strip(), ""]
+        parts += [f"## {h['takeaways']}", "", takeaways.strip(), ""]
     if observations.strip():
         # The AI-written 'what moved and why' body. Heading kept verbatim.
-        parts += ["## Data observations", "", observations.strip(), ""]
+        parts += [f"## {h['data_observations']}", ""]
+        parts += _body(h["sub_data_observations"], observations)
     if catalysts.strip():
-        parts += ["## Catalysts (web)", "", catalysts.strip(), ""]
+        parts += [f"## {h['catalysts_web']}", ""]
+        parts += _body(h["sub_catalysts"], catalysts)
     if hsi_commentary.strip():
-        parts += ["## HSI macro view", "", hsi_commentary.strip(), ""]
+        parts += [f"## {h['hsi']}", ""]
+        parts += _body(h["sub_hsi"], hsi_commentary)
     # Market internals (breadth / up-down $vol / new highs-lows / divergence) and
     # the sector scoreboard sit AFTER the macro view, BEFORE the glossary. Both
     # omit themselves when their underlying data is absent.
-    internals = render_market_internals(metrics)
-    scorecard = render_scorecard(metrics)
+    internals = render_market_internals(metrics, audience)
+    scorecard = render_scorecard(metrics, audience=audience)
     if internals.strip() or scorecard.strip():
-        parts += ["## Market internals", ""]
+        parts += [f"## {h['market_internals']}", ""]
         if internals.strip():
             parts += [internals.strip(), ""]
         # #5 Scorecard: how prior flagged calls played out (inside internals).
@@ -1429,11 +1704,11 @@ def _assemble(
             parts += [scorecard.strip(), ""]
     scoreboard = render_sector_scoreboard(metrics)
     if scoreboard.strip():
-        parts += ["## Sector scoreboard", "", scoreboard.strip(), ""]
+        parts += [f"## {h['sector_scoreboard']}", "", scoreboard.strip(), ""]
     # Inline glossary so every term used above has a plain-English definition.
-    parts += [render_glossary(), ""]
+    parts += [render_glossary(audience), ""]
     # Always append the deterministic data tables for auditability.
-    parts += ["## Computed metrics", "", render_metric_tables(metrics)]
+    parts += [f"## {h['computed']}", "", render_metric_tables(metrics)]
     return "\n".join(parts)
 
 
@@ -1445,8 +1720,15 @@ def generate_weekly_note(
     with_news: Optional[bool] = False,
     fallback_providers: Optional[List[LLMProvider]] = None,
     web_provider: Optional[LLMProvider] = None,
+    audience: str = "institutional",
 ) -> Dict[str, Any]:
     """Assemble the weekly one-pager with a SPLIT provider model. NEVER raises.
+
+    ``audience`` ("institutional" default | "retail") selects the output voice.
+    Retail keeps ALL tables/charts/tickers/numbers IDENTICAL and only changes
+    the prose language, the title and the section headings (see _title/_headings
+    and the retail prompt/deterministic branches). Anything other than "retail"
+    is treated as institutional (regression-safe).
 
     Two distinct duties:
       * SYNTHESIS (data-driven observations prose + HSI macro narrative) runs on
@@ -1467,14 +1749,17 @@ def generate_weekly_note(
     provider actually answered each section.
     """
     metrics = metrics or {}
+    if audience != "retail":
+        audience = "institutional"
     if asof is None:
         asof = metrics.get("asof")
 
     base = {
         "candidates": [],
         "asof": asof,
-        "title": TITLE,
+        "title": _title(audience),
         "kind": "weekly",
+        "audience": audience,
     }
 
     def _avail(p: Optional[LLMProvider]) -> bool:
@@ -1487,7 +1772,7 @@ def generate_weekly_note(
     if not synth_ok and not web_prov_ok:
         return {
             **base,
-            "markdown": _no_key_markdown(metrics),
+            "markdown": _no_key_markdown(metrics, audience),
             "provider": None,
             "error": "Set an AI key in Settings to generate the weekly note.",
             "notice": "",
@@ -1526,7 +1811,7 @@ def generate_weekly_note(
     if synth_ok:
         try:
             text, _used = complete_with_fallback(
-                provider, build_takeaways_prompt(metrics),
+                provider, build_takeaways_prompt(metrics, audience),
                 fallback_providers=fallback_providers,
                 section="weekly_takeaways", max_tokens=400,
             )
@@ -1536,14 +1821,14 @@ def generate_weekly_note(
             errors.append(f"takeaways: {e}")
             _log_usage(provider, "sidebar", ok=False, note=str(e)[:200])
     if not takeaways:
-        takeaways = render_takeaways_deterministic(metrics)
+        takeaways = render_takeaways_deterministic(metrics, audience)
 
     # (a) Data observations [SYNTHESIS] -- run on the chosen provider.
     observations = ""
     if synth_ok:
         try:
             text, _used = complete_with_fallback(
-                provider, build_observations_prompt(metrics),
+                provider, build_observations_prompt(metrics, audience),
                 fallback_providers=fallback_providers,
                 section="weekly_obs", max_tokens=900,
             )
@@ -1561,7 +1846,7 @@ def generate_weekly_note(
     if do_web and (metrics.get("catalyst_names") or []):
         try:
             text, _used = complete_with_fallback(
-                web_runner, build_catalyst_prompt(metrics),
+                web_runner, build_catalyst_prompt(metrics, audience),
                 fallback_providers=[],
                 section="weekly_catalysts", max_tokens=800,
             )
@@ -1580,7 +1865,7 @@ def generate_weekly_note(
     if hsi_runner is not None and (metrics.get("hsi") or {}).get("loaded"):
         try:
             text, _used = complete_with_fallback(
-                hsi_runner, build_hsi_prompt(metrics),
+                hsi_runner, build_hsi_prompt(metrics, audience),
                 fallback_providers=(fallback_providers if hsi_runner is provider else []),
                 section="weekly_hsi", max_tokens=600,
             )
@@ -1591,7 +1876,8 @@ def generate_weekly_note(
             _log_usage(hsi_runner, "sidebar", ok=False, note=str(e)[:200])
 
     markdown = _assemble(
-        metrics, takeaways, observations, catalysts, hsi_commentary, notice
+        metrics, takeaways, observations, catalysts, hsi_commentary, notice,
+        audience,
     )
 
     # Report the synthesis provider name when present, else the web provider.

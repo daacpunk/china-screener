@@ -425,9 +425,14 @@ def _attach_hit_rate(metrics: Dict[str, Any], snap_data: Dict[str, Any]) -> None
         pass
 
 
-def _build_note(provider_name: str = "", with_news: Optional[bool] = None) -> Dict[str, Any]:
+def _build_note(provider_name: str = "", with_news: Optional[bool] = None,
+                audience: str = "institutional") -> Dict[str, Any]:
     """Compute metrics from the active snapshot, resolve provider, generate the
-    note. Never raises. Returns the note dict (exporter-shaped)."""
+    note. Never raises. Returns the note dict (exporter-shaped).
+
+    ``audience`` selects the institutional (default) or retail output voice; it
+    is threaded straight into ``generate_weekly_note`` and never affects the
+    computed metrics/tables."""
     snap = wsnap.get_active()
     data = snap.get("data", {}) if snap else {}
     prev_metrics = _prev_note_metrics()
@@ -447,7 +452,7 @@ def _build_note(provider_name: str = "", with_news: Optional[bool] = None) -> Di
     note = wnote.generate_weekly_note(
         provider, metrics, asof=metrics.get("asof"),
         with_news=with_news, fallback_providers=fallbacks,
-        web_provider=web_provider,
+        web_provider=web_provider, audience=audience,
     )
     note["_metrics"] = metrics
     return note
@@ -455,18 +460,22 @@ def _build_note(provider_name: str = "", with_news: Optional[bool] = None) -> Di
 
 @router.post("/weekly/note", response_class=HTMLResponse)
 def weekly_note_generate(request: Request, provider: str = Form(""),
-                         with_news: str = Form("")):
+                         with_news: str = Form(""),
+                         audience: str = Form("institutional")):
     snap = wsnap.get_active()
     if not snap or not (snap.get("data") or {}).get("tickers"):
         return HTMLResponse("<div class='note error'>Upload a populated weekly "
                             "workbook first (no active data snapshot).</div>")
     wn = _truthy(with_news) if with_news != "" else None
-    note = _build_note(provider, wn)
+    # The two Generate buttons submit name="audience" with value institutional
+    # or retail; anything else falls back to institutional (regression-safe).
+    audience = "retail" if str(audience) == "retail" else "institutional"
+    note = _build_note(provider, wn, audience=audience)
     metrics = note.pop("_metrics", {})
-    # Persist to dated history.
+    # Persist to dated history (audience stored so exports/views round-trip).
     try:
         wnotes.save_note(note.get("asof"), note.get("provider"), metrics,
-                         note.get("markdown") or "")
+                         note.get("markdown") or "", audience=audience)
     except Exception:  # noqa: BLE001 — persistence must not break the response
         pass
     import markdown as _md
@@ -482,13 +491,15 @@ def weekly_note_export(note_id: int, fmt: str = "md"):
     rec = wnotes.get_note(note_id)
     if not rec:
         return Response("Note not found", status_code=404)
+    audience = rec.get("audience") or "institutional"
     note = {
         "markdown": rec.get("markdown") or "",
         "candidates": [],
         "asof": rec.get("asof"),
         "provider": rec.get("provider"),
-        "title": wnote.TITLE,
+        "title": wnote._title(audience),
         "kind": "weekly",
+        "audience": audience,
     }
     try:
         data, ct, fname = exporters.export(note, fmt)
@@ -503,11 +514,13 @@ def weekly_note_view(request: Request, note_id: int):
     rec = wnotes.get_note(note_id)
     if not rec:
         return RedirectResponse("/weekly?err=Note+not+found", status_code=303)
+    audience = rec.get("audience") or "institutional"
     note = {
         "markdown": rec.get("markdown") or "",
         "asof": rec.get("asof"),
         "provider": rec.get("provider"),
-        "title": wnote.TITLE, "kind": "weekly",
+        "title": wnote._title(audience), "kind": "weekly",
+        "audience": audience,
     }
     import markdown as _md
     body_html = _md.markdown(note["markdown"], extensions=["tables"])

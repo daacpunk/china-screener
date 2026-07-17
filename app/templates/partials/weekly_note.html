@@ -1,5 +1,5 @@
 <div class="note {{ 'error' if note.notice else 'info' }}">
-  <b>Weekly one-pager · as of {{ note.asof or 'unknown' }}</b>{% if note.provider %} · via {{ note.provider }}{% endif %}.
+  <b>Weekly one-pager · as of {{ note.asof or 'unknown' }}</b>{% if note.provider %} · via {{ note.provider }}{% endif %}{% if note.audience == 'retail' %} · <span class="tag">retail</span>{% else %} · <span class="tag muted">institutional</span>{% endif %}.
 </div>
 
 {% if note.error and not body_html %}
