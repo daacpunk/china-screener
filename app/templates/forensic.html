@@ -1,0 +1,66 @@
+{% extends "base.html" %}
+{% block title %}Forensic Check — China Reversion/Fade Screener{% endblock %}
+{% block content %}
+<h1>Forensic Check</h1>
+<p class="subtitle">A GMT-Research-style <b>forensic accounting screen</b> for Hong Kong–listed and about-to-list companies — feed it an HKEX IPO prospectus / PHIP, an annual or interim report PDF, or a standardized FactSet Excel template, and it grades earnings quality, balance-sheet integrity, cash burn and governance into a composite score and letter rating.</p>
+
+<div class="note info">Scaffold live — Excel template, scoring engine, and PDF ingest land in the next steps.</div>
+
+<!-- ================= Input modes ================= -->
+<h2>Input modes</h2>
+<div class="card">
+  <p class="help">One company per run. Three ways to feed it will be available:</p>
+  <table class="data-table" style="margin-top:8px">
+    <thead><tr><th>Mode</th><th>What you provide</th></tr></thead>
+    <tbody>
+      {% for m in modes %}
+      <tr><td><b>{{ m.label }}</b></td><td>{{ m.desc }}</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  <p class="help" style="margin-top:8px">FactSet numbers come only from the user-uploaded Excel; PDF figures come only from the uploaded document — no market-data API calls.</p>
+  <button class="btn" type="button" disabled title="Arrives in a later step">Generate (coming next)</button>
+</div>
+
+<!-- ================= Pipeline status ================= -->
+<h2>Pipeline status</h2>
+<div class="card">
+  <p class="help">Built sequentially — one step per deploy:</p>
+  <table class="data-table" style="margin-top:8px">
+    <thead><tr><th>Step</th><th>Scope</th><th>Status</th></tr></thead>
+    <tbody>
+      {% for p in pipeline %}
+      <tr>
+        <td><b>{{ p.step }}</b></td>
+        <td>{{ p.label }}</td>
+        <td>{% if p.done %}<span class="note ok" style="display:inline;padding:1px 6px">done</span>{% else %}<span class="muted">pending</span>{% endif %}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+<!-- ================= Run history ================= -->
+<h2>History</h2>
+<div class="card">
+  {% if runs %}
+  <table class="data-table">
+    <thead><tr><th>Date</th><th>Company</th><th>Mode</th><th>Score</th><th>Rating</th><th></th></tr></thead>
+    <tbody>
+      {% for r in runs %}
+      <tr>
+        <td>{{ r.created_at or '—' }}</td>
+        <td>{{ r.company_name or '—' }}</td>
+        <td>{{ r.mode or '—' }}</td>
+        <td>{{ '%.0f'|format(r.composite_score) if r.composite_score is not none else '—' }}</td>
+        <td>{{ r.letter_rating or '—' }}</td>
+        <td><a href="/forensic/run/{{ r.id }}">view</a></td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <div class="empty"><p>No forensic runs yet. Once the scoring pipeline is live, each run will appear here with its composite score and letter rating.</p></div>
+  {% endif %}
+</div>
+{% endblock %}

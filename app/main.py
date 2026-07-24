@@ -19,6 +19,7 @@ from . import settings_store as ss
 from .web import common
 from .web.routes_analysis import router as analysis_router
 from .web.routes_data import router as data_router
+from .web.routes_forensic import router as forensic_router
 from .web.routes_formula import router as formula_router
 from .web.routes_results import router as results_router
 from .web.routes_settings import router as settings_router
@@ -58,4 +59,5 @@ app.include_router(data_router)
 app.include_router(results_router)
 app.include_router(analysis_router)
 app.include_router(weekly_router)
+app.include_router(forensic_router)
 app.include_router(settings_router)
